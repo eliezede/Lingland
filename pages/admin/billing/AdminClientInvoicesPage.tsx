@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { BillingService } from '../../../services/billingService';
 import { ClientInvoice } from '../../../types';

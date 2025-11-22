@@ -1,4 +1,3 @@
-
 import { 
   collection, 
   query, 
@@ -15,18 +14,12 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./firebaseConfig";
 import { ClientInvoice, InterpreterInvoice, Timesheet, InvoiceStatus } from "../types";
 
-// Helper to convert Firestore timestamps to ISO strings if needed
-// In this implementation, we assume data comes back compatible or we cast it.
-
 export const BillingService = {
   
   /**
    * Get summary stats for the dashboard
    */
   getDashboardStats: async () => {
-    // Note: In a real app, use aggregation queries or a dedicated stats document.
-    // Here we fetch with limits to just check existence/counts roughly or use MOCK data pattern if firestore empty.
-    
     // 1. Pending Client Invoices
     const clientInvQuery = query(collection(db, "clientInvoices"), where("status", "in", [InvoiceStatus.DRAFT, InvoiceStatus.SENT]));
     const clientInvSnap = await getDocs(clientInvQuery);
@@ -63,7 +56,6 @@ export const BillingService = {
     const d = await getDoc(doc(db, "clientInvoices", id));
     if (!d.exists()) return null;
     
-    // Fetch lines subcollection or separate collection
     const linesQ = query(collection(db, "clientInvoiceLines"), where("invoiceId", "==", id));
     const linesSnap = await getDocs(linesQ);
     const items = linesSnap.docs.map(l => ({ id: l.id, ...l.data() }));
@@ -79,7 +71,7 @@ export const BillingService = {
     const functions = getFunctions();
     const generateFn = httpsCallable(functions, 'generateClientInvoice');
     const result = await generateFn({ clientId, periodStart, periodEnd });
-    return result.data as any; // Returns summary or invoice ID
+    return result.data as any;
   },
 
   /**
@@ -119,8 +111,6 @@ export const BillingService = {
   },
 
   approveTimesheet: async (id: string) => {
-    // We update local doc, but the Cloud Function 'onTimesheetAdminApproved' 
-    // should perform the calculations and set readyForInvoice flags.
     await updateDoc(doc(db, "timesheets", id), { 
       adminApproved: true, 
       adminApprovedAt: new Date().toISOString(),
