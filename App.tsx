@@ -1,12 +1,12 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { RoleSwitcher } from './components/RoleSwitcher';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { UserRole } from './types';
+import { Spinner } from './components/ui/Spinner';
 
 // Layouts
 import { AdminLayout } from './layouts/AdminLayout';
@@ -43,6 +43,35 @@ import { ClientBookingDetails } from './pages/client/bookings/ClientBookingDetai
 import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
+
+// Root Redirect Component
+const RootRedirect = () => {
+  const { user, isLoading } = useAuth();
+  
+  if (isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+  
+  if (!user) {
+    // If not logged in, send to admin dashboard which handles the "Login" prompt via ProtectedRoute
+    return <Navigate to="/admin/dashboard" replace />; 
+  }
+
+  switch (user.role) {
+    case UserRole.ADMIN:
+      return <Navigate to="/admin/dashboard" replace />;
+    case UserRole.CLIENT:
+      return <Navigate to="/client/dashboard" replace />;
+    case UserRole.INTERPRETER:
+      return <Navigate to="/interpreter/dashboard" replace />;
+    default:
+      return <Navigate to="/admin/dashboard" replace />;
+  }
+};
 
 const App = () => {
   return (
@@ -117,7 +146,7 @@ const App = () => {
               } />
 
               {/* Root Redirect */}
-              <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
+              <Route path="/" element={<RootRedirect />} />
               
               {/* Fallback */}
               <Route path="*" element={<NotFound />} />
