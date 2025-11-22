@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ClientInvoice, InterpreterInvoice } from '../../types';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
