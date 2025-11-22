@@ -90,6 +90,75 @@ export const BookingService = {
       assignment.respondedAt = new Date().toISOString();
       saveMockData();
     }
+  },
+  
+  // --- MATCHING & ASSIGNMENT SERVICES ---
+
+  findInterpretersByLanguage: async (language: string): Promise<Interpreter[]> => {
+    await new Promise(r => setTimeout(r, 300));
+    // Simple case-insensitive partial match
+    return MOCK_INTERPRETERS.filter(i => 
+      i.languages.some(l => l.toLowerCase().includes(language.toLowerCase())) && 
+      i.status === 'ACTIVE'
+    );
+  },
+
+  getAssignmentsByBookingId: async (bookingId: string): Promise<BookingAssignment[]> => {
+    await new Promise(r => setTimeout(r, 200));
+    return MOCK_ASSIGNMENTS.filter(a => a.bookingId === bookingId);
+  },
+
+  createAssignment: async (bookingId: string, interpreterId: string): Promise<BookingAssignment> => {
+    await new Promise(r => setTimeout(r, 300));
+    
+    // Check if already exists
+    const existing = MOCK_ASSIGNMENTS.find(a => a.bookingId === bookingId && a.interpreterId === interpreterId);
+    if (existing) return existing;
+
+    const newAssignment: BookingAssignment = {
+      id: `assign-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      bookingId,
+      interpreterId,
+      status: AssignmentStatus.OFFERED,
+      offeredAt: new Date().toISOString(),
+      bookingSnapshot: MOCK_BOOKINGS.find(b => b.id === bookingId) || {}
+    };
+
+    MOCK_ASSIGNMENTS.push(newAssignment);
+    
+    // Update booking status to SEARCHING/OFFERED if it was REQUESTED
+    const booking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+    if (booking && booking.status === BookingStatus.REQUESTED) {
+      booking.status = BookingStatus.OFFERED;
+    }
+
+    saveMockData();
+    return newAssignment;
+  },
+
+  assignInterpreterToBooking: async (bookingId: string, interpreterId: string): Promise<void> => {
+    await new Promise(r => setTimeout(r, 300));
+    const booking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+    const interpreter = MOCK_INTERPRETERS.find(i => i.id === interpreterId);
+    
+    if (booking && interpreter) {
+      booking.status = BookingStatus.CONFIRMED;
+      booking.interpreterId = interpreter.id;
+      booking.interpreterName = interpreter.name;
+      
+      // Update the specific assignment to ACCEPTED if it exists, others to EXPIRED
+      MOCK_ASSIGNMENTS.forEach(a => {
+        if (a.bookingId === bookingId) {
+          if (a.interpreterId === interpreterId) {
+            a.status = AssignmentStatus.ACCEPTED;
+          } else {
+            a.status = AssignmentStatus.EXPIRED;
+          }
+        }
+      });
+
+      saveMockData();
+    }
   }
 };
 
@@ -194,6 +263,10 @@ export const BillingService = {
   // --- Client Invoices ---
   getClientInvoices: async (): Promise<ClientInvoice[]> => {
     return [...MOCK_CLIENT_INVOICES];
+  },
+
+  getClientInvoiceById: async (id: string): Promise<ClientInvoice | undefined> => {
+    return MOCK_CLIENT_INVOICES.find(inv => inv.id === id);
   },
 
   generateClientInvoice: async (clientId: string): Promise<ClientInvoice> => {

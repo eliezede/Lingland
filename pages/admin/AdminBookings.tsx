@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useBookings } from '../../hooks/useBookings';
 import { StatusBadge } from '../../components/StatusBadge';
 import { Search, Filter, MapPin, Video } from 'lucide-react';
@@ -12,6 +13,7 @@ import { Card } from '../../components/ui/Card';
 export const AdminBookings = () => {
   const { bookings, loading, error, refresh } = useBookings();
   const [filter, setFilter] = useState('');
+  const navigate = useNavigate();
 
   const filteredBookings = bookings.filter(b => 
     b.clientName.toLowerCase().includes(filter.toLowerCase()) ||
@@ -104,7 +106,13 @@ export const AdminBookings = () => {
                     <StatusBadge status={booking.status} />
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <Button variant="ghost" size="sm">Manage</Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => navigate(`/admin/bookings/${booking.id}`)}
+                    >
+                      Manage
+                    </Button>
                   </td>
                 </tr>
               ))}

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -6,7 +7,6 @@ import { RoleSwitcher } from './components/RoleSwitcher';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { UserRole } from './types';
-import { Spinner } from './components/ui/Spinner';
 
 // Layouts
 import { AdminLayout } from './layouts/AdminLayout';
@@ -19,6 +19,7 @@ import { Dashboard } from './pages/Dashboard';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
+import AdminBookingDetails from './pages/admin/bookings/AdminBookingDetails';
 import { AdminTimesheets } from './pages/admin/billing/TimesheetsPage';
 import { AdminBillingDashboard } from './pages/admin/billing/AdminBillingDashboard';
 import { AdminClientInvoicesPage } from './pages/admin/billing/AdminClientInvoicesPage';
@@ -44,20 +45,15 @@ import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
 
-// Root Redirect Component
+// --- ROOT REDIRECT COMPONENT ---
+// Intelligently directs users based on their role to prevent loops.
 const RootRedirect = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  if (isLoading) return null; // Or a loading spinner
   
   if (!user) {
-    // If not logged in, send to admin dashboard which handles the "Login" prompt via ProtectedRoute
+    // If not logged in, default to admin dashboard (which will show Auth Required)
     return <Navigate to="/admin/dashboard" replace />; 
   }
 
@@ -126,6 +122,7 @@ const App = () => {
                     <Routes>
                       <Route path="dashboard" element={<Dashboard />} />
                       <Route path="bookings" element={<AdminBookings />} />
+                      <Route path="bookings/:id" element={<AdminBookingDetails />} />
                       
                       {/* Billing */}
                       <Route path="billing" element={<AdminBillingDashboard />} />
@@ -145,7 +142,7 @@ const App = () => {
                 </ProtectedRoute>
               } />
 
-              {/* Root Redirect */}
+              {/* Smart Root Redirect */}
               <Route path="/" element={<RootRedirect />} />
               
               {/* Fallback */}

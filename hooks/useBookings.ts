@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { BookingService } from '../services/bookingService';
+import { BookingService } from '../services/api'; // Changed from bookingService to api
 import { Booking } from '../types';
 
 export const useBookings = () => {
