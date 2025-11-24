@@ -1,4 +1,3 @@
-
 import { Booking, BookingStatus, Client, Interpreter, User, BookingAssignment, AssignmentStatus, Timesheet, Rate, ClientInvoice, InterpreterInvoice, InvoiceLineItem, ServiceType } from '../types';
 import { MOCK_BOOKINGS, MOCK_CLIENTS, MOCK_INTERPRETERS, MOCK_ASSIGNMENTS, MOCK_USERS, MOCK_TIMESHEETS, MOCK_RATES, MOCK_CLIENT_INVOICES, MOCK_INTERPRETER_INVOICES, saveMockData } from './mockData';
 
@@ -31,6 +30,10 @@ export const BookingService = {
     await new Promise(r => setTimeout(r, 200));
     return MOCK_BOOKINGS.find(b => b.id === id);
   },
+  getBookingsByIds: async (ids: string[]): Promise<Booking[]> => {
+    await new Promise(r => setTimeout(r, 300));
+    return MOCK_BOOKINGS.filter(b => ids.includes(b.id));
+  },
   getByClientId: async (clientId: string): Promise<Booking[]> => {
     await new Promise(r => setTimeout(r, 300));
     return MOCK_BOOKINGS.filter(b => b.clientId === clientId);
@@ -39,10 +42,26 @@ export const BookingService = {
     await new Promise(r => setTimeout(r, 300));
     return MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId && b.status !== BookingStatus.CANCELLED);
   },
-  getInterpreterOffers: async (interpreterId: string): Promise<BookingAssignment[]> => {
+  
+  // --- ASSIGNMENTS ---
+  
+  getAssignmentsForInterpreter: async (interpreterId: string): Promise<BookingAssignment[]> => {
     await new Promise(r => setTimeout(r, 300));
-    return MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId && a.status === AssignmentStatus.OFFERED);
+    const assignments = MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId);
+    return assignments.map(a => {
+      const booking = MOCK_BOOKINGS.find(b => b.id === a.bookingId);
+      if (booking) {
+        return { ...a, bookingSnapshot: booking };
+      }
+      return a;
+    });
   },
+
+  getInterpreterOffers: async (interpreterId: string): Promise<BookingAssignment[]> => {
+    const assignments = await BookingService.getAssignmentsForInterpreter(interpreterId);
+    return assignments.filter(a => a.status === AssignmentStatus.OFFERED);
+  },
+
   create: async (booking: Omit<Booking, 'id' | 'status'>): Promise<Booking> => {
     const newBooking: Booking = {
       ...booking,
@@ -53,6 +72,7 @@ export const BookingService = {
     saveMockData();
     return newBooking;
   },
+  
   updateStatus: async (id: string, status: BookingStatus): Promise<void> => {
     const booking = MOCK_BOOKINGS.find(b => b.id === id);
     if (booking) {
@@ -60,7 +80,8 @@ export const BookingService = {
       saveMockData();
     }
   },
-  acceptOffer: async (assignmentId: string): Promise<void> => {
+
+  acceptAssignment: async (assignmentId: string): Promise<void> => {
     const assignment = MOCK_ASSIGNMENTS.find(a => a.id === assignmentId);
     if (!assignment) return;
     
@@ -75,7 +96,6 @@ export const BookingService = {
       if (interpreter) booking.interpreterName = interpreter.name;
     }
     
-    // Expire other offers for the same booking
     MOCK_ASSIGNMENTS.forEach(a => {
       if (a.bookingId === assignment.bookingId && a.id !== assignmentId) {
         a.status = AssignmentStatus.EXPIRED;
@@ -83,7 +103,8 @@ export const BookingService = {
     });
     saveMockData();
   },
-  declineOffer: async (assignmentId: string): Promise<void> => {
+
+  declineAssignment: async (assignmentId: string): Promise<void> => {
     const assignment = MOCK_ASSIGNMENTS.find(a => a.id === assignmentId);
     if (assignment) {
       assignment.status = AssignmentStatus.DECLINED;
@@ -92,11 +113,13 @@ export const BookingService = {
     }
   },
   
-  // --- MATCHING & ASSIGNMENT SERVICES ---
+  acceptOffer: async (id: string) => BookingService.acceptAssignment(id),
+  declineOffer: async (id: string) => BookingService.declineAssignment(id),
+
+  // --- MATCHING ---
 
   findInterpretersByLanguage: async (language: string): Promise<Interpreter[]> => {
     await new Promise(r => setTimeout(r, 300));
-    // Simple case-insensitive partial match
     return MOCK_INTERPRETERS.filter(i => 
       i.languages.some(l => l.toLowerCase().includes(language.toLowerCase())) && 
       i.status === 'ACTIVE'
@@ -111,7 +134,6 @@ export const BookingService = {
   createAssignment: async (bookingId: string, interpreterId: string): Promise<BookingAssignment> => {
     await new Promise(r => setTimeout(r, 300));
     
-    // Check if already exists
     const existing = MOCK_ASSIGNMENTS.find(a => a.bookingId === bookingId && a.interpreterId === interpreterId);
     if (existing) return existing;
 
@@ -126,7 +148,6 @@ export const BookingService = {
 
     MOCK_ASSIGNMENTS.push(newAssignment);
     
-    // Update booking status to SEARCHING/OFFERED if it was REQUESTED
     const booking = MOCK_BOOKINGS.find(b => b.id === bookingId);
     if (booking && booking.status === BookingStatus.REQUESTED) {
       booking.status = BookingStatus.OFFERED;
@@ -146,7 +167,6 @@ export const BookingService = {
       booking.interpreterId = interpreter.id;
       booking.interpreterName = interpreter.name;
       
-      // Update the specific assignment to ACCEPTED if it exists, others to EXPIRED
       MOCK_ASSIGNMENTS.forEach(a => {
         if (a.bookingId === bookingId) {
           if (a.interpreterId === interpreterId) {
@@ -163,35 +183,82 @@ export const BookingService = {
 };
 
 export const ClientService = {
-  getAll: async (): Promise<Client[]> => [...MOCK_CLIENTS],
-  getById: async (id: string) => MOCK_CLIENTS.find(c => c.id === id)
+  getAll: async (): Promise<Client[]> => {
+    await new Promise(r => setTimeout(r, 300));
+    return [...MOCK_CLIENTS];
+  },
+  getById: async (id: string) => MOCK_CLIENTS.find(c => c.id === id),
+  
+  create: async (data: Omit<Client, 'id'>): Promise<Client> => {
+    await new Promise(r => setTimeout(r, 400));
+    const newClient: Client = {
+      ...data,
+      id: `c-${Date.now()}`,
+    };
+    MOCK_CLIENTS.push(newClient);
+    saveMockData();
+    return newClient;
+  },
+
+  update: async (id: string, data: Partial<Client>): Promise<Client | null> => {
+    await new Promise(r => setTimeout(r, 300));
+    const index = MOCK_CLIENTS.findIndex(c => c.id === id);
+    if (index !== -1) {
+      MOCK_CLIENTS[index] = { ...MOCK_CLIENTS[index], ...data };
+      saveMockData();
+      return MOCK_CLIENTS[index];
+    }
+    return null;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await new Promise(r => setTimeout(r, 300));
+    const index = MOCK_CLIENTS.findIndex(c => c.id === id);
+    if (index !== -1) {
+      MOCK_CLIENTS.splice(index, 1);
+      saveMockData();
+    }
+  }
 };
 
 export const InterpreterService = {
-  getAll: async (): Promise<Interpreter[]> => [...MOCK_INTERPRETERS],
+  getAll: async (): Promise<Interpreter[]> => {
+    await new Promise(r => setTimeout(r, 300));
+    return [...MOCK_INTERPRETERS];
+  },
   getById: async (id: string) => MOCK_INTERPRETERS.find(i => i.id === id),
+  
   updateProfile: async (id: string, data: Partial<Interpreter>) => {
     const idx = MOCK_INTERPRETERS.findIndex(i => i.id === id);
     if (idx !== -1) {
       MOCK_INTERPRETERS[idx] = { ...MOCK_INTERPRETERS[idx], ...data };
       saveMockData();
     }
+  },
+
+  create: async (data: Omit<Interpreter, 'id'>): Promise<Interpreter> => {
+    await new Promise(r => setTimeout(r, 400));
+    const newInterpreter: Interpreter = {
+      ...data,
+      id: `i-${Date.now()}`,
+      status: 'ONBOARDING'
+    };
+    MOCK_INTERPRETERS.push(newInterpreter);
+    saveMockData();
+    return newInterpreter;
   }
 };
 
-// === BILLING SERVICES (PHASE 2) ===
+// === BILLING SERVICES ===
 
 export const BillingService = {
-  // --- Timesheets ---
   getAllTimesheets: async (): Promise<Timesheet[]> => {
     await new Promise(r => setTimeout(r, 400));
     return [...MOCK_TIMESHEETS];
   },
-  
   getInterpreterTimesheets: async (interpreterId: string): Promise<Timesheet[]> => {
     return MOCK_TIMESHEETS.filter(t => t.interpreterId === interpreterId);
   },
-
   getUninvoicedTimesheetsForInterpreter: async (interpreterId: string): Promise<Timesheet[]> => {
     return MOCK_TIMESHEETS.filter(t => 
       t.interpreterId === interpreterId && 
@@ -199,9 +266,8 @@ export const BillingService = {
       !t.interpreterInvoiceId
     );
   },
-
   submitTimesheet: async (data: Partial<Timesheet>): Promise<Timesheet> => {
-    await new Promise(r => setTimeout(r, 500)); // Sim upload delay
+    await new Promise(r => setTimeout(r, 500));
     const newTs: Timesheet = {
       id: `ts-${Date.now()}`,
       bookingId: data.bookingId!,
@@ -224,7 +290,6 @@ export const BillingService = {
     saveMockData();
     return newTs;
   },
-
   approveTimesheet: async (timesheetId: string): Promise<Timesheet | null> => {
     const ts = MOCK_TIMESHEETS.find(t => t.id === timesheetId);
     if (!ts) return null;
@@ -232,8 +297,8 @@ export const BillingService = {
     const booking = MOCK_BOOKINGS.find(b => b.id === ts.bookingId);
     if (!booking) return null;
 
-    const clientRate = MOCK_RATES.find(r => r.type === 'CLIENT_CHARGE' && r.serviceType === booking.serviceType) || MOCK_RATES[0];
-    const interpRate = MOCK_RATES.find(r => r.type === 'INTERPRETER_PAY' && r.serviceType === booking.serviceType) || MOCK_RATES[2];
+    const clientRate = MOCK_RATES.find(r => r.type === 'CLIENT_CHARGE') || MOCK_RATES[0];
+    const interpRate = MOCK_RATES.find(r => r.type === 'INTERPRETER_PAY') || MOCK_RATES[2];
 
     const start = new Date(ts.actualStart);
     const end = new Date(ts.actualEnd);
@@ -259,35 +324,26 @@ export const BillingService = {
     saveMockData();
     return ts;
   },
-
-  // --- Client Invoices ---
-  getClientInvoices: async (): Promise<ClientInvoice[]> => {
-    return [...MOCK_CLIENT_INVOICES];
-  },
-
-  getClientInvoiceById: async (id: string): Promise<ClientInvoice | undefined> => {
-    return MOCK_CLIENT_INVOICES.find(inv => inv.id === id);
-  },
-
+  getClientInvoices: async (): Promise<ClientInvoice[]> => [...MOCK_CLIENT_INVOICES],
+  getClientInvoiceById: async (id: string): Promise<ClientInvoice | undefined> => MOCK_CLIENT_INVOICES.find(inv => inv.id === id),
   generateClientInvoice: async (clientId: string): Promise<ClientInvoice> => {
     const client = MOCK_CLIENTS.find(c => c.id === clientId);
     const eligibleTimesheets = MOCK_TIMESHEETS.filter(t => 
       t.clientId === clientId && t.readyForClientInvoice && !t.clientInvoiceId
     );
-
-    if (eligibleTimesheets.length === 0) throw new Error("No eligible timesheets found for this client.");
+    if (eligibleTimesheets.length === 0) throw new Error("No eligible timesheets found.");
 
     const invoiceId = `inv-c-${Date.now()}`;
     const items: InvoiceLineItem[] = eligibleTimesheets.map(ts => ({
       timesheetId: ts.id,
-      description: `Interpreting Service - ${ts.actualStart.split('T')[0]}`,
-      quantity: ts.unitsBillableToClient || 0,
+      bookingId: ts.bookingId,
+      description: `Service - ${ts.actualStart.split('T')[0]}`,
+      units: ts.unitsBillableToClient || 0,
       rate: (ts.clientAmountCalculated || 0) / (ts.unitsBillableToClient || 1),
       total: ts.clientAmountCalculated || 0
     }));
 
     const total = items.reduce((sum, item) => sum + item.total, 0);
-
     const newInvoice: ClientInvoice = {
       id: invoiceId,
       clientId,
@@ -310,12 +366,9 @@ export const BillingService = {
     saveMockData();
     return newInvoice;
   },
-
-  // --- Interpreter Invoices ---
   getInterpreterInvoices: async (interpreterId: string): Promise<InterpreterInvoice[]> => {
     return MOCK_INTERPRETER_INVOICES.filter(i => i.interpreterId === interpreterId);
   },
-
   createInterpreterInvoiceUpload: async (interpreterId: string, timesheetIds: string[], ref: string, amount: number): Promise<InterpreterInvoice> => {
     const interpreter = MOCK_INTERPRETERS.find(i => i.id === interpreterId);
     const newInvoice: InterpreterInvoice = {
@@ -329,12 +382,10 @@ export const BillingService = {
       issueDate: new Date().toISOString(),
       items: [] 
     };
-
     timesheetIds.forEach(tsId => {
       const ts = MOCK_TIMESHEETS.find(t => t.id === tsId);
       if (ts) ts.interpreterInvoiceId = newInvoice.id;
     });
-
     MOCK_INTERPRETER_INVOICES.push(newInvoice);
     saveMockData();
     return newInvoice;

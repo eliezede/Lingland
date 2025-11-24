@@ -18,12 +18,15 @@ import { Dashboard } from './pages/Dashboard';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
+import AdminBookingDetails from './pages/admin/bookings/AdminBookingDetails';
 import { AdminTimesheets } from './pages/admin/billing/TimesheetsPage';
 import { AdminBillingDashboard } from './pages/admin/billing/AdminBillingDashboard';
 import { AdminClientInvoicesPage } from './pages/admin/billing/AdminClientInvoicesPage';
 import { AdminClientInvoiceDetailsPage } from './pages/admin/billing/AdminClientInvoiceDetailsPage';
 import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpreterInvoicesPage';
 import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
+import { AdminClients } from './pages/admin/AdminClients';
+import { AdminInterpreters } from './pages/admin/AdminInterpreters';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -120,6 +123,11 @@ const App = () => {
                     <Routes>
                       <Route path="dashboard" element={<Dashboard />} />
                       <Route path="bookings" element={<AdminBookings />} />
+                      <Route path="bookings/:id" element={<AdminBookingDetails />} />
+                      
+                      {/* Directory Management */}
+                      <Route path="clients" element={<AdminClients />} />
+                      <Route path="interpreters" element={<AdminInterpreters />} />
                       
                       {/* Billing */}
                       <Route path="billing" element={<AdminBillingDashboard />} />
@@ -130,8 +138,6 @@ const App = () => {
                       
                       <Route path="timesheets" element={<AdminTimesheets />} />
                       <Route path="invoices" element={<Navigate to="billing" replace />} />
-                      <Route path="clients" element={<div>Clients Page (Todo)</div>} />
-                      <Route path="interpreters" element={<div>Interpreters Page (Todo)</div>} />
                       
                       <Route path="*" element={<NotFound />} />
                     </Routes>
