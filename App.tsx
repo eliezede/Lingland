@@ -3,7 +3,6 @@ import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
-import { RoleSwitcher } from './components/RoleSwitcher';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { UserRole } from './types';
@@ -16,6 +15,7 @@ import { ClientLayout } from './layouts/ClientLayout';
 // Shared / Generic
 import { NotFound } from './pages/NotFound';
 import { Dashboard } from './pages/Dashboard';
+import { LoginPage } from './pages/LoginPage';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
@@ -26,6 +26,8 @@ import { AdminClientInvoicesPage } from './pages/admin/billing/AdminClientInvoic
 import { AdminClientInvoiceDetailsPage } from './pages/admin/billing/AdminClientInvoiceDetailsPage';
 import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpreterInvoicesPage';
 import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
+import { AdminClients } from './pages/admin/AdminClients';
+import { AdminInterpreters } from './pages/admin/AdminInterpreters';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -50,11 +52,10 @@ import { ClientProfile } from './pages/client/ClientProfile';
 const RootRedirect = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) return null; // Or a loading spinner
+  if (isLoading) return null; 
   
   if (!user) {
-    // If not logged in, default to admin dashboard (which will show Auth Required)
-    return <Navigate to="/admin/dashboard" replace />; 
+    return <Navigate to="/login" replace />; 
   }
 
   switch (user.role) {
@@ -65,7 +66,7 @@ const RootRedirect = () => {
     case UserRole.INTERPRETER:
       return <Navigate to="/interpreter/dashboard" replace />;
     default:
-      return <Navigate to="/admin/dashboard" replace />;
+      return <Navigate to="/login" replace />;
   }
 };
 
@@ -76,6 +77,7 @@ const App = () => {
         <ToastProvider>
           <HashRouter>
             <Routes>
+              <Route path="/login" element={<LoginPage />} />
               
               {/* --- INTERPRETER ROUTES --- */}
               <Route path="/interpreter/*" element={
@@ -124,6 +126,10 @@ const App = () => {
                       <Route path="bookings" element={<AdminBookings />} />
                       <Route path="bookings/:id" element={<AdminBookingDetails />} />
                       
+                      {/* Directory Management */}
+                      <Route path="clients" element={<AdminClients />} />
+                      <Route path="interpreters" element={<AdminInterpreters />} />
+                      
                       {/* Billing */}
                       <Route path="billing" element={<AdminBillingDashboard />} />
                       <Route path="billing/client-invoices" element={<AdminClientInvoicesPage />} />
@@ -133,8 +139,6 @@ const App = () => {
                       
                       <Route path="timesheets" element={<AdminTimesheets />} />
                       <Route path="invoices" element={<Navigate to="billing" replace />} />
-                      <Route path="clients" element={<div>Clients Page (Todo)</div>} />
-                      <Route path="interpreters" element={<div>Interpreters Page (Todo)</div>} />
                       
                       <Route path="*" element={<NotFound />} />
                     </Routes>
@@ -149,7 +153,6 @@ const App = () => {
               <Route path="*" element={<NotFound />} />
 
             </Routes>
-            <RoleSwitcher />
           </HashRouter>
         </ToastProvider>
       </AuthProvider>

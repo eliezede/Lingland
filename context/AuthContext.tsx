@@ -1,11 +1,12 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { MOCK_USERS } from '../services/mockData';
+import { auth, db } from '../services/firebaseConfig';
+import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
-  login: (role: UserRole) => void;
   logout: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -18,32 +19,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate checking localStorage for token
-    const storedRole = localStorage.getItem('mock_user_role');
-    if (storedRole) {
-       const mockUser = MOCK_USERS.find(u => u.role === storedRole);
-       if (mockUser) setUser(mockUser);
-    }
-    setIsLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Fetch additional user role data from Firestore
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: userData.displayName || firebaseUser.email,
+              role: userData.role as UserRole,
+              profileId: userData.profileId // Link to Client or Interpreter profile
+            });
+          } else {
+            // Fallback if no firestore doc exists yet
+            setUser({
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: 'Unknown User',
+              role: UserRole.CLIENT // Default fallback safety
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const login = (role: UserRole) => {
-    const mockUser = MOCK_USERS.find(u => u.role === role);
-    if (mockUser) {
-      setUser(mockUser);
-      localStorage.setItem('mock_user_role', role);
-    }
-  };
-
-  const logout = () => {
+  const logout = async () => {
+    await firebaseSignOut(auth);
     setUser(null);
-    localStorage.removeItem('mock_user_role');
   };
 
   return (
     <AuthContext.Provider value={{ 
       user, 
-      login, 
       logout, 
       isLoading,
       isAuthenticated: !!user 
