@@ -1,5 +1,6 @@
+
 import React, { useEffect, useState } from 'react';
-import { InterpreterService } from '../../services/api';
+import { InterpreterService } from '../../services/interpreterService';
 import { Interpreter } from '../../types';
 import { Spinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';

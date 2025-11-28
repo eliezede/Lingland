@@ -1,5 +1,5 @@
 
-import { Booking, BookingStatus, Client, Interpreter, ServiceType, User, UserRole, BookingAssignment, AssignmentStatus, Timesheet, Rate, ClientInvoice, InterpreterInvoice } from '../types';
+import { Booking, BookingStatus, Client, Interpreter, ServiceType, User, UserRole, BookingAssignment, AssignmentStatus, Timesheet, Rate, ClientInvoice, InterpreterInvoice, SystemSettings } from '../types';
 
 // === HELPERS ===
 const today = new Date();
@@ -106,6 +106,42 @@ const DEFAULT_TIMESHEETS: Timesheet[] = [
 const DEFAULT_CLIENT_INVOICES: ClientInvoice[] = [];
 const DEFAULT_INTERPRETER_INVOICES: InterpreterInvoice[] = [];
 
+// === SYSTEM SETTINGS DEFAULTS ===
+
+const DEFAULT_SETTINGS: SystemSettings = {
+  general: {
+    companyName: 'Lingland Ltd',
+    supportEmail: 'support@lingland.com',
+    businessAddress: '123 Business Park, London, UK',
+    websiteUrl: 'https://lingland.com'
+  },
+  finance: {
+    currency: 'GBP',
+    vatRate: 20,
+    vatNumber: 'GB123456789',
+    invoicePrefix: 'INV-',
+    nextInvoiceNumber: 1001,
+    paymentTermsDays: 30,
+    invoiceFooterText: 'Bank Details: Sort 00-00-00, Acc 12345678. Thank you for your business.'
+  },
+  operations: {
+    minBookingDurationMinutes: 60,
+    cancellationWindowHours: 24,
+    timeIncrementMinutes: 15,
+    defaultOnlinePlatformUrl: 'https://meet.google.com/new'
+  },
+  masterData: {
+    activeServiceTypes: [
+      ServiceType.FACE_TO_FACE,
+      ServiceType.VIDEO,
+      ServiceType.TELEPHONE,
+      ServiceType.TRANSLATION,
+      ServiceType.BSL
+    ],
+    priorityLanguages: ['Arabic', 'Polish', 'Romanian', 'Urdu', 'Spanish']
+  }
+};
+
 // === PERSISTENCE LOGIC ===
 
 const load = <T>(key: string, defaults: T): T => {
@@ -126,6 +162,7 @@ export const MOCK_RATES: Rate[] = load('rates', DEFAULT_RATES);
 export const MOCK_TIMESHEETS: Timesheet[] = load('timesheets', DEFAULT_TIMESHEETS);
 export const MOCK_CLIENT_INVOICES: ClientInvoice[] = load('client_invoices', DEFAULT_CLIENT_INVOICES);
 export const MOCK_INTERPRETER_INVOICES: InterpreterInvoice[] = load('interpreter_invoices', DEFAULT_INTERPRETER_INVOICES);
+export const MOCK_SETTINGS: SystemSettings = load('settings', DEFAULT_SETTINGS);
 
 export const saveMockData = () => {
   localStorage.setItem('lingland_users', JSON.stringify(MOCK_USERS));
@@ -137,4 +174,5 @@ export const saveMockData = () => {
   localStorage.setItem('lingland_timesheets', JSON.stringify(MOCK_TIMESHEETS));
   localStorage.setItem('lingland_client_invoices', JSON.stringify(MOCK_CLIENT_INVOICES));
   localStorage.setItem('lingland_interpreter_invoices', JSON.stringify(MOCK_INTERPRETER_INVOICES));
+  localStorage.setItem('lingland_settings', JSON.stringify(MOCK_SETTINGS));
 };

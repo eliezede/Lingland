@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
-import { SystemService } from '../services/api';
+import { SystemService } from '../services/systemService';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Globe2, Activity, Database, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 

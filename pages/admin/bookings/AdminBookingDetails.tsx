@@ -1,15 +1,17 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BookingService, InterpreterService } from '../../../services/api';
+import { BookingService } from '../../../services/bookingService';
+import { InterpreterService } from '../../../services/interpreterService';
 import { Booking, BookingAssignment, Interpreter, BookingStatus, AssignmentStatus } from '../../../types';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
+import { Modal } from '../../../components/ui/Modal';
 import { useToast } from '../../../context/ToastContext';
 import { 
   Calendar, Clock, MapPin, Video, Globe2, ChevronLeft, 
-  User, CheckCircle2, XCircle, Send, AlertCircle, MoreHorizontal 
+  User, CheckCircle2, XCircle, Send, AlertCircle, AlertTriangle 
 } from 'lucide-react';
 
 const AdminBookingDetails = () => {
@@ -23,6 +25,10 @@ const AdminBookingDetails = () => {
   const [interpretersMap, setInterpretersMap] = useState<Record<string, Interpreter>>({});
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+
+  // Conflict Modal State
+  const [conflictBooking, setConflictBooking] = useState<Booking | null>(null);
+  const [pendingInterpreterId, setPendingInterpreterId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -74,14 +80,36 @@ const AdminBookingDetails = () => {
     }
   };
 
-  const handleConfirmAssignment = async (interpreterId: string) => {
+  const initiateConfirmAssignment = async (interpreterId: string) => {
     if (!booking) return;
-    if (!window.confirm('Are you sure you want to confirm this interpreter? This will expire other offers.')) return;
     
+    // 1. Conflict Check
+    const conflicting = await BookingService.checkScheduleConflict(
+      interpreterId, 
+      booking.date, 
+      booking.startTime, 
+      booking.durationMinutes,
+      booking.id // Exclude current if re-confirming (edge case)
+    );
+
+    if (conflicting) {
+      setConflictBooking(conflicting);
+      setPendingInterpreterId(interpreterId);
+      return;
+    }
+    
+    // If no conflict, proceed directly
+    await executeAssignment(interpreterId);
+  };
+
+  const executeAssignment = async (interpreterId: string) => {
+    if (!booking) return;
     setProcessing(true);
     try {
       await BookingService.assignInterpreterToBooking(booking.id, interpreterId);
       showToast('Interpreter confirmed for this job', 'success');
+      setConflictBooking(null);
+      setPendingInterpreterId(null);
       await loadData(booking.id);
     } catch (error) {
       showToast('Failed to confirm assignment', 'error');
@@ -257,7 +285,7 @@ const AdminBookingDetails = () => {
                           <Button 
                             size="sm" 
                             className="w-full bg-green-600 hover:bg-green-700"
-                            onClick={() => handleConfirmAssignment(assign.interpreterId)}
+                            onClick={() => initiateConfirmAssignment(assign.interpreterId)}
                             disabled={processing}
                           >
                             Confirm Assignment
@@ -325,6 +353,61 @@ const AdminBookingDetails = () => {
           )}
         </div>
       </div>
+
+      {/* Conflict Modal */}
+      <Modal
+        isOpen={!!conflictBooking}
+        onClose={() => setConflictBooking(null)}
+        title="Schedule Conflict Detected"
+        maxWidth="md"
+        footer={
+          <div className="flex justify-end gap-3 w-full">
+            <Button 
+              variant="secondary" 
+              onClick={() => setConflictBooking(null)}
+            >
+              Cancel Assignment
+            </Button>
+            <Button 
+              variant="danger" 
+              onClick={() => pendingInterpreterId && executeAssignment(pendingInterpreterId)}
+              isLoading={processing}
+            >
+              Confirm Anyway
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex items-start bg-red-50 p-4 rounded-lg mb-4">
+          <AlertTriangle className="text-red-600 mr-3 flex-shrink-0" size={24} />
+          <div>
+            <h4 className="font-bold text-red-900 text-sm">Interpreter Unavailable</h4>
+            <p className="text-sm text-red-700 mt-1">
+              This interpreter is already booked during the requested time slot.
+            </p>
+          </div>
+        </div>
+
+        {conflictBooking && (
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <p className="text-xs font-bold text-gray-500 uppercase mb-2">Conflicting Booking</p>
+            <div className="flex items-center mb-2">
+              <Calendar size={16} className="text-gray-400 mr-2" />
+              <span className="text-sm text-gray-900">{new Date(conflictBooking.date).toLocaleDateString()}</span>
+            </div>
+            <div className="flex items-center mb-2">
+              <Clock size={16} className="text-gray-400 mr-2" />
+              <span className="text-sm text-gray-900">
+                {conflictBooking.startTime} ({conflictBooking.durationMinutes} mins)
+              </span>
+            </div>
+            <div className="flex items-center">
+              <User size={16} className="text-gray-400 mr-2" />
+              <span className="text-sm text-gray-900">{conflictBooking.clientName}</span>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

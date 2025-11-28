@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { InterpreterService } from '../../services/api';
+import { InterpreterService } from '../../services/interpreterService';
 import { Interpreter } from '../../types';
 import { User, Shield, Award, LogOut } from 'lucide-react';
 

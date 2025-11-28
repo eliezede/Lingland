@@ -1,7 +1,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { BookingService, StatsService } from '../../services/api';
+import { BookingService } from '../../services/api';
+import { StatsService } from '../../services/api';
 import { Booking, BookingAssignment } from '../../types';
 import { MobileJobCard } from '../../components/MobileJobCard';
 import { Link } from 'react-router-dom';

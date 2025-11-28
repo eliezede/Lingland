@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { BillingService, ClientService } from '../../../services/api';
+import { BillingService } from '../../../services/billingService';
+import { ClientService } from '../../../services/clientService';
 import { ClientInvoice, Client } from '../../../types';
 import { useToast } from '../../../context/ToastContext';
 import { PoundSterling, Plus } from 'lucide-react';
@@ -19,7 +20,10 @@ export const AdminInvoices = () => {
   const handleGenerate = async () => {
     if (!selectedClient) return;
     try {
-      const newInv = await BillingService.generateClientInvoice(selectedClient);
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const end = now.toISOString();
+      const newInv = await BillingService.generateClientInvoice(selectedClient, start, end);
       setInvoices([...invoices, newInv]);
       showToast('Invoice Generated Successfully!', 'success');
     } catch (e: any) {

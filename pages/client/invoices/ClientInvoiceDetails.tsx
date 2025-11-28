@@ -2,6 +2,7 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useClientInvoiceById } from '../../../hooks/useClientHooks';
+import { PdfService } from '../../../services/api';
 import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
 import { ChevronLeft, Download } from 'lucide-react';
 
@@ -9,6 +10,12 @@ export const ClientInvoiceDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { invoice, loading } = useClientInvoiceById(id);
+
+  const handleDownload = () => {
+    if (invoice) {
+      PdfService.generateClientInvoice(invoice);
+    }
+  };
 
   if (loading) return <div className="p-8">Loading...</div>;
   if (!invoice) return <div className="p-8 text-red-500">Invoice not found.</div>;
@@ -19,7 +26,10 @@ export const ClientInvoiceDetails = () => {
         <button onClick={() => navigate(-1)} className="flex items-center text-gray-500 hover:text-gray-700">
           <ChevronLeft size={20} className="mr-1" /> Back
         </button>
-        <button className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+        <button 
+          onClick={handleDownload}
+          className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+        >
           <Download size={16} className="mr-2" /> Download PDF
         </button>
       </div>
@@ -28,7 +38,7 @@ export const ClientInvoiceDetails = () => {
         <div className="p-8 border-b border-gray-200">
           <div className="flex justify-between items-start">
              <div>
-               <h1 className="text-3xl font-bold text-gray-900">{invoice.reference || invoice.invoiceNumber}</h1>
+               <h1 className="text-3xl font-bold text-gray-900">{invoice.reference || invoice.id}</h1>
                <p className="text-gray-500 mt-1">Issued: {new Date(invoice.issueDate).toLocaleDateString()}</p>
              </div>
              <div className="text-right">
@@ -79,12 +89,12 @@ export const ClientInvoiceDetails = () => {
                <span>£{invoice.totalAmount.toFixed(2)}</span>
              </div>
              <div className="flex justify-between text-sm text-gray-600">
-               <span>VAT (0%)</span>
-               <span>£0.00</span>
+               <span>VAT (20%)</span>
+               <span>£{(invoice.totalAmount * 0.2).toFixed(2)}</span>
              </div>
              <div className="flex justify-between text-lg font-bold text-gray-900 border-t pt-2">
                <span>Total</span>
-               <span>£{invoice.totalAmount.toFixed(2)}</span>
+               <span>£{(invoice.totalAmount * 1.2).toFixed(2)}</span>
              </div>
            </div>
         </div>

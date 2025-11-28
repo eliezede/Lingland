@@ -4,7 +4,7 @@ import { BillingService } from '../../../services/billingService';
 import { ClientInvoice } from '../../../types';
 import { InvoiceTable } from '../../../components/billing/InvoiceTable';
 import { Plus } from 'lucide-react';
-import { ClientService } from '../../../services/api';
+import { ClientService } from '../../../services/clientService';
 import { useToast } from '../../../context/ToastContext';
 
 export const AdminClientInvoicesPage = () => {

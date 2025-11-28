@@ -7,12 +7,14 @@ import {
   doc, 
   getDoc, 
   updateDoc, 
-  orderBy
+  orderBy,
+  addDoc
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "./firebaseConfig";
 import { ClientInvoice, InterpreterInvoice, Timesheet, InvoiceStatus } from "../types";
 import { MOCK_TIMESHEETS, MOCK_CLIENT_INVOICES, MOCK_INTERPRETER_INVOICES, saveMockData, MOCK_BOOKINGS, MOCK_RATES } from "./mockData";
+import { convertDoc, safeFetch } from './utils';
 
 export const BillingService = {
   
@@ -93,15 +95,36 @@ export const BillingService = {
     }
   },
 
-  generateClientInvoice: async (clientId: string, periodStart: string, periodEnd: string) => {
+  generateClientInvoice: async (clientId: string, periodStart?: string, periodEnd?: string) => {
     try {
       const functions = getFunctions();
       const generateFn = httpsCallable(functions, 'generateClientInvoice');
-      const result = await generateFn({ clientId, periodStart, periodEnd });
+      const start = periodStart || new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+      const end = periodEnd || new Date().toISOString();
+      const result = await generateFn({ clientId, periodStart: start, periodEnd: end });
       return result.data as any;
     } catch (e) {
-      console.error("Function call failed", e);
-      throw new Error("Backend function not available in mock mode");
+      console.error("Function call failed, falling back to mock generation", e);
+      // Mock logic for offline dev
+      const ref = `INV-${Math.floor(Math.random() * 10000)}`;
+      const newInvoice = {
+        id: `mock-inv-${Date.now()}`,
+        clientId,
+        clientName: 'Mock Client',
+        reference: ref,
+        invoiceNumber: ref, // Ensure legacy support
+        status: InvoiceStatus.DRAFT,
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+        periodStart: periodStart || new Date().toISOString(),
+        periodEnd: periodEnd || new Date().toISOString(),
+        totalAmount: 150.00,
+        currency: 'GBP',
+        items: []
+      } as ClientInvoice;
+      MOCK_CLIENT_INVOICES.push(newInvoice);
+      saveMockData();
+      return { success: true, total: 150.00, invoiceId: newInvoice.id };
     }
   },
 
@@ -174,8 +197,10 @@ export const BillingService = {
    * Timesheets
    */
   getAllTimesheets: async (): Promise<Timesheet[]> => {
-    // Mock implementation mainly used
-    return [...MOCK_TIMESHEETS];
+    return safeFetch(async () => {
+      const snap = await getDocs(collection(db, 'timesheets'));
+      return snap.docs.map(d => convertDoc<Timesheet>(d));
+    }, MOCK_TIMESHEETS);
   },
 
   getPendingTimesheets: async () => {
@@ -216,20 +241,28 @@ export const BillingService = {
   },
 
   getInterpreterTimesheets: async (interpreterId: string): Promise<Timesheet[]> => {
-    return MOCK_TIMESHEETS.filter(t => t.interpreterId === interpreterId);
+    return safeFetch(async () => {
+      const q = query(collection(db, 'timesheets'), where('interpreterId', '==', interpreterId));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => convertDoc<Timesheet>(d));
+    }, MOCK_TIMESHEETS.filter(t => t.interpreterId === interpreterId));
   },
 
   getUninvoicedTimesheetsForInterpreter: async (interpreterId: string): Promise<Timesheet[]> => {
-    return MOCK_TIMESHEETS.filter(t => 
-      t.interpreterId === interpreterId && 
-      t.adminApproved && 
-      !t.interpreterInvoiceId
-    );
+    return safeFetch(async () => {
+      const q = query(
+        collection(db, 'timesheets'), 
+        where('interpreterId', '==', interpreterId),
+        where('adminApproved', '==', true)
+      );
+      const snap = await getDocs(q);
+      const all = snap.docs.map(d => convertDoc<Timesheet>(d));
+      return all.filter(t => !t.interpreterInvoiceId);
+    }, MOCK_TIMESHEETS.filter(t => t.interpreterId === interpreterId && t.adminApproved && !t.interpreterInvoiceId));
   },
 
   submitTimesheet: async (data: Partial<Timesheet>): Promise<Timesheet> => {
-    const newTs: Timesheet = {
-      id: `ts-${Date.now()}`,
+    const newTs = {
       bookingId: data.bookingId!,
       interpreterId: data.interpreterId!,
       clientId: data.clientId!,
@@ -238,7 +271,7 @@ export const BillingService = {
       actualEnd: data.actualEnd!,
       breakDurationMinutes: data.breakDurationMinutes || 0,
       adminApproved: false,
-      status: 'SUBMITTED',
+      status: 'SUBMITTED' as const,
       readyForClientInvoice: false,
       readyForInterpreterInvoice: false,
       unitsBillableToClient: 0,
@@ -246,8 +279,14 @@ export const BillingService = {
       clientAmountCalculated: 0,
       interpreterAmountCalculated: 0
     };
-    MOCK_TIMESHEETS.push(newTs);
-    saveMockData();
-    return newTs;
+    try {
+      const ref = await addDoc(collection(db, 'timesheets'), newTs);
+      return { id: ref.id, ...newTs } as Timesheet;
+    } catch {
+      const mockTs = { id: `ts-${Date.now()}`, ...newTs } as Timesheet;
+      MOCK_TIMESHEETS.push(mockTs);
+      saveMockData();
+      return mockTs;
+    }
   }
 };

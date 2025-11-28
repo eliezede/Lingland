@@ -1,12 +1,12 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BookingService } from '../../services/api';
+import { BookingService, StorageService } from '../../services/api';
 import { Booking } from '../../types';
 import { useInterpreterTimesheets } from '../../hooks/useInterpreterTimesheets';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { ChevronLeft, Camera } from 'lucide-react';
+import { ChevronLeft, Camera, Upload, Check } from 'lucide-react';
 
 export const InterpreterTimesheetForm = () => {
   const { bookingId } = useParams<{ bookingId: string }>();
@@ -20,14 +20,34 @@ export const InterpreterTimesheetForm = () => {
   const [formData, setFormData] = useState({
     start: '',
     end: '',
-    breakMins: 0
+    breakMins: 0,
+    evidenceUrl: ''
   });
+  
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (bookingId) {
       BookingService.getById(bookingId).then(setJob);
     }
   }, [bookingId]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const path = `timesheets/${bookingId}/${Date.now()}_${file.name}`;
+      const url = await StorageService.uploadFile(file, path);
+      setFormData(prev => ({ ...prev, evidenceUrl: url }));
+      showToast('File uploaded successfully', 'success');
+    } catch (error) {
+      showToast('Upload failed', 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +64,8 @@ export const InterpreterTimesheetForm = () => {
       clientId: job.clientId,
       actualStart: startISO,
       actualEnd: endISO,
-      breakDurationMinutes: formData.breakMins
+      breakDurationMinutes: formData.breakMins,
+      supportingDocumentUrl: formData.evidenceUrl
     });
     
     setIsSubmitting(false);
@@ -103,16 +124,42 @@ export const InterpreterTimesheetForm = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Evidence</label>
-            <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center justify-center text-gray-400 bg-gray-50">
-              <Camera size={32} className="mb-2" />
-              <span className="text-sm">Tap to upload signed form</span>
+            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Evidence (Signed Form)</label>
+            <div className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center relative transition-colors ${
+              formData.evidenceUrl ? 'border-green-400 bg-green-50' : 'border-gray-300 bg-gray-50'
+            }`}>
+              <input 
+                type="file" 
+                accept="image/*,.pdf"
+                onChange={handleFileUpload}
+                disabled={uploading}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              
+              {uploading ? (
+                <div className="flex flex-col items-center text-blue-600">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-2"></div>
+                  <span className="text-sm">Uploading...</span>
+                </div>
+              ) : formData.evidenceUrl ? (
+                <div className="flex flex-col items-center text-green-600">
+                  <Check size={32} className="mb-2" />
+                  <span className="text-sm font-bold">File Attached</span>
+                  <span className="text-xs mt-1">Tap to change</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center text-gray-400">
+                  <Camera size={32} className="mb-2" />
+                  <span className="text-sm font-medium">Tap to upload signed form</span>
+                  <span className="text-xs mt-1">Image or PDF</span>
+                </div>
+              )}
             </div>
           </div>
 
           <button 
             type="submit" 
-            disabled={isSubmitting}
+            disabled={isSubmitting || uploading}
             className="w-full py-4 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 disabled:opacity-50 mt-8"
           >
             {isSubmitting ? 'Sending...' : 'Submit Timesheet'}

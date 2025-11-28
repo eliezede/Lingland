@@ -1,10 +1,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BillingService } from '../../../services/billingService';
+import { BillingService, PdfService } from '../../../services/api';
 import { ClientInvoice, InvoiceStatus } from '../../../types';
 import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
-import { ChevronLeft, Send, CheckCircle } from 'lucide-react';
+import { ChevronLeft, Download, Send, CheckCircle } from 'lucide-react';
 import { useToast } from '../../../context/ToastContext';
 
 export const AdminClientInvoiceDetailsPage = () => {
@@ -25,6 +25,13 @@ export const AdminClientInvoiceDetailsPage = () => {
     }
   };
 
+  const handleDownloadPdf = () => {
+    if (invoice) {
+      PdfService.generateClientInvoice(invoice);
+      showToast('Downloading PDF...', 'info');
+    }
+  };
+
   if (!invoice) return <div className="p-8 text-center">Loading details...</div>;
 
   return (
@@ -34,7 +41,14 @@ export const AdminClientInvoiceDetailsPage = () => {
         <button onClick={() => navigate(-1)} className="flex items-center text-gray-500 hover:text-gray-700">
           <ChevronLeft size={20} className="mr-1" /> Back
         </button>
-        <div className="space-x-3">
+        <div className="space-x-3 flex">
+           <button 
+             onClick={handleDownloadPdf}
+             className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center mr-2"
+           >
+             <Download size={16} className="mr-2" /> PDF
+           </button>
+
            {invoice.status === InvoiceStatus.DRAFT && (
              <button onClick={() => handleStatusUpdate(InvoiceStatus.SENT)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center">
                <Send size={16} className="mr-2" /> Mark Sent
@@ -53,7 +67,7 @@ export const AdminClientInvoiceDetailsPage = () => {
         <div className="p-8 border-b border-gray-200">
           <div className="flex justify-between items-start">
              <div>
-               <h1 className="text-3xl font-bold text-gray-900">{invoice.reference}</h1>
+               <h1 className="text-3xl font-bold text-gray-900">{invoice.reference || invoice.id}</h1>
                <p className="text-gray-500 mt-1">Issued: {new Date(invoice.issueDate).toLocaleDateString()}</p>
              </div>
              <div className="text-right">
