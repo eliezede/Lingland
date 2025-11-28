@@ -1,7 +1,9 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { SettingsProvider } from './context/SettingsContext';
 import { RoleSwitcher } from './components/RoleSwitcher';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
@@ -16,6 +18,8 @@ import { ClientLayout } from './layouts/ClientLayout';
 import { NotFound } from './pages/NotFound';
 import { Dashboard } from './pages/Dashboard';
 import { LoginPage } from './pages/LoginPage';
+import { LandingPage } from './pages/public/LandingPage';
+import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
@@ -29,6 +33,7 @@ import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminI
 import { AdminClients } from './pages/admin/AdminClients';
 import { AdminInterpreters } from './pages/admin/AdminInterpreters';
 import { AdminUsers } from './pages/admin/AdminUsers';
+import { AdminSettings } from './pages/admin/AdminSettings';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -48,28 +53,27 @@ import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
 
-// --- ROOT REDIRECT COMPONENT ---
-// Intelligently directs users based on their role to prevent loops.
-const RootRedirect = () => {
+// --- ROOT ROUTE LOGIC ---
+const RootRoute = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) return null; // Or a loading spinner
+  if (isLoading) return <div className="min-h-screen bg-white" />;
   
-  if (!user) {
-    // If not logged in, redirect to login
-    return <Navigate to="/login" replace />; 
+  if (user) {
+    switch (user.role) {
+      case UserRole.ADMIN:
+        return <Navigate to="/admin/dashboard" replace />;
+      case UserRole.CLIENT:
+        return <Navigate to="/client/dashboard" replace />;
+      case UserRole.INTERPRETER:
+        return <Navigate to="/interpreter/dashboard" replace />;
+      default:
+        return <LandingPage />;
+    }
   }
 
-  switch (user.role) {
-    case UserRole.ADMIN:
-      return <Navigate to="/admin/dashboard" replace />;
-    case UserRole.CLIENT:
-      return <Navigate to="/client/dashboard" replace />;
-    case UserRole.INTERPRETER:
-      return <Navigate to="/interpreter/dashboard" replace />;
-    default:
-      return <Navigate to="/login" replace />;
-  }
+  // Not logged in -> Show Landing Page
+  return <LandingPage />;
 };
 
 const App = () => {
@@ -77,87 +81,91 @@ const App = () => {
     <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          <HashRouter>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              
-              {/* --- INTERPRETER ROUTES --- */}
-              <Route path="/interpreter/*" element={
-                <ProtectedRoute allowedRoles={[UserRole.INTERPRETER]}>
-                  <InterpreterLayout>
-                    <Routes>
-                      <Route path="dashboard" element={<InterpreterDashboard />} />
-                      <Route path="jobs" element={<InterpreterJobs />} />
-                      <Route path="jobs/:id" element={<InterpreterJobDetails />} />
-                      <Route path="offers" element={<Navigate to="jobs" replace />} />
-                      <Route path="schedule" element={<Navigate to="jobs" replace />} />
-                      <Route path="timesheets" element={<InterpreterTimesheets />} />
-                      <Route path="timesheets/new/:bookingId" element={<InterpreterTimesheetForm />} />
-                      <Route path="billing" element={<InterpreterPayments />} />
-                      <Route path="profile" element={<InterpreterProfile />} />
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </InterpreterLayout>
-                </ProtectedRoute>
-              } />
+          <SettingsProvider>
+            <HashRouter>
+              <Routes>
+                <Route path="/" element={<RootRoute />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/request" element={<GuestBookingRequest />} />
+                
+                {/* --- INTERPRETER ROUTES --- */}
+                <Route path="/interpreter/*" element={
+                  <ProtectedRoute allowedRoles={[UserRole.INTERPRETER]}>
+                    <InterpreterLayout>
+                      <Routes>
+                        <Route path="dashboard" element={<InterpreterDashboard />} />
+                        <Route path="jobs" element={<InterpreterJobs />} />
+                        <Route path="jobs/:id" element={<InterpreterJobDetails />} />
+                        <Route path="offers" element={<Navigate to="jobs" replace />} />
+                        <Route path="schedule" element={<Navigate to="jobs" replace />} />
+                        <Route path="timesheets" element={<InterpreterTimesheets />} />
+                        <Route path="timesheets/new/:bookingId" element={<InterpreterTimesheetForm />} />
+                        <Route path="billing" element={<InterpreterPayments />} />
+                        <Route path="profile" element={<InterpreterProfile />} />
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </InterpreterLayout>
+                  </ProtectedRoute>
+                } />
 
-              {/* --- CLIENT ROUTES --- */}
-              <Route path="/client/*" element={
-                <ProtectedRoute allowedRoles={[UserRole.CLIENT]}>
-                  <ClientLayout>
-                    <Routes>
-                      <Route path="dashboard" element={<ClientDashboard />} />
-                      <Route path="bookings" element={<ClientBookingsList />} />
-                      <Route path="bookings/:id" element={<ClientBookingDetails />} />
-                      <Route path="new-booking" element={<ClientNewBooking />} />
-                      <Route path="invoices" element={<ClientInvoicesList />} />
-                      <Route path="invoices/:id" element={<ClientInvoiceDetails />} />
-                      <Route path="profile" element={<ClientProfile />} />
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </ClientLayout>
-                </ProtectedRoute>
-              } />
+                {/* --- CLIENT ROUTES --- */}
+                <Route path="/client/*" element={
+                  <ProtectedRoute allowedRoles={[UserRole.CLIENT]}>
+                    <ClientLayout>
+                      <Routes>
+                        <Route path="dashboard" element={<ClientDashboard />} />
+                        <Route path="bookings" element={<ClientBookingsList />} />
+                        <Route path="bookings/:id" element={<ClientBookingDetails />} />
+                        <Route path="new-booking" element={<ClientNewBooking />} />
+                        <Route path="invoices" element={<ClientInvoicesList />} />
+                        <Route path="invoices/:id" element={<ClientInvoiceDetails />} />
+                        <Route path="profile" element={<ClientProfile />} />
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </ClientLayout>
+                  </ProtectedRoute>
+                } />
 
-              {/* --- ADMIN ROUTES --- */}
-              <Route path="/admin/*" element={
-                <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-                  <AdminLayout>
-                    <Routes>
-                      <Route path="dashboard" element={<Dashboard />} />
-                      <Route path="bookings" element={<AdminBookings />} />
-                      <Route path="bookings/:id" element={<AdminBookingDetails />} />
-                      
-                      {/* Directory Management */}
-                      <Route path="clients" element={<AdminClients />} />
-                      <Route path="interpreters" element={<AdminInterpreters />} />
-                      <Route path="users" element={<AdminUsers />} />
-                      
-                      {/* Billing */}
-                      <Route path="billing" element={<AdminBillingDashboard />} />
-                      <Route path="billing/client-invoices" element={<AdminClientInvoicesPage />} />
-                      <Route path="billing/client-invoices/:id" element={<AdminClientInvoiceDetailsPage />} />
-                      <Route path="billing/interpreter-invoices" element={<AdminInterpreterInvoicesPage />} />
-                      <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
-                      
-                      <Route path="timesheets" element={<AdminTimesheets />} />
-                      <Route path="invoices" element={<Navigate to="billing" replace />} />
-                      
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </AdminLayout>
-                </ProtectedRoute>
-              } />
+                {/* --- ADMIN ROUTES --- */}
+                <Route path="/admin/*" element={
+                  <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
+                    <AdminLayout>
+                      <Routes>
+                        <Route path="dashboard" element={<Dashboard />} />
+                        <Route path="bookings" element={<AdminBookings />} />
+                        <Route path="bookings/:id" element={<AdminBookingDetails />} />
+                        
+                        {/* Directory Management */}
+                        <Route path="clients" element={<AdminClients />} />
+                        <Route path="interpreters" element={<AdminInterpreters />} />
+                        <Route path="users" element={<AdminUsers />} />
+                        
+                        {/* System */}
+                        <Route path="settings" element={<AdminSettings />} />
+                        
+                        {/* Billing */}
+                        <Route path="billing" element={<AdminBillingDashboard />} />
+                        <Route path="billing/client-invoices" element={<AdminClientInvoicesPage />} />
+                        <Route path="billing/client-invoices/:id" element={<AdminClientInvoiceDetailsPage />} />
+                        <Route path="billing/interpreter-invoices" element={<AdminInterpreterInvoicesPage />} />
+                        <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
+                        
+                        <Route path="timesheets" element={<AdminTimesheets />} />
+                        <Route path="invoices" element={<Navigate to="billing" replace />} />
+                        
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </AdminLayout>
+                  </ProtectedRoute>
+                } />
+                
+                {/* Fallback */}
+                <Route path="*" element={<NotFound />} />
 
-              {/* Smart Root Redirect */}
-              <Route path="/" element={<RootRedirect />} />
-              
-              {/* Fallback */}
-              <Route path="*" element={<NotFound />} />
-
-            </Routes>
-            <RoleSwitcher />
-          </HashRouter>
+              </Routes>
+              <RoleSwitcher />
+            </HashRouter>
+          </SettingsProvider>
         </ToastProvider>
       </AuthProvider>
     </ErrorBoundary>

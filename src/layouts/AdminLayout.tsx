@@ -7,7 +7,7 @@ import {
   LogOut, Menu, Globe2, FileText, PoundSterling, 
   CreditCard, UserCog, Settings
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 interface NavItemProps {
   to: string;
@@ -33,10 +33,16 @@ const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active }) => (
 export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Helper for active state matching
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
@@ -98,7 +104,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
             </div>
           </div>
           <button 
-            onClick={logout}
+            onClick={handleLogout}
             className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut size={16} className="mr-2" />

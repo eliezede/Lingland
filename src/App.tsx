@@ -59,7 +59,7 @@ import { ClientProfile } from './pages/client/ClientProfile';
 const RootRoute = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) return null; // Or a loading spinner
+  if (isLoading) return <div className="min-h-screen bg-white" />; // Clean loading state
   
   if (user) {
     switch (user.role) {
@@ -70,10 +70,12 @@ const RootRoute = () => {
       case UserRole.INTERPRETER:
         return <Navigate to="/interpreter/dashboard" replace />;
       default:
+        // Fallback for weird states, send to landing
         return <LandingPage />;
     }
   }
 
+  // Not logged in -> Show Landing Page
   return <LandingPage />;
 };
 

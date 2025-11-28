@@ -11,7 +11,7 @@ import {
   Menu,
   CreditCard
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 const NavItem = ({ to, icon: Icon, label, active }: any) => (
   <Link 
@@ -30,9 +30,15 @@ const NavItem = ({ to, icon: Icon, label, active }: any) => (
 export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -80,7 +86,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
             </div>
           </div>
           <button 
-            onClick={logout}
+            onClick={handleLogout}
             className="flex items-center w-full px-3 py-2 text-sm text-red-600 rounded hover:bg-red-50 transition-colors"
           >
             <LogOut size={16} className="mr-2" />
