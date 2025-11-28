@@ -18,6 +18,7 @@ import { ClientLayout } from './layouts/ClientLayout';
 import { NotFound } from './pages/NotFound';
 import { Dashboard } from './pages/Dashboard';
 import { LoginPage } from './pages/LoginPage';
+import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
@@ -84,6 +85,7 @@ const App = () => {
             <HashRouter>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/request" element={<GuestBookingRequest />} />
                 
                 {/* --- INTERPRETER ROUTES --- */}
                 <Route path="/interpreter/*" element={

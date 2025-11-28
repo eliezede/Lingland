@@ -225,11 +225,26 @@ export interface Interpreter {
   avatarUrl?: string;
 }
 
+// --- GUEST & BOOKING TYPES ---
+
+export interface GuestContact {
+  name: string;
+  organisation: string;
+  email: string;
+  phone?: string;
+  billingEmail?: string;
+}
+
 export interface Booking {
   id: string;
-  clientId: string;
-  clientName: string;
-  requestedByUserId: string;
+  // If clientId is null, it's a guest booking
+  clientId: string | null; 
+  clientName: string; 
+  requestedByUserId?: string; 
+  
+  bookingRef?: string;     // e.g. "LL-8329" for tracking
+  guestContact?: GuestContact; // Populated if clientId is null
+
   serviceType: ServiceType;
   languageFrom: string;
   languageTo: string;
@@ -242,7 +257,7 @@ export interface Booking {
   onlineLink?: string;
   status: BookingStatus;
   costCode?: string;
-  caseType?: string; // New field: e.g. Medical, Legal, etc.
+  caseType?: string; 
   notes?: string;
   genderPreference?: 'Male' | 'Female' | 'None';
   interpreterId?: string;
