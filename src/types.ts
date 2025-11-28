@@ -31,6 +31,45 @@ export enum ServiceType {
   BSL = 'BSL'
 }
 
+// --- SYSTEM SETTINGS ---
+
+export interface GeneralSettings {
+  companyName: string;
+  supportEmail: string;
+  businessAddress: string;
+  websiteUrl?: string;
+  logoUrl?: string;
+}
+
+export interface FinanceSettings {
+  currency: string;
+  vatRate: number;
+  vatNumber: string;
+  invoicePrefix: string;
+  nextInvoiceNumber: number;
+  paymentTermsDays: number;
+  invoiceFooterText: string;
+}
+
+export interface OperationalSettings {
+  minBookingDurationMinutes: number;
+  cancellationWindowHours: number;
+  timeIncrementMinutes: number;
+  defaultOnlinePlatformUrl: string;
+}
+
+export interface MasterDataSettings {
+  activeServiceTypes: ServiceType[];
+  priorityLanguages: string[];
+}
+
+export interface SystemSettings {
+  general: GeneralSettings;
+  finance: FinanceSettings;
+  operations: OperationalSettings;
+  masterData: MasterDataSettings;
+}
+
 // --- BILLING & INVOICING TYPES ---
 
 export enum InvoiceStatus {
@@ -203,10 +242,12 @@ export interface Booking {
   onlineLink?: string;
   status: BookingStatus;
   costCode?: string;
+  caseType?: string; // New field: e.g. Medical, Legal, etc.
   notes?: string;
   genderPreference?: 'Male' | 'Female' | 'None';
   interpreterId?: string;
   interpreterName?: string;
+  expectedEndTime?: string;
 }
 
 export interface BookingAssignment {

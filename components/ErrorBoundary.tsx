@@ -17,6 +17,14 @@ export class ErrorBoundary extends Component<Props, State> {
     error: null
   };
 
+  // Explicitly define props to prevent TS error "Property 'props' does not exist"
+  public readonly props: Props;
+
+  constructor(props: Props) {
+    super(props);
+    this.props = props;
+  }
+
   public static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
