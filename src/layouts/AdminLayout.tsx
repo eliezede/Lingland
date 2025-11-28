@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { UserRole } from '../types';
 import { 
   LayoutDashboard, CalendarDays, Users, Briefcase, 
   LogOut, Menu, Globe2, FileText, PoundSterling, 
@@ -68,9 +69,13 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
           <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
           
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
-          <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
-          <NavItem to="/admin/settings" icon={Settings} label="Settings" active={isActive('/admin/settings')} />
+          {user?.role === UserRole.ADMIN && (
+            <>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
+              <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
+              <NavItem to="/admin/settings" icon={Settings} label="Settings" active={isActive('/admin/settings')} />
+            </>
+          )}
 
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">Finance</div>
           <NavItem to="/admin/billing" icon={LayoutDashboard} label="Overview" active={location.pathname === '/admin/billing'} />
