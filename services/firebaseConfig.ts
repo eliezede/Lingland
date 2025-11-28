@@ -4,14 +4,15 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
 
-// REPLACE THESE WITH YOUR REAL FIREBASE KEYS FROM THE CONSOLE
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY_HERE",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCfBa6peqcv6hel5fzvU87KU_9bLyZNrM0",
+  authDomain: "lingland-2e52f.firebaseapp.com",
+  databaseURL: "https://lingland-2e52f-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "lingland-2e52f",
+  storageBucket: "lingland-2e52f.firebasestorage.app",
+  messagingSenderId: "405261345311",
+  appId: "1:405261345311:web:72fa726b4e89aca42aeb2a",
+  measurementId: "G-LRCKH20XYP"
 };
 
 const app = initializeApp(firebaseConfig);

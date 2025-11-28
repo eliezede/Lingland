@@ -1,9 +1,9 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { auth, db } from '../services/firebaseConfig';
 import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { MOCK_USERS } from '../services/mockData';
 
 interface AuthContextType {
   user: User | null;
@@ -22,7 +22,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          // Fetch additional user role data from Firestore
+          // Attempt to fetch user role data from Firestore
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           
           if (userDoc.exists()) {
@@ -32,20 +32,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               email: firebaseUser.email || '',
               displayName: userData.displayName || firebaseUser.email,
               role: userData.role as UserRole,
-              profileId: userData.profileId // Link to Client or Interpreter profile
+              profileId: userData.profileId
             });
           } else {
-            // Fallback if no firestore doc exists yet
+            // User authenticated but no profile doc exists
+            // Check mock data as fallback before creating default
+            const mockUser = MOCK_USERS.find(u => u.email === firebaseUser.email);
+            
             setUser({
               id: firebaseUser.uid,
               email: firebaseUser.email || '',
-              displayName: 'Unknown User',
-              role: UserRole.CLIENT // Default fallback safety
+              displayName: mockUser?.displayName || firebaseUser.displayName || 'User',
+              role: mockUser?.role || UserRole.CLIENT, // Default to CLIENT if unknown
+              profileId: mockUser?.profileId
             });
           }
         } catch (error) {
-          console.error("Error fetching user profile:", error);
-          setUser(null);
+          console.warn("Auth: Firestore unreachable (Offline Mode). Using Mock Data fallback.");
+          
+          // OFFLINE FALLBACK: Match email to Mock Data
+          const mockUser = MOCK_USERS.find(u => u.email === firebaseUser.email);
+          
+          if (mockUser) {
+            setUser({
+              ...mockUser,
+              id: firebaseUser.uid // Keep the real auth UID
+            });
+          } else {
+             // Fallback for unknown users in offline mode
+             setUser({
+               id: firebaseUser.uid,
+               email: firebaseUser.email || '',
+               displayName: firebaseUser.displayName || 'Offline User',
+               role: UserRole.CLIENT 
+             });
+          }
         }
       } else {
         setUser(null);

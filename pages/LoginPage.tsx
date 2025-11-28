@@ -1,16 +1,30 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
+import { SystemService } from '../services/api';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Globe2 } from 'lucide-react';
+import { Lock, Globe2, Activity, Database, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 export const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Diagnostics
+  const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
+  const [seeding, setSeeding] = useState(false);
+  const [seedSuccess, setSeedSuccess] = useState(false);
+
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Check connection on mount
+    SystemService.checkConnection().then(isConnected => {
+      setDbStatus(isConnected ? 'connected' : 'error');
+    });
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,9 +36,29 @@ export const LoginPage = () => {
       navigate('/'); // AuthContext will handle redirect based on role
     } catch (err: any) {
       console.error(err);
-      setError('Failed to log in. Please check your credentials.');
+      if (err.code === 'auth/invalid-api-key' || err.code === 'auth/internal-error') {
+         setError('Config Error: Check services/firebaseConfig.ts');
+      } else {
+         setError('Failed to log in. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSeed = async () => {
+    if(!window.confirm("Warning: This will add test data to your Firestore database. Continue?")) return;
+    
+    setSeeding(true);
+    try {
+      await SystemService.seedDatabase();
+      setSeedSuccess(true);
+      alert('Database seeded successfully! You can now log in with demo credentials.');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to seed. Please check console for details.');
+    } finally {
+      setSeeding(false);
     }
   };
 
@@ -43,7 +77,8 @@ export const LoginPage = () => {
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10 border border-gray-200">
           <form className="space-y-6" onSubmit={handleLogin}>
             {error && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm">
+              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-start">
+                <AlertTriangle size={16} className="mt-0.5 mr-2 flex-shrink-0" />
                 {error}
               </div>
             )}
@@ -95,17 +130,40 @@ export const LoginPage = () => {
             </div>
           </form>
           
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">
-                  Secure Portal
-                </span>
-              </div>
-            </div>
+          {/* Developer Tools / Diagnostics */}
+          <div className="mt-8 pt-6 border-t border-gray-100">
+             <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide">System Status</h4>
+                <div className="flex items-center">
+                  {dbStatus === 'checking' && <span className="text-xs text-gray-500">Checking connection...</span>}
+                  {dbStatus === 'connected' && <span className="text-xs text-green-600 flex items-center"><CheckCircle size={12} className="mr-1"/> Database Connected</span>}
+                  {dbStatus === 'error' && <span className="text-xs text-orange-600 flex items-center"><AlertTriangle size={12} className="mr-1"/> Offline / Mock Mode</span>}
+                </div>
+             </div>
+
+             {dbStatus === 'error' && (
+                <div className="bg-orange-50 p-3 rounded text-xs text-orange-800 mb-4 border border-orange-100">
+                  <p className="font-bold mb-1">Database connection failed.</p>
+                  <p>Running in <strong>Mock Mode</strong>. Real-time data will not be saved. Check <code>firebaseConfig.ts</code> keys to enable live database.</p>
+                </div>
+             )}
+
+             {dbStatus === 'connected' && !seedSuccess && (
+                <button 
+                  onClick={handleSeed}
+                  disabled={seeding}
+                  className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                >
+                   {seeding ? 'Populating...' : 'Developer: Seed Database with Test Data'}
+                   {!seeding && <Database size={12} className="ml-2" />}
+                </button>
+             )}
+             
+             {seedSuccess && (
+               <div className="text-xs text-green-600 text-center bg-green-50 p-2 rounded">
+                 Database populated! You can now sign in.
+               </div>
+             )}
           </div>
         </div>
       </div>
