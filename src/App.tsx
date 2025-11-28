@@ -18,6 +18,7 @@ import { ClientLayout } from './layouts/ClientLayout';
 import { NotFound } from './pages/NotFound';
 import { Dashboard } from './pages/Dashboard';
 import { LoginPage } from './pages/LoginPage';
+import { LandingPage } from './pages/public/LandingPage';
 import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
 
 // Admin Pages
@@ -52,28 +53,28 @@ import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
 
-// --- ROOT REDIRECT COMPONENT ---
-// Intelligently directs users based on their role to prevent loops.
-const RootRedirect = () => {
+// --- ROOT ROUTE LOGIC ---
+// If user is logged in, send them to their dashboard.
+// If user is NOT logged in, show the Landing Page.
+const RootRoute = () => {
   const { user, isLoading } = useAuth();
   
   if (isLoading) return null; // Or a loading spinner
   
-  if (!user) {
-    // If not logged in, redirect to login
-    return <Navigate to="/login" replace />; 
+  if (user) {
+    switch (user.role) {
+      case UserRole.ADMIN:
+        return <Navigate to="/admin/dashboard" replace />;
+      case UserRole.CLIENT:
+        return <Navigate to="/client/dashboard" replace />;
+      case UserRole.INTERPRETER:
+        return <Navigate to="/interpreter/dashboard" replace />;
+      default:
+        return <LandingPage />;
+    }
   }
 
-  switch (user.role) {
-    case UserRole.ADMIN:
-      return <Navigate to="/admin/dashboard" replace />;
-    case UserRole.CLIENT:
-      return <Navigate to="/client/dashboard" replace />;
-    case UserRole.INTERPRETER:
-      return <Navigate to="/interpreter/dashboard" replace />;
-    default:
-      return <Navigate to="/login" replace />;
-  }
+  return <LandingPage />;
 };
 
 const App = () => {
@@ -84,6 +85,7 @@ const App = () => {
           <SettingsProvider>
             <HashRouter>
               <Routes>
+                <Route path="/" element={<RootRoute />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/request" element={<GuestBookingRequest />} />
                 
@@ -157,9 +159,6 @@ const App = () => {
                     </AdminLayout>
                   </ProtectedRoute>
                 } />
-
-                {/* Smart Root Redirect */}
-                <Route path="/" element={<RootRedirect />} />
                 
                 {/* Fallback */}
                 <Route path="*" element={<NotFound />} />
