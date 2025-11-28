@@ -1,8 +1,8 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { RoleSwitcher } from './components/RoleSwitcher';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { UserRole } from './types';
@@ -28,6 +28,7 @@ import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpr
 import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
 import { AdminClients } from './pages/admin/AdminClients';
 import { AdminInterpreters } from './pages/admin/AdminInterpreters';
+import { AdminUsers } from './pages/admin/AdminUsers';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -52,9 +53,10 @@ import { ClientProfile } from './pages/client/ClientProfile';
 const RootRedirect = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) return null; 
+  if (isLoading) return null; // Or a loading spinner
   
   if (!user) {
+    // If not logged in, redirect to login
     return <Navigate to="/login" replace />; 
   }
 
@@ -129,6 +131,7 @@ const App = () => {
                       {/* Directory Management */}
                       <Route path="clients" element={<AdminClients />} />
                       <Route path="interpreters" element={<AdminInterpreters />} />
+                      <Route path="users" element={<AdminUsers />} />
                       
                       {/* Billing */}
                       <Route path="billing" element={<AdminBillingDashboard />} />
@@ -153,6 +156,7 @@ const App = () => {
               <Route path="*" element={<NotFound />} />
 
             </Routes>
+            <RoleSwitcher />
           </HashRouter>
         </ToastProvider>
       </AuthProvider>

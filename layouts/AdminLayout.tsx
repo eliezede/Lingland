@@ -1,10 +1,9 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, CalendarDays, Users, Briefcase, 
   LogOut, Menu, Globe2, FileText, PoundSterling, 
-  CreditCard, ChevronDown
+  CreditCard, UserCog
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
@@ -67,6 +66,9 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <NavItem to="/admin/bookings" icon={CalendarDays} label="Bookings" active={isActive('/admin/bookings')} />
           <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
           <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
+          
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
+          <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
 
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">Finance</div>
           <NavItem to="/admin/billing" icon={LayoutDashboard} label="Overview" active={location.pathname === '/admin/billing'} />

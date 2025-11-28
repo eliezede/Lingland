@@ -6,7 +6,7 @@ import { db } from './firebaseConfig';
 import { 
   Booking, BookingStatus, Client, Interpreter, User, 
   BookingAssignment, AssignmentStatus, Timesheet, 
-  ClientInvoice, InterpreterInvoice, InvoiceStatus 
+  ClientInvoice, InterpreterInvoice, InvoiceStatus, UserRole 
 } from '../types';
 import { MOCK_CLIENTS, MOCK_INTERPRETERS, MOCK_BOOKINGS, MOCK_USERS, MOCK_TIMESHEETS, MOCK_CLIENT_INVOICES, MOCK_INTERPRETER_INVOICES } from './mockData';
 
@@ -92,6 +92,31 @@ export const UserService = {
       return snap.exists() ? convertDoc<User>(snap) : MOCK_USERS.find(u => u.id === id);
     } catch (e) {
       return MOCK_USERS.find(u => u.id === id);
+    }
+  },
+
+  getAll: async (): Promise<User[]> => {
+    return safeFetch(async () => {
+      const snap = await getDocs(collection(db, 'users'));
+      return snap.docs.map(d => convertDoc<User>(d));
+    }, MOCK_USERS);
+  },
+
+  update: async (id: string, data: Partial<User>) => {
+    try {
+      await updateDoc(doc(db, 'users', id), data);
+    } catch (e) { console.log("Update user offline"); }
+  },
+
+  create: async (data: Omit<User, 'id'>) => {
+    // Note: In a real app, you'd use Firebase Admin SDK to create Auth users.
+    // Here we just create the Firestore profile record.
+    try {
+      const ref = await addDoc(collection(db, 'users'), data);
+      return { id: ref.id, ...data };
+    } catch (e) { 
+      console.log("Create user offline"); 
+      return { id: `mock-u-${Date.now()}`, ...data };
     }
   }
 };
