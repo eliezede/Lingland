@@ -23,7 +23,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
     );
   }
 
-  // 🔥 If user is NOT logged in → redirect to Landing Page
+  // Redirect to Landing Page immediately if not authenticated
   if (!user) {
     return <Navigate to="/" replace state={{ from: location }} />;
   }
