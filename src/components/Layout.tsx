@@ -13,10 +13,9 @@ import {
   CheckCircle2,
   PlusCircle,
   FileText,
-  PoundSterling,
-  CreditCard
+  PoundSterling
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 const NavItem = ({ to, icon: Icon, label, active }: any) => (
   <Link 
@@ -35,9 +34,15 @@ const NavItem = ({ to, icon: Icon, label, active }: any) => (
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
 
-  const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+  const isActive = (path: string) => location.pathname === path;
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
 
   const renderNavItems = () => {
     switch (user?.role) {
@@ -45,16 +50,14 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         return (
           <>
             <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Management</div>
-            <NavItem to="/admin/dashboard" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/admin/dashboard'} />
-            <NavItem to="/admin/bookings" icon={CalendarDays} label="All Bookings" active={location.pathname.startsWith('/admin/bookings')} />
-            <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={location.pathname.startsWith('/admin/clients')} />
-            <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={location.pathname.startsWith('/admin/interpreters')} />
+            <NavItem to="/admin/dashboard" icon={LayoutDashboard} label="Dashboard" active={isActive('/admin/dashboard')} />
+            <NavItem to="/admin/bookings" icon={CalendarDays} label="All Bookings" active={isActive('/admin/bookings')} />
+            <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
+            <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
             
             <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-4">Finance</div>
-            <NavItem to="/admin/billing" icon={PoundSterling} label="Billing Overview" active={location.pathname === '/admin/billing'} />
-            <NavItem to="/admin/timesheets" icon={FileText} label="Timesheets" active={location.pathname.startsWith('/admin/timesheets')} />
-            <NavItem to="/admin/billing/client-invoices" icon={CreditCard} label="Client Invoices" active={location.pathname.startsWith('/admin/billing/client-invoices')} />
-            <NavItem to="/admin/billing/interpreter-invoices" icon={Users} label="Interpreter Claims" active={location.pathname.startsWith('/admin/billing/interpreter-invoices')} />
+            <NavItem to="/admin/timesheets" icon={FileText} label="Timesheets" active={isActive('/admin/timesheets')} />
+            <NavItem to="/admin/invoices" icon={PoundSterling} label="Client Invoices" active={isActive('/admin/invoices')} />
           </>
         );
       case UserRole.CLIENT:
@@ -118,7 +121,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             </div>
           </div>
           <button 
-            onClick={logout}
+            onClick={handleLogout}
             className="flex items-center w-full px-3 py-2 text-sm text-red-600 rounded hover:bg-red-50 transition-colors"
           >
             <LogOut size={16} className="mr-2" />
