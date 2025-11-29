@@ -18,7 +18,7 @@ export const InterpreterProfile = () => {
 
   const handleLogout = async () => {
     await logout();
-    navigate('/');
+    navigate('/', { replace: true });
   };
 
   if (!profile) return <div className="p-8">Loading...</div>;

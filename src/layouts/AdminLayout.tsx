@@ -40,7 +40,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const handleLogout = async () => {
     await logout();
-    navigate('/');
+    navigate('/', { replace: true });
   };
 
   return (

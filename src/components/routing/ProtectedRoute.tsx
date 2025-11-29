@@ -23,8 +23,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
     );
   }
 
-  // FIX: Redirect to Landing Page immediately if not authenticated
-  // This replaces the "Authentication Required" lock screen
+  // 🔥 If user is NOT logged in → redirect to Landing Page
   if (!user) {
     return <Navigate to="/" replace state={{ from: location }} />;
   }

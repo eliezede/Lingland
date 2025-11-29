@@ -40,7 +40,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
   const handleLogout = async () => {
     await logout();
-    navigate('/');
+    navigate('/', { replace: true });
   };
 
   const renderNavItems = () => {
