@@ -77,7 +77,6 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           {user?.role === UserRole.ADMIN && (
             <>
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
-              <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
               <NavItem to="/admin/settings" icon={Settings} label="Settings" active={isActive('/admin/settings')} />
             </>
           )}
@@ -114,7 +113,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
       {/* Main Content Wrapper */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Header (Mobile Only basically) */}
+        {/* Top Header (Mobile Only) */}
         <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:hidden">
           <button 
             className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
@@ -123,7 +122,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
             <Menu size={24} />
           </button>
           <span className="font-semibold text-gray-900">Admin Portal</span>
-          <div className="w-8" /> {/* Spacer */}
+          <div className="w-8" />
         </header>
 
         {/* Scrollable Content */}
