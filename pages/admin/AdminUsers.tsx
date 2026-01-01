@@ -11,7 +11,7 @@ import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useToast } from '../../context/ToastContext';
 import { 
-  Search, Plus, Users, UserCog, Edit2, Link as LinkIcon
+  Search, Plus, Users, UserCog, Edit2, Link as LinkIcon, Mail, Send
 } from 'lucide-react';
 
 export const AdminUsers = () => {
@@ -27,6 +27,7 @@ export const AdminUsers = () => {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState<Partial<User>>({});
   const [saving, setSaving] = useState(false);
+  const [sendingInvite, setSendingInvite] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -51,25 +52,17 @@ export const AdminUsers = () => {
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    u.displayName.toLowerCase().includes(filter.toLowerCase()) ||
-    u.email.toLowerCase().includes(filter.toLowerCase())
-  );
-
-  const handleOpenModal = (user?: User) => {
-    if (user) {
-      setEditingUser(user);
-      setFormData({ ...user });
-    } else {
-      setEditingUser(null);
-      setFormData({
-        email: '',
-        displayName: '',
-        role: UserRole.CLIENT,
-        profileId: ''
-      });
+  const handleSendInvite = async (email: string) => {
+    setSendingInvite(email);
+    try {
+      await UserService.sendActivationEmail(email);
+      showToast(`Convite enviado para ${email}`, 'success');
+    } catch (e: any) {
+      // Se der erro de "user-not-found", significa que precisamos criar o usuário no Auth primeiro via Admin SDK
+      showToast('Usuário precisa ser criado no Firebase Auth via Console primeiro (limitação de front-end)', 'info');
+    } finally {
+      setSendingInvite(null);
     }
-    setIsModalOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -81,7 +74,7 @@ export const AdminUsers = () => {
         showToast('User updated successfully', 'success');
       } else {
         await UserService.create(formData as User);
-        showToast('User pre-provisioned successfully', 'success');
+        showToast('User provisioned in database. Use "Send Invite" to set password.', 'success');
       }
       await loadData();
       setIsModalOpen(false);
@@ -114,6 +107,8 @@ export const AdminUsers = () => {
     }
   };
 
+  const inputClasses = "w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white text-gray-900";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -121,7 +116,9 @@ export const AdminUsers = () => {
           <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
           <p className="text-gray-500 text-sm">Manage system access, roles, and profile links.</p>
         </div>
-        <Button icon={Plus} onClick={() => handleOpenModal()}>Pre-Provision User</Button>
+        <Button icon={Plus} onClick={() => { setEditingUser(null); setFormData({ role: UserRole.CLIENT }); setIsModalOpen(true); }}>
+          Pre-Provision User
+        </Button>
       </div>
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
@@ -129,8 +126,8 @@ export const AdminUsers = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
           <input 
             type="text" 
-            placeholder="Search users by name or email..." 
-            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            placeholder="Search users..." 
+            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-full text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-transparent text-gray-900"
             value={filter}
             onChange={e => setFilter(e.target.value)}
           />
@@ -141,14 +138,6 @@ export const AdminUsers = () => {
         <div className="py-12 flex justify-center">
           <Spinner size="lg" />
         </div>
-      ) : filteredUsers.length === 0 ? (
-        <EmptyState 
-          title="No users found" 
-          description={filter ? "No users match your search." : "Add a new user to get started."}
-          actionLabel="Add User"
-          onAction={() => handleOpenModal()}
-          icon={Users}
-        />
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
@@ -161,12 +150,12 @@ export const AdminUsers = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredUsers.map(u => (
+              {users.filter(u => u.email.includes(filter) || u.displayName.includes(filter)).map(u => (
                 <tr key={u.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4">
                     <div className="flex items-center">
                       <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-bold mr-3">
-                        {u.displayName.charAt(0)}
+                        {u.displayName?.charAt(0) || 'U'}
                       </div>
                       <div>
                         <div className="text-sm font-medium text-gray-900">{u.displayName}</div>
@@ -174,21 +163,29 @@ export const AdminUsers = () => {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    {getRoleBadge(u.role)}
-                  </td>
+                  <td className="px-6 py-4">{getRoleBadge(u.role)}</td>
                   <td className="px-6 py-4">
                     {getProfileName(u) ? (
-                      <div className="flex items-center text-sm text-blue-700 bg-blue-50 px-2 py-1 rounded-md w-fit">
-                        <LinkIcon size={12} className="mr-1" />
-                        {getProfileName(u)}
+                      <div className="flex items-center text-xs text-blue-700 bg-blue-50 px-2 py-1 rounded-md w-fit font-medium">
+                        <LinkIcon size={12} className="mr-1" /> {getProfileName(u)}
                       </div>
-                    ) : (
-                      <span className="text-xs text-gray-400 italic">No Link</span>
-                    )}
+                    ) : <span className="text-xs text-gray-400 italic">No Link</span>}
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <Button variant="ghost" size="sm" icon={Edit2} onClick={() => handleOpenModal(u)}>Edit</Button>
+                  <td className="px-6 py-4 text-right space-x-2">
+                    <button 
+                      onClick={() => handleSendInvite(u.email)}
+                      disabled={sendingInvite === u.email}
+                      className="text-blue-600 hover:text-blue-900 p-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                      title="Send Access Invite (Password Reset)"
+                    >
+                      {sendingInvite === u.email ? <Spinner size="sm" /> : <Send size={16} />}
+                    </button>
+                    <button 
+                      onClick={() => { setEditingUser(u); setFormData({...u}); setIsModalOpen(true); }}
+                      className="text-gray-400 hover:text-gray-900 p-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <Edit2 size={16} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -197,7 +194,7 @@ export const AdminUsers = () => {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal - Com melhorias de legibilidade do seu print */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -206,37 +203,32 @@ export const AdminUsers = () => {
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email Address</label>
             <input 
-              type="email" 
-              required
+              type="email" required
               disabled={!!editingUser}
-              className="w-full p-2.5 border border-gray-300 rounded-lg disabled:bg-gray-100 disabled:text-gray-500"
+              className={inputClasses + " disabled:bg-gray-50 disabled:text-gray-400"}
               value={formData.email || ''}
               onChange={e => setFormData({...formData, email: e.target.value})}
+              placeholder="user@example.com"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Display Name</label>
             <input 
-              type="text" 
-              className="w-full p-2.5 border border-gray-300 rounded-lg"
+              type="text" required
+              className={inputClasses}
               value={formData.displayName || ''}
               onChange={e => setFormData({...formData, displayName: e.target.value})}
+              placeholder="e.g. John Smith"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">System Role</label>
+            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">System Role</label>
             <select 
-              className="w-full p-2.5 border border-gray-300 rounded-lg"
+              className={inputClasses}
               value={formData.role}
-              onChange={e => {
-                setFormData({
-                  ...formData, 
-                  role: e.target.value as UserRole,
-                  profileId: '' // Reset link when role changes
-                });
-              }}
+              onChange={e => setFormData({...formData, role: e.target.value as UserRole, profileId: ''})}
             >
               <option value={UserRole.ADMIN}>Administrator</option>
               <option value={UserRole.CLIENT}>Client</option>
@@ -244,14 +236,14 @@ export const AdminUsers = () => {
             </select>
           </div>
 
-          {/* Dynamic Linker */}
           {formData.role !== UserRole.ADMIN && (
-            <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-               <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
-                 Link to {formData.role === UserRole.CLIENT ? 'Client Profile' : 'Interpreter Profile'}
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 animate-fade-in">
+               <label className="block text-xs font-bold text-blue-700 uppercase mb-2">
+                 Link to {formData.role === UserRole.CLIENT ? 'Client Company' : 'Interpreter Profile'}
                </label>
                <select 
-                 className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                 required
+                 className={inputClasses}
                  value={formData.profileId || ''}
                  onChange={e => setFormData({...formData, profileId: e.target.value})}
                >
@@ -263,15 +255,17 @@ export const AdminUsers = () => {
                    <option key={i.id} value={i.id}>{i.name}</option>
                  ))}
                </select>
-               <p className="text-xs text-gray-500 mt-2">
-                 Linking ensures this user sees their specific data (bookings, invoices, etc).
+               <p className="text-[10px] text-gray-500 mt-2 italic leading-tight">
+                 Linking ensures this user only sees data relevant to their profile.
                </p>
             </div>
           )}
 
-          <div className="flex justify-end space-x-3 pt-4">
+          <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">
              <Button type="button" variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-             <Button type="submit" isLoading={saving}>Save Changes</Button>
+             <Button type="submit" isLoading={saving}>
+               {editingUser ? 'Save Changes' : 'Create User'}
+             </Button>
           </div>
         </form>
       </Modal>

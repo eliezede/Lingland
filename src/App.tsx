@@ -32,6 +32,7 @@ import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpr
 import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
 import { AdminClients } from './pages/admin/AdminClients';
 import { AdminInterpreters } from './pages/admin/AdminInterpreters';
+import { AdminInterpreterDetails } from './pages/admin/interpreters/AdminInterpreterDetails';
 import { AdminUsers } from './pages/admin/AdminUsers';
 import { AdminSettings } from './pages/admin/AdminSettings';
 
@@ -54,12 +55,10 @@ import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetai
 import { ClientProfile } from './pages/client/ClientProfile';
 
 // --- ROOT ROUTE LOGIC ---
-// If user is logged in, send them to their dashboard.
-// If user is NOT logged in, show the Landing Page.
 const RootRoute = () => {
   const { user, isLoading } = useAuth();
   
-  if (isLoading) return <div className="min-h-screen bg-white" />; // Clean loading state
+  if (isLoading) return <div className="min-h-screen bg-white" />;
   
   if (user) {
     switch (user.role) {
@@ -70,7 +69,6 @@ const RootRoute = () => {
       case UserRole.INTERPRETER:
         return <Navigate to="/interpreter/dashboard" replace />;
       default:
-        // Fallback for weird states, send to landing
         return <LandingPage />;
     }
   }
@@ -141,6 +139,7 @@ const App = () => {
                         {/* Directory Management */}
                         <Route path="clients" element={<AdminClients />} />
                         <Route path="interpreters" element={<AdminInterpreters />} />
+                        <Route path="interpreters/:id" element={<AdminInterpreterDetails />} />
                         <Route path="users" element={<AdminUsers />} />
                         
                         {/* System */}

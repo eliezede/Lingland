@@ -1,4 +1,3 @@
-
 export enum UserRole {
   ADMIN = 'ADMIN',
   CLIENT = 'CLIENT',
@@ -6,11 +5,11 @@ export enum UserRole {
 }
 
 export enum BookingStatus {
-  REQUESTED = 'REQUESTED',
-  SEARCHING = 'SEARCHING',
-  OFFERED = 'OFFERED',
-  CONFIRMED = 'CONFIRMED',
-  COMPLETED = 'COMPLETED',
+  REQUESTED = 'REQUESTED',             // Client created, waiting for admin
+  SEARCHING = 'SEARCHING',             // Admin looking for interpreter
+  OFFERED = 'OFFERED',                 // Sent to interpreters
+  CONFIRMED = 'CONFIRMED',             // Interpreter assigned
+  COMPLETED = 'COMPLETED',             // Job done
   CANCELLED = 'CANCELLED',
   INVOICED = 'INVOICED',
   PAID = 'PAID'
@@ -127,46 +126,52 @@ export interface Timesheet {
 
 export interface Rate {
   id: string;
-  rateType: 'CLIENT' | 'INTERPRETER';
+  type?: 'CLIENT_CHARGE' | 'INTERPRETER_PAY'; // Legacy support
+  rateType?: 'CLIENT' | 'INTERPRETER';
   clientId?: string;
   interpreterId?: string;
   serviceType: ServiceType;
-  languageFrom: string;
-  languageTo: string;
+  languageFrom?: string;
+  languageTo?: string;
   unitType: 'HOUR' | 'SESSION' | 'WORD';
   amountPerUnit: number;
   minimumUnits: number;
+  roundingIncrementMinutes?: number; // Legacy support
   nightWeekendMultiplier?: number;
-  active: boolean;
+  currency: string;
+  active?: boolean;
 }
 
 export interface InvoiceLineItem {
-  id: string; // Usually just an index or generated ID
-  invoiceId: string;
+  id?: string; 
+  invoiceId?: string;
   timesheetId: string;
-  bookingId: string;
+  bookingId?: string;
   description: string;
-  units: number;
+  quantity?: number; // Legacy
+  units?: number;
   rate: number;
   total: number;
+  lineAmount?: number; // Legacy
 }
 
 export interface ClientInvoice {
   id: string;
   clientId: string;
   clientName: string;
+  invoiceNumber: string; // Legacy field name compatibility
+  reference?: string;
   issueDate: string; // ISO
   dueDate: string;   // ISO
-  periodStart: string; // ISO
-  periodEnd: string;   // ISO
-  status: InvoiceStatus;
+  periodStart?: string; // ISO
+  periodEnd?: string;   // ISO
+  status: InvoiceStatus | 'DRAFT' | 'SENT' | 'PAID'; // Union for legacy compat
   totalAmount: number;
   currency: string;
-  reference: string; // e.g. INV-2024-001
   notes?: string;
   pdfUrl?: string;
   
-  items?: InvoiceLineItem[]; // Optional if fetched separately
+  items?: InvoiceLineItem[]; 
   createdAt?: string;
   updatedAt?: string;
 }
@@ -178,14 +183,14 @@ export interface InterpreterInvoice {
   issueDate: string;
   periodStart?: string;
   periodEnd?: string;
-  status: InvoiceStatus;
+  status: InvoiceStatus | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'PAID';
   totalAmount: number;
-  currency: string;
+  currency?: string;
   model: 'UPLOAD' | 'SELF_BILLING';
   
-  externalInvoiceReference?: string; // If they uploaded their own
+  externalInvoiceReference?: string; 
   uploadedPdfUrl?: string;
-  generatedPdfUrl?: string; // If we generated self-bill
+  generatedPdfUrl?: string; 
   
   items?: InvoiceLineItem[];
   createdAt?: string;
@@ -200,6 +205,7 @@ export interface User {
   role: UserRole;
   displayName: string;
   profileId?: string;
+  status?: 'ACTIVE' | 'SUSPENDED';
 }
 
 export interface Client {
@@ -225,8 +231,6 @@ export interface Interpreter {
   avatarUrl?: string;
 }
 
-// --- GUEST & BOOKING TYPES ---
-
 export interface GuestContact {
   name: string;
   organisation: string;
@@ -237,32 +241,29 @@ export interface GuestContact {
 
 export interface Booking {
   id: string;
-  // If clientId is null, it's a guest booking
-  clientId: string | null; 
-  clientName: string; 
-  requestedByUserId?: string; 
-  
-  bookingRef?: string;     // e.g. "LL-8329" for tracking
-  guestContact?: GuestContact; // Populated if clientId is null
-
+  clientId: string | null;
+  clientName: string;
+  requestedByUserId?: string;
+  bookingRef?: string;
+  guestContact?: GuestContact;
   serviceType: ServiceType;
   languageFrom: string;
   languageTo: string;
   date: string;
   startTime: string;
   durationMinutes: number;
+  expectedEndTime?: string; // Calculated or manually set
   locationType: 'ONLINE' | 'ONSITE';
   address?: string;
   postcode?: string;
   onlineLink?: string;
   status: BookingStatus;
   costCode?: string;
-  caseType?: string; 
+  caseType?: string; // New field: e.g. Medical, Legal, etc.
   notes?: string;
   genderPreference?: 'Male' | 'Female' | 'None';
   interpreterId?: string;
   interpreterName?: string;
-  expectedEndTime?: string;
 }
 
 export interface BookingAssignment {

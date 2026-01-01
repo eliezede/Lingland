@@ -73,10 +73,14 @@ const DEFAULT_ASSIGNMENTS: BookingAssignment[] = [
 ];
 
 const DEFAULT_RATES: Rate[] = [
-  { id: 'r1', rateType: 'CLIENT', serviceType: ServiceType.FACE_TO_FACE, unitType: 'HOUR', amountPerUnit: 45.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any' },
-  { id: 'r2', rateType: 'CLIENT', serviceType: ServiceType.VIDEO, unitType: 'HOUR', amountPerUnit: 40.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any' },
-  { id: 'r3', rateType: 'INTERPRETER', serviceType: ServiceType.FACE_TO_FACE, unitType: 'HOUR', amountPerUnit: 25.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any' },
-  { id: 'r4', rateType: 'INTERPRETER', serviceType: ServiceType.VIDEO, unitType: 'HOUR', amountPerUnit: 22.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any' }
+  // Fixed: Added missing required 'currency' property
+  { id: 'r1', rateType: 'CLIENT', serviceType: ServiceType.FACE_TO_FACE, unitType: 'HOUR', amountPerUnit: 45.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any', currency: 'GBP' },
+  // Fixed: Added missing required 'currency' property
+  { id: 'r2', rateType: 'CLIENT', serviceType: ServiceType.VIDEO, unitType: 'HOUR', amountPerUnit: 40.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any', currency: 'GBP' },
+  // Fixed: Added missing required 'currency' property
+  { id: 'r3', rateType: 'INTERPRETER', serviceType: ServiceType.FACE_TO_FACE, unitType: 'HOUR', amountPerUnit: 25.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any', currency: 'GBP' },
+  // Fixed: Added missing required 'currency' property
+  { id: 'r4', rateType: 'INTERPRETER', serviceType: ServiceType.VIDEO, unitType: 'HOUR', amountPerUnit: 22.00, minimumUnits: 1, active: true, languageFrom: 'English', languageTo: 'Any', currency: 'GBP' }
 ];
 
 const DEFAULT_TIMESHEETS: Timesheet[] = [

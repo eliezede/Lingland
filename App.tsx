@@ -32,6 +32,7 @@ import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpr
 import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
 import { AdminClients } from './pages/admin/AdminClients';
 import { AdminInterpreters } from './pages/admin/AdminInterpreters';
+import { AdminInterpreterDetails } from './pages/admin/interpreters/AdminInterpreterDetails';
 import { AdminUsers } from './pages/admin/AdminUsers';
 import { AdminSettings } from './pages/admin/AdminSettings';
 
@@ -138,6 +139,7 @@ const App = () => {
                         {/* Directory Management */}
                         <Route path="clients" element={<AdminClients />} />
                         <Route path="interpreters" element={<AdminInterpreters />} />
+                        <Route path="interpreters/:id" element={<AdminInterpreterDetails />} />
                         <Route path="users" element={<AdminUsers />} />
                         
                         {/* System */}

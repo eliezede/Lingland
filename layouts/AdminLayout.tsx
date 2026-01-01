@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { UserRole } from '../types';
 import { 
   LayoutDashboard, CalendarDays, Users, Briefcase, 
   LogOut, Menu, Globe2, FileText, PoundSterling, 
-  CreditCard, UserCog
+  CreditCard, UserCog, Settings
 } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 interface NavItemProps {
   to: string;
@@ -31,10 +32,16 @@ const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active }) => (
 export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Helper for active state matching
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/', { replace: true });
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
@@ -67,8 +74,13 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
           <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
           
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
-          <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
+          {user?.role === UserRole.ADMIN && (
+            <>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
+              <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
+              <NavItem to="/admin/settings" icon={Settings} label="Settings" active={isActive('/admin/settings')} />
+            </>
+          )}
 
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">Finance</div>
           <NavItem to="/admin/billing" icon={LayoutDashboard} label="Overview" active={location.pathname === '/admin/billing'} />
@@ -91,7 +103,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
             </div>
           </div>
           <button 
-            onClick={logout}
+            onClick={handleLogout}
             className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut size={16} className="mr-2" />

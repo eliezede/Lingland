@@ -1,7 +1,16 @@
 
 import { useState, useEffect } from 'react';
-import { BookingService, BillingService } from '../../services/api';
-import { Booking, Timesheet } from '../../types';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot,
+  orderBy,
+  addDoc,
+  serverTimestamp
+} from 'firebase/firestore';
+import { db } from '../services/firebaseConfig';
+import { Booking, Timesheet, BookingStatus } from '../types';
 
 export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [pendingSubmission, setPendingSubmission] = useState<Booking[]>([]);
@@ -9,41 +18,89 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (interpreterId) loadData();
-  }, [interpreterId]);
+    if (!interpreterId) {
+      setLoading(false);
+      return;
+    }
 
-  const loadData = async () => {
-    if (!interpreterId) return;
     setLoading(true);
-    try {
-      const [schedule, timesheets] = await Promise.all([
-        BookingService.getInterpreterSchedule(interpreterId),
-        BillingService.getInterpreterTimesheets(interpreterId)
-      ]);
 
-      // Find completed jobs without timesheets
-      // In real app: check if booking status is COMPLETED and no timesheet exists
-      const pending = schedule.filter(b => {
-        const hasTimesheet = timesheets.some(t => t.bookingId === b.id);
-        // Simple logic: if date is in past and no timesheet
-        const isPast = new Date(b.date) < new Date(); 
-        return isPast && !hasTimesheet;
-      });
+    // 1. Monitorar Timesheets já enviados (Histórico)
+    const qHistory = query(
+      collection(db, 'timesheets'),
+      where('interpreterId', '==', interpreterId),
+      orderBy('submittedAt', 'desc')
+    );
+
+    const unsubHistory = onSnapshot(qHistory, (snapshot) => {
+      const history = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Timesheet[];
+      setSubmittedHistory(history);
+    });
+
+    // 2. Monitorar Bookings Passados sem Timesheet (Pendentes)
+    // Simplified query to avoid requiring composite indexes
+    const qAllMyBookings = query(
+      collection(db, 'bookings'),
+      where('interpreterId', '==', interpreterId)
+    );
+
+    const unsubPending = onSnapshot(qAllMyBookings, (snapshot) => {
+      const allMyJobs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Booking[];
+
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Filter in-memory for past confirmed/completed jobs
+      const pastJobs = allMyJobs.filter(job => 
+        (job.status === BookingStatus.CONFIRMED || job.status === BookingStatus.COMPLETED) && 
+        job.date < today
+      );
+
+      // Cruzar com o histórico para ver quais não têm timesheet ainda
+      const pending = pastJobs.filter(job => 
+        !submittedHistory.some(ts => ts.bookingId === job.id)
+      );
 
       setPendingSubmission(pending);
-      setSubmittedHistory(timesheets.sort((a,b) => (b.submittedAt ? new Date(b.submittedAt).getTime() : 0) - (a.submittedAt ? new Date(a.submittedAt).getTime() : 0)));
-    } catch (e) {
-      console.error(e);
-    } finally {
       setLoading(false);
+    }, (error) => {
+      console.error("Error in pending timesheets listener:", error);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubHistory();
+      unsubPending();
+    };
+  }, [interpreterId, submittedHistory.length]);
+
+  const submitTimesheet = async (data: Partial<Timesheet>) => {
+    if (!interpreterId) return;
+    
+    try {
+      const newTs = {
+        ...data,
+        interpreterId,
+        status: 'SUBMITTED',
+        adminApproved: false,
+        submittedAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
+        readyForClientInvoice: false,
+        readyForInterpreterInvoice: false
+      };
+
+      await addDoc(collection(db, 'timesheets'), newTs);
+      return true;
+    } catch (error) {
+      console.error("Erro ao enviar timesheet:", error);
+      return false;
     }
   };
 
-  const submitTimesheet = async (data: any) => {
-    if (!interpreterId) return;
-    await BillingService.submitTimesheet({ ...data, interpreterId });
-    await loadData();
-  };
-
-  return { pendingSubmission, submittedHistory, loading, submitTimesheet, refresh: loadData };
+  return { pendingSubmission, submittedHistory, loading, submitTimesheet };
 };

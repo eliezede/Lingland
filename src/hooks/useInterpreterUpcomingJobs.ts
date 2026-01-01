@@ -1,32 +1,52 @@
 
 import { useState, useEffect } from 'react';
-import { BookingService } from '../../services/api';
-import { Booking } from '../../types';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot
+} from 'firebase/firestore';
+import { db } from '../services/firebaseConfig';
+import { Booking, BookingStatus } from '../types';
 
 export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) => {
   const [jobs, setJobs] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (interpreterId) {
-      loadJobs();
+    if (!interpreterId) {
+      setLoading(false);
+      return;
     }
+
+    setLoading(true);
+    // Simplified query: filter by interpreterId first
+    const q = query(
+      collection(db, 'bookings'),
+      where('interpreterId', '==', interpreterId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const allJobs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Booking[];
+      
+      // Filter for CONFIRMED status and future dates in-memory
+      const today = new Date().toISOString().split('T')[0];
+      const upcoming = allJobs
+        .filter(j => j.status === BookingStatus.CONFIRMED && j.date >= today)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      
+      setJobs(upcoming);
+      setLoading(false);
+    }, (error) => {
+      console.error("Erro ao sincronizar agenda do intérprete:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, [interpreterId]);
 
-  const loadJobs = async () => {
-    if (!interpreterId) return;
-    setLoading(true);
-    try {
-      const data = await BookingService.getInterpreterSchedule(interpreterId);
-      // Filter for future jobs or today
-      const upcoming = data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      setJobs(upcoming);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return { jobs, loading, refresh: loadJobs };
+  return { jobs, loading };
 };
