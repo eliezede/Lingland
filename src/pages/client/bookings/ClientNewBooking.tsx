@@ -135,7 +135,8 @@ export const ClientNewBooking = () => {
                     onChange={e => setFormData({...formData, languageTo: e.target.value})}
                   >
                     <option value="">{loadingLangs ? 'Loading...' : 'Select...'}</option>
-                    {availableLanguages.map(lang => (
+                    {/* Fix: Explicitly type mapped items as string to satisfy Key and ReactNode expectations */}
+                    {availableLanguages.map((lang: string) => (
                       <option key={lang} value={lang}>{lang}</option>
                     ))}
                   </select>

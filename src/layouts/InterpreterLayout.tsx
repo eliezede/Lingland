@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { Home, Briefcase, Clock, PoundSterling, User, Globe2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { NotificationCenter } from '../components/notifications/NotificationCenter';
+import { ChatSystem } from '../components/chat/ChatSystem';
 
 export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const location = useLocation();
@@ -20,9 +22,11 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row font-sans transition-colors duration-300">
-      
-      {/* Desktop Sidebar (visible on large screens) */}
-      <aside className="hidden lg:flex w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex-col sticky top-0 h-screen">
+      {/* Chat System Global Overlay */}
+      <ChatSystem />
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden lg:flex w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex col sticky top-0 h-screen">
         <div className="h-20 flex items-center px-6 border-b border-slate-100 dark:border-slate-800">
            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white mr-2">
              <Globe2 size={18} />
@@ -60,7 +64,8 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
           <span className="text-xl font-black text-blue-600 tracking-tighter">L</span>
           <span className="text-xl font-black text-slate-900 dark:text-white tracking-tighter">L</span>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2">
+          <NotificationCenter />
           <ThemeToggle className="scale-90" />
           <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-slate-800 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold text-xs border border-blue-200 dark:border-blue-900/50">
             {user?.displayName?.charAt(0) || 'U'}
@@ -68,7 +73,7 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-y-auto">
         <div className="flex-1 p-4 pb-28 lg:pb-8 lg:p-10 max-w-4xl mx-auto w-full animate-fade-in">
            {children}

@@ -329,7 +329,8 @@ export const AdminSettings = () => {
                       </div>
                    </div>
                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                     {Object.values(ServiceType).map(type => (
+                     {/* Fix: Explicitly cast type to string/ServiceType to avoid 'unknown' mapping errors */}
+                     {(Object.values(ServiceType) as ServiceType[]).map((type) => (
                        <label key={type} className={`flex items-center p-4 rounded-xl border cursor-pointer transition-all ${
                          formData.masterData.activeServiceTypes.includes(type)
                           ? 'border-blue-600 bg-blue-50/30'

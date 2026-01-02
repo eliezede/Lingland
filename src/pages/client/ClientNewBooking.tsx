@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { BookingService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -61,7 +60,8 @@ export const ClientNewBooking = () => {
               value={formData.serviceType}
               onChange={e => setFormData({...formData, serviceType: e.target.value as ServiceType})}
             >
-              {Object.values(ServiceType).map(type => (
+              {/* Fix: Explicitly type mapped items as ServiceType to satisfy Key and ReactNode expectations */}
+              {(Object.values(ServiceType) as ServiceType[]).map((type) => (
                 <option key={type} value={type}>{type}</option>
               ))}
             </select>

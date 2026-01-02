@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { NotificationCenter } from '../components/notifications/NotificationCenter';
+import { ChatSystem } from '../components/chat/ChatSystem';
 
 interface NavItemProps {
   to: string;
@@ -52,6 +54,9 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden font-sans">
+      {/* Chat System Layer */}
+      <ChatSystem />
+
       {/* Mobile Backdrop */}
       {isSidebarOpen && (
         <div 
@@ -140,7 +145,10 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                 <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">System Live</span>
              </div>
              <div className="w-px h-8 bg-slate-200 dark:bg-slate-800 mx-2 hidden sm:block"></div>
-             <ThemeToggle className="sm:flex" />
+             <div className="flex items-center gap-2">
+                <NotificationCenter />
+                <ThemeToggle className="hidden sm:flex" />
+             </div>
           </div>
         </header>
 

@@ -1,7 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { BookingService, InterpreterService } from '../../../services/api';
+import { ChatService } from '../../../services/chatService';
 import { Booking, BookingAssignment, Interpreter, BookingStatus, AssignmentStatus, ServiceType } from '../../../types';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { Button } from '../../../components/ui/Button';
@@ -9,14 +9,18 @@ import { Card } from '../../../components/ui/Card';
 import { Modal } from '../../../components/ui/Modal';
 import { Badge } from '../../../components/ui/Badge';
 import { useToast } from '../../../context/ToastContext';
+import { useAuth } from '../../../context/AuthContext';
+import { useChat } from '../../../context/ChatContext';
 import { 
   Calendar, Clock, MapPin, Video, Globe2, ChevronLeft, 
-  User, CheckCircle2, XCircle, Send, AlertCircle, Edit, Trash2, Search, UserPlus, Filter, Eye, List
+  User, CheckCircle2, XCircle, Send, AlertCircle, Edit, Trash2, Search, UserPlus, Filter, Eye, List, MessageSquare
 } from 'lucide-react';
 
 const AdminBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { openThread } = useChat();
   const { showToast } = useToast();
   
   const [booking, setBooking] = useState<Booking | null>(null);
@@ -71,6 +75,30 @@ const AdminBookingDetails = () => {
       showToast('Failed to load details', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartChat = async () => {
+    if (!booking || !booking.interpreterId || !user) return;
+    
+    setProcessing(true);
+    try {
+      const names = {
+        [user.id]: user.displayName || 'Admin',
+        [booking.interpreterId]: booking.interpreterName || 'Interpreter'
+      };
+      
+      const threadId = await ChatService.getOrCreateThread(
+        [user.id, booking.interpreterId],
+        names,
+        booking.id
+      );
+      
+      openThread(threadId);
+    } catch (error) {
+      showToast('Failed to start chat', 'error');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -219,19 +247,47 @@ const AdminBookingDetails = () => {
         </div>
 
         <div className="space-y-6">
+          {/* Assignment Section with Chat Button */}
           <Card className="bg-blue-50/50 border-blue-100">
-             <h3 className="font-bold text-gray-900 mb-4 flex items-center"><Send size={16} className="mr-2 text-blue-600" />Sent Offers ({assignments.length})</h3>
+             <div className="flex items-center justify-between mb-4">
+               <h3 className="font-bold text-gray-900 flex items-center"><Send size={16} className="mr-2 text-blue-600" />Current Status</h3>
+               {booking.interpreterId && (
+                 <button 
+                  onClick={handleStartChat}
+                  disabled={processing}
+                  className="flex items-center text-[10px] font-black uppercase text-blue-600 hover:text-blue-800 transition-colors"
+                 >
+                   <MessageSquare size={12} className="mr-1" /> Chat with Int.
+                 </button>
+               )}
+             </div>
+
              <div className="space-y-3">
-               {assignments.map(assign => (
-                 <div key={assign.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex justify-between items-center">
-                    <div>
-                      <p className="font-bold text-sm text-gray-900">{interpretersMap[assign.interpreterId]?.name || 'Unknown'}</p>
-                      <p className="text-[10px] text-gray-500 uppercase">{assign.status}</p>
-                    </div>
-                    {assign.status === AssignmentStatus.ACCEPTED && <Button size="sm" onClick={() => handleConfirmAssignment(assign.interpreterId)}>Confirm</Button>}
+               {booking.interpreterId ? (
+                 <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-sm">
+                   <p className="text-[10px] font-black text-blue-500 uppercase mb-1">Confirmed Interpreter</p>
+                   <div className="flex items-center justify-between">
+                     <p className="font-bold text-slate-900">{booking.interpreterName}</p>
+                     <button 
+                      onClick={() => navigate(`/admin/interpreters/${booking.interpreterId}`)}
+                      className="text-xs text-blue-600 hover:underline"
+                     >
+                       Profile
+                     </button>
+                   </div>
                  </div>
-               ))}
-               {assignments.length === 0 && <p className="text-xs text-gray-500 italic text-center py-2">No offers sent.</p>}
+               ) : (
+                 assignments.map(assign => (
+                   <div key={assign.id} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-sm text-gray-900">{interpretersMap[assign.interpreterId]?.name || 'Unknown'}</p>
+                        <p className="text-[10px] text-gray-500 uppercase">{assign.status}</p>
+                      </div>
+                      {assign.status === AssignmentStatus.ACCEPTED && <Button size="sm" onClick={() => handleConfirmAssignment(assign.interpreterId)}>Confirm</Button>}
+                   </div>
+                 ))
+               )}
+               {!booking.interpreterId && assignments.length === 0 && <p className="text-xs text-gray-500 italic text-center py-2">No offers sent.</p>}
              </div>
           </Card>
 

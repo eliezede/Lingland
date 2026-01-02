@@ -2,37 +2,47 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Lingland Platform</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lingland" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/lucide-react/lucide/main/icons/globe-2.png" />
+
     <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
-    "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
-    "recharts": "https://aistudiocdn.com/recharts@^3.4.1",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.9.6",
-    "firebase/app": "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js",
-    "firebase/auth": "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js",
-    "firebase/firestore": "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js",
-    "firebase/functions": "https://www.gstatic.com/firebasejs/11.0.2/firebase-functions.js",
-    "firebase/storage": "https://www.gstatic.com/firebasejs/11.0.2/firebase-storage.js",
-    "jspdf": "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm",
-    "jspdf-autotable": "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.1/+esm",
-    "@/": "./src/",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "firebase/": "https://esm.sh/firebase@^12.7.0/",
-    "firebase-functions": "https://esm.sh/firebase-functions@^7.0.2",
-    "firebase-admin": "https://esm.sh/firebase-admin@^13.6.0",
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "path": "https://esm.sh/path@^0.12.7",
-    "url": "https://esm.sh/url@^0.11.4"
-  }
-}
-</script>
+    {
+      "imports": {
+        "react": "https://aistudiocdn.com/react@^19.2.0",
+        "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
+        "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
+        "recharts": "https://aistudiocdn.com/recharts@^3.4.1",
+        "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+        "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.9.6",
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js",
+        "firebase/functions": "https://www.gstatic.com/firebasejs/11.0.2/firebase-functions.js",
+        "firebase/storage": "https://www.gstatic.com/firebasejs/11.0.2/firebase-storage.js",
+        "jspdf": "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm",
+        "jspdf-autotable": "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.1/+esm",
+        "@/": "./src/",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "firebase/": "https://esm.sh/firebase@^12.7.0/",
+        "firebase-functions": "https://esm.sh/firebase-functions@^7.0.2",
+        "firebase-admin": "https://esm.sh/firebase-admin@^13.6.0",
+        "vite": "https://esm.sh/vite@^7.3.0",
+        "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+        "path": "https://esm.sh/path@^0.12.7",
+        "url": "https://esm.sh/url@^0.11.4"
+      }
+    }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -53,11 +63,11 @@
       body { 
         font-family: 'Inter', sans-serif; 
         transition: background-color 0.3s ease, color 0.3s ease;
+        -webkit-tap-highlight-color: transparent;
       }
       .dark body { background-color: #020617; color: #f8fafc; }
       .light body { background-color: #f8fafc; color: #0f172a; }
       
-      /* Smooth transitions for theme switch */
       *, ::before, ::after {
         transition-property: background-color, border-color, color, fill, stroke;
         transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
@@ -66,6 +76,10 @@
       
       .scrollbar-hide::-webkit-scrollbar { display: none; }
       .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+      /* Safe areas for mobile notches */
+      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+      .pt-safe { padding-top: env(safe-area-inset-top); }
     </style>
   </head>
   <body>

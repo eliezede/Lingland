@@ -1,12 +1,30 @@
+// Define all core types and enums for the Lingland platform
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   CLIENT = 'CLIENT',
   INTERPRETER = 'INTERPRETER'
 }
 
+export interface User {
+  id: string;
+  displayName: string;
+  email: string;
+  role: UserRole;
+  status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  profileId?: string;
+}
+
+export enum ServiceType {
+  FACE_TO_FACE = 'Face-to-Face',
+  VIDEO = 'Video Call',
+  TELEPHONE = 'Telephone',
+  TRANSLATION = 'Translation',
+  BSL = 'British Sign Language'
+}
+
 export enum BookingStatus {
   REQUESTED = 'REQUESTED',
-  SEARCHING = 'SEARCHING',
   OFFERED = 'OFFERED',
   CONFIRMED = 'CONFIRMED',
   COMPLETED = 'COMPLETED',
@@ -18,21 +36,159 @@ export enum BookingStatus {
 export enum AssignmentStatus {
   OFFERED = 'OFFERED',
   ACCEPTED = 'ACCEPTED',
-  DECLINED = 'DECLINED',
-  EXPIRED = 'EXPIRED'
+  DECLINED = 'DECLINED'
 }
 
-export enum ServiceType {
-  FACE_TO_FACE = 'Face-to-Face',
-  VIDEO = 'Video Remote',
-  TELEPHONE = 'Telephone',
-  TRANSLATION = 'Translation',
-  BSL = 'BSL'
+export interface Booking {
+  id: string;
+  clientId: string;
+  clientName: string;
+  requestedByUserId: string;
+  serviceType: ServiceType;
+  languageFrom: string;
+  languageTo: string;
+  date: string;
+  startTime: string;
+  durationMinutes: number;
+  locationType: 'ONSITE' | 'ONLINE';
+  address?: string;
+  postcode?: string;
+  onlineLink?: string;
+  status: BookingStatus;
+  costCode?: string;
+  notes?: string;
+  interpreterId?: string;
+  interpreterName?: string;
+  bookingRef?: string;
+  expectedEndTime?: string;
+  createdAt?: any;
+  updatedAt?: any;
+  caseType?: string;
+  genderPreference?: 'Male' | 'Female' | 'None';
+  guestContact?: GuestContact;
+}
+
+export interface BookingAssignment {
+  id: string;
+  bookingId: string;
+  interpreterId: string;
+  status: AssignmentStatus;
+  offeredAt: string;
+  respondedAt?: string;
+  bookingSnapshot?: Partial<Booking>;
+}
+
+export interface Client {
+  id: string;
+  companyName: string;
+  billingAddress: string;
+  paymentTermsDays: number;
+  contactPerson: string;
+  email: string;
+  defaultCostCodeType: 'PO' | 'Cost Code' | 'Client Name';
+}
+
+export interface Interpreter {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  languages: string[];
+  regions: string[];
+  qualifications: string[];
+  status: 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED';
+  isAvailable: boolean;
+  dbsExpiry: string;
+  addressLine1?: string;
+  postcode?: string;
+  dbsDocumentUrl?: string;
+  unavailableDates?: string[];
+}
+
+export enum InvoiceStatus {
+  DRAFT = 'DRAFT',
+  SENT = 'SENT',
+  PAID = 'PAID',
+  SUBMITTED = 'SUBMITTED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+  APPROVED = 'APPROVED'
+}
+
+export interface Timesheet {
+  id: string;
+  bookingId: string;
+  interpreterId: string;
+  clientId: string;
+  submittedAt: string;
+  actualStart: string;
+  actualEnd: string;
+  breakDurationMinutes: number;
+  adminApproved: boolean;
+  adminApprovedAt?: string;
+  status: 'SUBMITTED' | 'APPROVED' | 'INVOICED';
+  readyForClientInvoice: boolean;
+  readyForInterpreterInvoice: boolean;
+  unitsBillableToClient: number;
+  unitsPayableToInterpreter: number;
+  totalClientAmount?: number;
+  totalInterpreterAmount?: number;
+  clientAmountCalculated: number;
+  interpreterAmountCalculated: number;
+  clientInvoiceId?: string;
+  interpreterInvoiceId?: string;
+  supportingDocumentUrl?: string;
+}
+
+export interface ClientInvoice {
+  id: string;
+  clientId: string;
+  clientName: string;
+  reference: string;
+  invoiceNumber?: string;
+  status: InvoiceStatus;
+  issueDate: string;
+  dueDate: string;
+  periodStart: string;
+  periodEnd: string;
+  totalAmount: number;
+  currency: string;
+  items: Array<{
+    description: string;
+    units: number;
+    rate: number;
+    total: number;
+    quantity?: number;
+  }>;
+}
+
+export interface InterpreterInvoice {
+  id: string;
+  interpreterId: string;
+  interpreterName: string;
+  model: 'UPLOAD' | 'SELF_BILL';
+  status: InvoiceStatus;
+  externalInvoiceReference?: string;
+  totalAmount: number;
+  issueDate: string;
+  items: Array<{
+    description: string;
+    total: number;
+  }>;
+  currency: string;
+  uploadedPdfUrl?: string;
+}
+
+export interface Rate {
+  id: string;
+  rateType: 'CLIENT' | 'INTERPRETER';
+  serviceType: ServiceType;
+  amountPerUnit: number;
+  minimumUnits: number;
 }
 
 export enum ApplicationStatus {
   PENDING = 'PENDING',
-  REVIEWING = 'REVIEWING',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED'
 }
@@ -51,96 +207,12 @@ export interface InterpreterApplication {
   submittedAt: string;
 }
 
-export interface User {
-  id: string;
-  email: string;
-  role: UserRole;
-  displayName: string;
-  profileId?: string;
-  status: 'ACTIVE' | 'SUSPENDED';
-}
-
-export interface Client {
-  id: string;
-  companyName: string;
-  billingAddress: string;
-  paymentTermsDays: number;
-  contactPerson: string;
-  email: string;
-  defaultCostCodeType: 'PO' | 'ICS' | 'Cost Code';
-}
-
-export interface Interpreter {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  languages: string[];
-  regions: string[];
-  qualifications: string[];
-  status: 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED';
-  isAvailable: boolean;
-  dbsExpiry: string;
-  dbsDocumentUrl?: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  postcode?: string;
-  avatarUrl?: string;
-  unavailableDates?: string[];
-}
-
-export interface GuestContact {
-  name: string;
-  organisation: string;
-  email: string;
-  phone?: string;
-  billingEmail?: string;
-}
-
-export interface Booking {
-  id: string;
-  clientId: string | null;
-  clientName: string;
-  requestedByUserId?: string;
-  bookingRef?: string;
-  guestContact?: GuestContact;
-  serviceType: ServiceType;
-  languageFrom: string;
-  languageTo: string;
-  date: string;
-  startTime: string;
-  durationMinutes: number;
-  expectedEndTime?: string;
-  locationType: 'ONLINE' | 'ONSITE';
-  address?: string;
-  postcode?: string;
-  onlineLink?: string;
-  status: BookingStatus;
-  costCode?: string;
-  caseType?: string;
-  notes?: string;
-  genderPreference?: 'Male' | 'Female' | 'None';
-  interpreterId?: string;
-  interpreterName?: string;
-}
-
-export interface BookingAssignment {
-  id: string;
-  bookingId: string;
-  interpreterId: string;
-  status: AssignmentStatus;
-  offeredAt: string;
-  respondedAt?: string;
-  bookingSnapshot?: Partial<Booking>;
-}
-
 export interface SystemSettings {
   general: {
     companyName: string;
     supportEmail: string;
     businessAddress: string;
-    websiteUrl?: string;
+    websiteUrl: string;
     logoUrl?: string;
   };
   finance: {
@@ -164,73 +236,48 @@ export interface SystemSettings {
   };
 }
 
-export enum InvoiceStatus {
-  DRAFT = 'DRAFT',
-  SENT = 'SENT',
-  PAID = 'PAID',
-  CANCELLED = 'CANCELLED',
-  SUBMITTED = 'SUBMITTED',
-  APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED'
+export interface GuestContact {
+  name: string;
+  organisation: string;
+  email: string;
+  phone: string;
+  billingEmail?: string;
 }
 
-export interface Timesheet {
-  id: string;
-  bookingId: string;
-  clientId: string;
-  interpreterId: string;
-  actualStart: string;
-  actualEnd: string;
-  breakDurationMinutes: number;
-  travelDurationMinutes?: number;
-  unitsBillableToClient: number;
-  unitsPayableToInterpreter: number;
-  clientAmountCalculated: number;
-  interpreterAmountCalculated: number;
-  adminApproved: boolean;
-  readyForClientInvoice: boolean;
-  readyForInterpreterInvoice: boolean;
-  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'INVOICED';
-  submittedAt?: string;
-  supportingDocumentUrl?: string;
-  clientInvoiceId?: string;
-  interpreterInvoiceId?: string;
-  totalClientAmount?: number;
-  totalInterpreterAmount?: number;
+export enum NotificationType {
+  INFO = 'INFO',
+  JOB_OFFER = 'JOB_OFFER',
+  PAYMENT = 'PAYMENT',
+  CHAT = 'CHAT',
+  SYSTEM = 'SYSTEM'
 }
 
-export interface ClientInvoice {
+export interface Notification {
   id: string;
-  clientId: string;
-  clientName: string;
-  invoiceNumber: string;
-  reference?: string;
-  issueDate: string;
-  dueDate: string;
-  status: InvoiceStatus;
-  totalAmount: number;
-  currency: string;
-  items?: any[];
+  userId: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  read: boolean;
+  createdAt: string;
+  link?: string;
 }
 
-export interface InterpreterInvoice {
+export interface ChatThread {
   id: string;
-  interpreterId: string;
-  interpreterName: string;
-  issueDate: string;
-  status: InvoiceStatus;
-  totalAmount: number;
-  model: 'UPLOAD' | 'SELF_BILLING';
-  externalInvoiceReference?: string;
-  uploadedPdfUrl?: string;
-  items?: any[];
-  currency?: string;
+  participants: string[]; // uids
+  participantNames: Record<string, string>;
+  lastMessage?: string;
+  lastMessageAt?: string;
+  bookingId?: string;
+  unreadCount: Record<string, number>;
 }
 
-export interface Rate {
+export interface ChatMessage {
   id: string;
-  rateType: 'CLIENT' | 'INTERPRETER';
-  serviceType: ServiceType;
-  amountPerUnit: number;
-  minimumUnits: number;
+  threadId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  createdAt: string;
 }
