@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBookings } from '../../hooks/useBookings';
@@ -90,7 +89,7 @@ export const AdminBookings = () => {
     }
   };
 
-  // Helper para busca segura
+  // Helper para busca segura e resiliente a undefined/null
   const safe = (val: unknown) => String(val ?? "").toLowerCase();
 
   const filteredBookings = (bookings ?? []).filter(b => {

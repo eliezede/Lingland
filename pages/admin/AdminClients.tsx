@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { ClientService } from '../../services/clientService';
 import { Client } from '../../types';
@@ -127,7 +126,10 @@ export const AdminClients = () => {
         <form onSubmit={handleSave} className="space-y-4">
            <input type="text" placeholder="Company Name" className="w-full p-2 border rounded" value={formData.companyName || ''} onChange={e => setFormData({...formData, companyName: e.target.value})} required />
            <input type="email" placeholder="Email" className="w-full p-2 border rounded" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} required />
-           <Button type="submit" isLoading={saving}>Save</Button>
+           <div className="flex justify-end gap-2">
+             <Button type="button" variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+             <Button type="submit" isLoading={saving}>Save</Button>
+           </div>
         </form>
       </Modal>
     </div>
