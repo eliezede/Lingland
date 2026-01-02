@@ -4,7 +4,6 @@ interface CardProps {
   children: React.ReactNode;
   className?: string;
   padding?: 'none' | 'sm' | 'md' | 'lg';
-  // Added optional onClick prop to support interactive cards in lists and dashboards
   onClick?: React.MouseEventHandler<HTMLDivElement>;
 }
 
@@ -18,8 +17,14 @@ export const Card: React.FC<CardProps> = ({ children, className = '', padding = 
 
   return (
     <div 
-      className={`bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden ${paddingClasses[padding]} ${className}`}
-      // Apply the onClick handler to the container element
+      className={`
+        bg-white dark:bg-slate-900 
+        rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 
+        transition-all duration-300
+        ${onClick ? 'cursor-pointer hover:shadow-md hover:border-blue-300 dark:hover:border-blue-800 active:scale-[0.99]' : ''}
+        ${paddingClasses[padding]} 
+        ${className}
+      `}
       onClick={onClick}
     >
       {children}

@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useClientBookings } from '../../../hooks/useClientHooks';
@@ -7,19 +8,14 @@ import { Link } from 'react-router-dom';
 
 export const ClientBookingsList = () => {
   const { user } = useAuth();
-  const { bookings = [], loading } = useClientBookings(user?.profileId);
+  const { bookings, loading } = useClientBookings(user?.profileId);
   const [filter, setFilter] = useState('');
 
-  const safe = (val: unknown) => String(val ?? "").toLowerCase();
-
-  const filteredBookings = (bookings || []).filter(b => {
-    const q = safe(filter);
-    return (
-      safe(b?.languageTo).includes(q) ||
-      safe(b?.status).includes(q) ||
-      safe(b?.costCode).includes(q)
-    );
-  });
+  const filteredBookings = bookings.filter(b => 
+    (b.languageTo.toLowerCase().includes(filter.toLowerCase()) ||
+     b.status.toLowerCase().includes(filter.toLowerCase()) ||
+     (b.costCode && b.costCode.toLowerCase().includes(filter.toLowerCase())))
+  );
 
   return (
     <div className="space-y-6">
@@ -39,6 +35,10 @@ export const ClientBookingsList = () => {
               onChange={e => setFilter(e.target.value)}
             />
           </div>
+          <button className="flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
+            <Filter size={18} className="mr-2" />
+            Filters
+          </button>
         </div>
       </div>
 

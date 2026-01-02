@@ -34,38 +34,36 @@ export const Modal: React.FC<ModalProps> = ({
         
         {/* Backdrop */}
         <div 
-          className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" 
+          className="fixed inset-0 transition-opacity bg-slate-950/60 backdrop-blur-sm" 
           onClick={onClose}
           aria-hidden="true"
         />
 
-        {/* Center trick */}
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         {/* Modal Panel */}
         <div 
-          className={`inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle w-full ${maxWidthClasses[maxWidth]}`}
+          className={`inline-block align-bottom bg-white dark:bg-slate-900 rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle w-full border border-slate-200 dark:border-slate-800 ${maxWidthClasses[maxWidth]}`}
         >
-          <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <div className="flex justify-between items-start">
-              <h3 className="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+          <div className="bg-white dark:bg-slate-900 px-6 pt-6 pb-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100">
                 {title}
               </h3>
               <button 
                 onClick={onClose}
-                className="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none"
+                className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
               >
-                <span className="sr-only">Close</span>
                 <X size={20} />
               </button>
             </div>
-            <div className="mt-4">
+            <div className="mt-2 text-slate-600 dark:text-slate-300">
               {children}
             </div>
           </div>
           
           {footer && (
-            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+            <div className="bg-slate-50 dark:bg-slate-800/50 px-6 py-4 sm:flex sm:flex-row-reverse gap-3 border-t border-slate-100 dark:border-slate-800">
               {footer}
             </div>
           )}

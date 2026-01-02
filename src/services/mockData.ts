@@ -23,9 +23,7 @@ const DEFAULT_CLIENTS: Client[] = [
 ];
 
 const DEFAULT_INTERPRETERS: Interpreter[] = [
-  // Fix: Added isAvailable: true to satisfy Interpreter interface requirement
   { id: 'i1', name: 'John Doe', email: 'john@interp.com', phone: '07700900123', languages: ['Arabic', 'French'], regions: ['London', 'South East'], qualifications: ['DPSI'], status: 'ACTIVE', isAvailable: true, dbsExpiry: '2025-12-01' },
-  // Fix: Added isAvailable: true to satisfy Interpreter interface requirement
   { id: 'i2', name: 'Maria Garcia', email: 'maria@interp.com', phone: '07700900456', languages: ['Spanish', 'Portuguese'], regions: ['Manchester', 'North West'], qualifications: ['Community Level 3'], status: 'ACTIVE', isAvailable: true, dbsExpiry: '2024-11-15' },
 ];
 

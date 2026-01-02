@@ -1,96 +1,24 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBookings } from '../../hooks/useBookings';
 import { StatusBadge } from '../../components/StatusBadge';
-import { Search, Filter, MapPin, Video, User, Plus } from 'lucide-react';
+import { Search, MapPin, Video, Plus } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Spinner } from '../../components/ui/Spinner';
 import { Alert } from '../../components/ui/Alert';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Card } from '../../components/ui/Card';
-import { Modal } from '../../components/ui/Modal';
-import { ClientService, BookingService } from '../../services/api';
-import { Client, ServiceType, BookingStatus } from '../../types';
-import { useToast } from '../../context/ToastContext';
-import { useAuth } from '../../context/AuthContext';
-import { useSettings } from '../../context/SettingsContext';
+import { ClientService } from '../../services/api';
 
 export const AdminBookings = () => {
   const { bookings = [], loading, error, refresh } = useBookings();
-  const { settings } = useSettings();
   const [filter, setFilter] = useState('');
   const navigate = useNavigate();
-  const { showToast } = useToast();
-  const { user } = useAuth();
-
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formData, setFormData] = useState({
-    clientId: '',
-    serviceType: ServiceType.FACE_TO_FACE,
-    languageFrom: 'English',
-    languageTo: '',
-    date: '',
-    startTime: '',
-    durationMinutes: 60,
-    locationType: 'ONSITE' as 'ONSITE' | 'ONLINE',
-    address: '',
-    postcode: '',
-    onlineLink: '',
-    costCode: '',
-    notes: ''
-  });
 
   useEffect(() => {
-    ClientService.getAll().then(setClients);
+    ClientService.getAll();
   }, []);
 
-  const handleOpenCreate = () => {
-    setFormData({
-      clientId: '',
-      serviceType: ServiceType.FACE_TO_FACE,
-      languageFrom: 'English',
-      languageTo: '',
-      date: '',
-      startTime: '',
-      durationMinutes: 60,
-      locationType: 'ONSITE',
-      address: '',
-      postcode: '',
-      onlineLink: '',
-      costCode: '',
-      notes: ''
-    });
-    setIsCreateModalOpen(true);
-  };
-
-  const handleCreateBooking = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.clientId) {
-      showToast('Please select a client', 'error');
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      const selectedClient = clients.find(c => c.id === formData.clientId);
-      await BookingService.create({
-        ...formData,
-        clientName: selectedClient?.companyName || 'Unknown Client',
-        requestedByUserId: user?.id
-      });
-      showToast('Booking created successfully', 'success');
-      setIsCreateModalOpen(false);
-      refresh();
-    } catch (err) {
-      showToast('Failed to create booking', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Helper para busca segura (Blinda contra .toLowerCase() em undefined)
   const safe = (val: unknown) => String(val ?? "").toLowerCase();
 
   const filteredBookings = (bookings ?? []).filter(b => {
@@ -108,9 +36,9 @@ export const AdminBookings = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">All Bookings</h1>
-          <p className="text-gray-500 text-sm">Manage system-wide requests</p>
+          <p className="text-gray-500 text-sm">System-wide requests</p>
         </div>
-        <Button onClick={handleOpenCreate} icon={Plus}>Create Booking</Button>
+        <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus}>Create Booking</Button>
       </div>
 
       <Card padding="sm" className="flex gap-4">
@@ -124,9 +52,6 @@ export const AdminBookings = () => {
             onChange={e => setFilter(e.target.value)}
           />
         </div>
-        <div className="border-l border-gray-200 pl-4">
-           <Button variant="ghost" size="sm" icon={Filter}>Filters</Button>
-        </div>
       </Card>
 
       {error && <Alert type="error" message={error} />}
@@ -139,7 +64,7 @@ export const AdminBookings = () => {
       ) : filteredBookings.length === 0 ? (
         <EmptyState 
           title="No bookings found" 
-          description={filter ? "Try adjusting your search filters." : "There are no bookings in the system yet."}
+          description={filter ? "Adjust your search filters." : "No bookings in the system."}
           actionLabel={filter ? "Clear Filters" : "Refresh"}
           onAction={filter ? () => setFilter('') : refresh}
         />
@@ -152,24 +77,19 @@ export const AdminBookings = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ref / Date</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Assigned</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Action</th>
+                  <th className="px-6 py-3 text-right"></th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredBookings.map((booking) => (
                   <tr key={booking.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div className="font-bold text-blue-600">{booking.bookingRef || '---'}</div>
-                      <div className="font-medium mt-1">{booking.date ? new Date(booking.date).toLocaleDateString() : 'TBD'}</div>
-                      <div className="text-gray-500 text-xs">{booking.startTime || '--:--'}</div>
+                      <div className="font-bold text-blue-600">{booking.bookingRef || 'TBD'}</div>
+                      <div className="text-xs text-gray-500">{booking.date}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {booking.clientName}
-                      </div>
-                      <div className="text-xs text-gray-500">{booking.costCode || 'No Ref'}</div>
+                      <div className="text-sm font-medium text-gray-900">{booking.clientName}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                        <div className="text-sm text-gray-900">{booking.languageFrom} &rarr; {booking.languageTo}</div>
@@ -178,19 +98,10 @@ export const AdminBookings = () => {
                           {booking.serviceType}
                        </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {booking.interpreterName ? (
-                        <span className="text-blue-600 font-medium flex items-center">
-                          <User size={12} className="mr-1" /> {booking.interpreterName}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 italic">Unassigned</span>
-                      )}
-                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <StatusBadge status={booking.status} />
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-right">
                       <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/bookings/${booking.id}`)}>Manage</Button>
                     </td>
                   </tr>
