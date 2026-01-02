@@ -6,7 +6,6 @@ import { StatusBadge } from '../../../components/StatusBadge';
 import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
 import { Modal } from '../../../components/ui/Modal';
-/* Added missing Badge import */
 import { Badge } from '../../../components/ui/Badge';
 import { useToast } from '../../../context/ToastContext';
 import { 
@@ -50,18 +49,18 @@ const AdminBookingDetails = () => {
       ]);
 
       setBooking(bookingData || null);
-      setAssignments(assignmentsData);
-      setAllInterpreters(interpretersList);
+      setAssignments(assignmentsData || []);
+      setAllInterpreters(interpretersList || []);
       
       // Map for easy lookup
       const map: Record<string, Interpreter> = {};
-      interpretersList.forEach(i => map[i.id] = i);
+      (interpretersList || []).forEach(i => map[i.id] = i);
       setInterpretersMap(map);
 
       if (bookingData) {
         // Find suggestions based on language
         const suggestions = await BookingService.findInterpretersByLanguage(bookingData.languageTo);
-        setSuggestedInterpreters(suggestions);
+        setSuggestedInterpreters(suggestions || []);
       }
     } catch (error) {
       console.error("Failed to load data for booking:", error);
@@ -175,18 +174,22 @@ const AdminBookingDetails = () => {
   if (loading) return <div className="p-8 text-center text-gray-500">Loading booking details...</div>;
   if (!booking) return <div className="p-8 text-center text-red-500">Booking not found.</div>;
 
-  const filteredManualList = searchQuery.length > 0 
-    ? allInterpreters.filter(i => 
+  // Safe String Helper Pattern
+  const safe = (val: any) => String(val ?? "").toLowerCase();
+  const q = safe(searchQuery);
+
+  const filteredManualList = q.length > 0 
+    ? (allInterpreters || []).filter(i => 
         i.status === 'ACTIVE' && 
-        (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-         i.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         i.languages.some(l => l.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-        !assignments.some(a => a.interpreterId === i.id)
+        (safe(i.name).includes(q) || 
+         safe(i.email).includes(q) ||
+         (i.languages || []).some(l => safe(l).includes(q))) &&
+        !(assignments || []).some(a => a.interpreterId === i.id)
       )
     : [];
 
-  const activeSuggestions = suggestedInterpreters.filter(
-    i => !assignments.some(a => a.interpreterId === i.id)
+  const activeSuggestions = (suggestedInterpreters || []).filter(
+    i => !(assignments || []).some(a => a.interpreterId === i.id)
   );
 
   return (
@@ -205,7 +208,7 @@ const AdminBookingDetails = () => {
               <h1 className="text-2xl font-bold text-gray-900">Booking #{booking.bookingRef || booking.id.substring(0, 6).toUpperCase()}</h1>
               <StatusBadge status={booking.status} />
             </div>
-            <p className="text-gray-500 text-sm mt-1">Requested by {booking.clientName} on {new Date(booking.date).toLocaleDateString()}</p>
+            <p className="text-gray-500 text-sm mt-1">Requested by {booking.clientName} on {booking.date ? new Date(booking.date).toLocaleDateString() : 'TBD'}</p>
           </div>
         </div>
 
@@ -273,7 +276,7 @@ const AdminBookingDetails = () => {
                   <div className="flex items-center mt-1">
                     <Calendar size={18} className="text-gray-500 mr-2" />
                     <span className="font-medium text-gray-900">
-                      {new Date(booking.date).toLocaleDateString()}
+                      {booking.date ? new Date(booking.date).toLocaleDateString() : 'TBD'}
                     </span>
                   </div>
                   <div className="flex items-center mt-1 ml-7">
@@ -334,7 +337,7 @@ const AdminBookingDetails = () => {
                           </span>
                         </div>
                         <div className="text-xs text-gray-500 mb-3">
-                           Sent: {new Date(assign.offeredAt).toLocaleDateString()}
+                           Sent: {assign.offeredAt ? new Date(assign.offeredAt).toLocaleDateString() : 'N/A'}
                         </div>
                         
                         {assign.status === AssignmentStatus.ACCEPTED && booking.status !== BookingStatus.CONFIRMED && (
@@ -408,7 +411,7 @@ const AdminBookingDetails = () => {
                         <div className="flex justify-between items-center mb-2">
                           <div>
                             <p className="font-bold text-sm text-gray-900">{interpreter.name}</p>
-                            <p className="text-[10px] text-gray-500">{interpreter.regions.join(', ')}</p>
+                            <p className="text-[10px] text-gray-500">{(interpreter.regions || []).join(', ')}</p>
                           </div>
                           <div className="text-right">
                              <Badge variant={interpreter.status === 'ACTIVE' ? 'success' : 'warning'} className="text-[9px]">
@@ -418,7 +421,7 @@ const AdminBookingDetails = () => {
                         </div>
                         <div className="flex items-center justify-between mt-3 gap-2">
                            <div className="text-[10px] text-gray-400 truncate max-w-[100px]">
-                              Qual: {interpreter.qualifications[0] || 'N/A'}
+                              Qual: {(interpreter.qualifications || [])[0] || 'N/A'}
                            </div>
                            <div className="flex gap-1">
                             <button 

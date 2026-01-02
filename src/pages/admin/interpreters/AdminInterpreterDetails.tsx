@@ -48,7 +48,7 @@ export const AdminInterpreterDetails = () => {
 
     setLoading(true);
 
-    // 1. Carregar Perfil
+    // 1. Monitorar Perfil
     const unsubProfile = onSnapshot(doc(db, 'interpreters', id), (snap) => {
       if (snap.exists()) {
         const data = { id: snap.id, ...snap.data() } as Interpreter;
@@ -57,7 +57,7 @@ export const AdminInterpreterDetails = () => {
       }
     });
 
-    // 2. Listen para Agendamentos Confirmados/Completos
+    // 2. Monitorar Agendamentos Confirmados/Completos
     const qConfirmed = query(
       collection(db, 'bookings'),
       where('interpreterId', '==', id)
@@ -67,7 +67,7 @@ export const AdminInterpreterDetails = () => {
       setConfirmedJobs(data);
     });
 
-    // 3. Listen para Ofertas Pendentes (Assignments)
+    // 3. Monitorar Ofertas Pendentes (Assignments)
     const qOffers = query(
       collection(db, 'assignments'),
       where('interpreterId', '==', id),
@@ -89,7 +89,7 @@ export const AdminInterpreterDetails = () => {
       setLoading(false);
     });
 
-    // 4. Carregar Invoices
+    // 4. Monitorar Invoices
     const qInvoices = query(collection(db, 'interpreterInvoices'), where('interpreterId', '==', id));
     const unsubInvoices = onSnapshot(qInvoices, (snap) => {
        setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() } as InterpreterInvoice)));
@@ -137,11 +137,19 @@ export const AdminInterpreterDetails = () => {
   if (loading) return <div className="p-12 flex justify-center"><Spinner size="lg" /></div>;
   if (!interpreter) return <div className="p-12 text-center text-red-500 font-bold">Interpreter not found.</div>;
 
-  const earningsTotal = invoices.reduce((acc, inv) => acc + inv.totalAmount, 0);
+  const earningsTotal = invoices.reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
   
-  // Consolidar Jobs para a lista
-  const jobs = [...confirmedJobs, ...offeredJobs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && (j.status === BookingStatus.CONFIRMED || j.status === BookingStatus.OFFERED)).length;
+  // Consolidar Jobs para a lista principal
+  const jobs = [...confirmedJobs, ...offeredJobs].sort((a, b) => {
+    const dateA = a.date ? new Date(a.date).getTime() : 0;
+    const dateB = b.date ? new Date(b.date).getTime() : 0;
+    return dateB - dateA;
+  });
+  
+  const upcomingJobsCount = jobs.filter(j => {
+    if (!j.date) return false;
+    return new Date(j.date) >= new Date() && (j.status === BookingStatus.CONFIRMED || j.status === BookingStatus.OFFERED);
+  }).length;
 
   return (
     <div className="space-y-6 pb-20">
@@ -156,12 +164,12 @@ export const AdminInterpreterDetails = () => {
           </button>
           <div className="flex items-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-2xl font-bold mr-4 border-4 border-white shadow-sm">
-              {interpreter.name.charAt(0)}
+              {interpreter.name?.charAt(0) || '?'}
             </div>
             <div>
                <div className="flex items-center gap-3">
-                 <h1 className="text-2xl font-bold text-gray-900">{interpreter.name}</h1>
-                 <Badge variant={interpreter.status === 'ACTIVE' ? 'success' : 'warning'}>{interpreter.status}</Badge>
+                 <h1 className="text-2xl font-bold text-gray-900">{interpreter.name || 'Unnamed'}</h1>
+                 <Badge variant={interpreter.status === 'ACTIVE' ? 'success' : 'warning'}>{interpreter.status || 'UNKNOWN'}</Badge>
                </div>
                <p className="text-gray-500 text-sm mt-0.5 font-mono">ID: {interpreter.id}</p>
             </div>
@@ -207,10 +215,10 @@ export const AdminInterpreterDetails = () => {
                  <label className="text-xs font-bold text-gray-400 uppercase">Contact Information</label>
                  <div className="mt-2 space-y-2">
                     <div className="flex items-center text-sm text-gray-600">
-                       <Mail size={14} className="mr-2 text-gray-400" /> {interpreter.email}
+                       <Mail size={14} className="mr-2 text-gray-400" /> {interpreter.email || 'No email set'}
                     </div>
                     <div className="flex items-center text-sm text-gray-600">
-                       <Phone size={14} className="mr-2 text-gray-400" /> {interpreter.phone}
+                       <Phone size={14} className="mr-2 text-gray-400" /> {interpreter.phone || 'No phone set'}
                     </div>
                  </div>
                </div>
@@ -218,11 +226,12 @@ export const AdminInterpreterDetails = () => {
                <div>
                  <label className="text-xs font-bold text-gray-400 uppercase">Languages</label>
                  <div className="mt-2 flex flex-wrap gap-2">
-                    {interpreter.languages.map(lang => (
+                    {(interpreter.languages || []).map(lang => (
                       <span key={lang} className="px-2 py-1 bg-gray-100 rounded text-xs font-medium text-gray-700 flex items-center">
                         <Languages size={12} className="mr-1 text-gray-400" /> {lang}
                       </span>
                     ))}
+                    {(interpreter.languages || []).length === 0 && <span className="text-xs text-gray-400 italic">None set</span>}
                  </div>
                </div>
 
@@ -234,6 +243,7 @@ export const AdminInterpreterDetails = () => {
                         <MapPin size={12} className="mr-1 text-blue-400" /> {region}
                       </span>
                     ))}
+                    {(interpreter.regions || []).length === 0 && <span className="text-xs text-gray-400 italic">None set</span>}
                  </div>
                </div>
 
@@ -245,6 +255,7 @@ export const AdminInterpreterDetails = () => {
                          <Award size={14} className="mr-2 text-yellow-600" /> {qual}
                       </div>
                     ))}
+                    {(interpreter.qualifications || []).length === 0 && <span className="text-xs text-gray-400 italic">None set</span>}
                  </div>
                </div>
             </div>
@@ -258,9 +269,9 @@ export const AdminInterpreterDetails = () => {
             <div className="space-y-4">
                <div>
                   <p className="text-xs text-gray-500 uppercase font-bold">DBS Check Expiry</p>
-                  <p className={`text-sm font-medium mt-1 ${new Date(interpreter.dbsExpiry) < new Date() ? 'text-red-600' : 'text-gray-900'}`}>
-                    {new Date(interpreter.dbsExpiry).toLocaleDateString()}
-                    {new Date(interpreter.dbsExpiry) < new Date() && ' (EXPIRED)'}
+                  <p className={`text-sm font-medium mt-1 ${interpreter.dbsExpiry && new Date(interpreter.dbsExpiry) < new Date() ? 'text-red-600' : 'text-gray-900'}`}>
+                    {interpreter.dbsExpiry ? new Date(interpreter.dbsExpiry).toLocaleDateString() : 'N/A'}
+                    {interpreter.dbsExpiry && new Date(interpreter.dbsExpiry) < new Date() && ' (EXPIRED)'}
                   </p>
                </div>
                <div className="pt-2 border-t border-orange-100 flex justify-between items-center text-xs text-orange-700 font-medium">
@@ -314,16 +325,16 @@ export const AdminInterpreterDetails = () => {
                             jobs.map(job => (
                               <tr key={job.id} className={`hover:bg-gray-50 transition-colors ${job.status === BookingStatus.OFFERED ? 'bg-blue-50/20' : ''}`}>
                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <div className="text-sm font-bold text-gray-900">{new Date(job.date).toLocaleDateString()}</div>
-                                    <div className="text-xs text-gray-500">{job.startTime}</div>
+                                    <div className="text-sm font-bold text-gray-900">{job.date ? new Date(job.date).toLocaleDateString() : 'TBD'}</div>
+                                    <div className="text-xs text-gray-500">{job.startTime || '--:--'}</div>
                                  </td>
-                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-medium">{job.clientName}</td>
+                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-medium">{job.clientName || 'Unnamed'}</td>
                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-tighter leading-none mb-1">{job.languageFrom} &rarr;</div>
-                                    <div className="text-sm font-black text-blue-700">{job.languageTo}</div>
+                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-tighter leading-none mb-1">{job.languageFrom || 'Eng'} &rarr;</div>
+                                    <div className="text-sm font-black text-blue-700">{job.languageTo || 'TBD'}</div>
                                  </td>
                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <StatusBadge status={job.status} />
+                                    <StatusBadge status={job.status || 'UNKNOWN'} />
                                  </td>
                                  <td className="px-6 py-4 text-right">
                                     <button 
@@ -368,10 +379,10 @@ export const AdminInterpreterDetails = () => {
                                        {inv.externalInvoiceReference || inv.id.substring(0,8)}
                                     </div>
                                  </td>
-                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{new Date(inv.issueDate).toLocaleDateString()}</td>
-                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">£{inv.totalAmount.toFixed(2)}</td>
+                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{inv.issueDate ? new Date(inv.issueDate).toLocaleDateString() : 'N/A'}</td>
+                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">£{(inv.totalAmount || 0).toFixed(2)}</td>
                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <InvoiceStatusBadge status={inv.status} />
+                                    <InvoiceStatusBadge status={inv.status || 'UNKNOWN'} />
                                  </td>
                                  <td className="px-6 py-4 text-right">
                                     <button 
@@ -447,7 +458,7 @@ export const AdminInterpreterDetails = () => {
           <div>
             <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Qualified Languages</label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-3 border rounded-xl bg-gray-50">
-              {settings.masterData.priorityLanguages.map(lang => (
+              {(settings.masterData.priorityLanguages || []).map(lang => (
                 <label key={lang} className={`flex items-center p-2 rounded-lg border cursor-pointer transition-colors ${
                   formData.languages?.includes(lang) ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                 }`}>

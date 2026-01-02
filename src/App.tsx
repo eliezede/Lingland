@@ -21,7 +21,7 @@ import { LandingPage } from './pages/public/LandingPage';
 import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
 import { InterpreterApplication } from './pages/public/InterpreterApplication';
 
-// Admin Pages
+// Admin Pages (Consolidated in src/pages)
 import { AdminBookings } from './pages/admin/AdminBookings';
 import AdminBookingDetails from './pages/admin/bookings/AdminBookingDetails';
 import { AdminTimesheets } from './pages/admin/billing/TimesheetsPage';
@@ -55,25 +55,17 @@ import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
 
-// --- ROOT ROUTE LOGIC ---
 const RootRoute = () => {
   const { user, isLoading } = useAuth();
-  
   if (isLoading) return <div className="min-h-screen bg-white" />;
-  
   if (user) {
     switch (user.role) {
-      case UserRole.ADMIN:
-        return <Navigate to="/admin/dashboard" replace />;
-      case UserRole.CLIENT:
-        return <Navigate to="/client/dashboard" replace />;
-      case UserRole.INTERPRETER:
-        return <Navigate to="/interpreter/dashboard" replace />;
-      default:
-        return <LandingPage />;
+      case UserRole.ADMIN: return <Navigate to="/admin/dashboard" replace />;
+      case UserRole.CLIENT: return <Navigate to="/client/dashboard" replace />;
+      case UserRole.INTERPRETER: return <Navigate to="/interpreter/dashboard" replace />;
+      default: return <LandingPage />;
     }
   }
-
   return <LandingPage />;
 };
 
@@ -134,35 +126,24 @@ const App = () => {
                         <Route path="dashboard" element={<Dashboard />} />
                         <Route path="bookings" element={<AdminBookings />} />
                         <Route path="bookings/:id" element={<AdminBookingDetails />} />
-                        
-                        {/* Recrutamento */}
                         <Route path="applications" element={<AdminApplications />} />
-
-                        {/* Directory Management */}
                         <Route path="clients" element={<AdminClients />} />
                         <Route path="interpreters" element={<AdminInterpreters />} />
                         <Route path="interpreters/:id" element={<AdminInterpreterDetails />} />
                         <Route path="users" element={<AdminUsers />} />
-                        
-                        {/* System */}
                         <Route path="settings" element={<AdminSettings />} />
-                        
-                        {/* Billing */}
                         <Route path="billing" element={<AdminBillingDashboard />} />
                         <Route path="billing/client-invoices" element={<AdminClientInvoicesPage />} />
                         <Route path="billing/client-invoices/:id" element={<AdminClientInvoiceDetailsPage />} />
                         <Route path="billing/interpreter-invoices" element={<AdminInterpreterInvoicesPage />} />
                         <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
-                        
                         <Route path="timesheets" element={<AdminTimesheets />} />
                         <Route path="*" element={<NotFound />} />
                       </Routes>
                     </AdminLayout>
                   </ProtectedRoute>
                 } />
-                
                 <Route path="*" element={<NotFound />} />
-
               </Routes>
               <RoleSwitcher />
             </HashRouter>

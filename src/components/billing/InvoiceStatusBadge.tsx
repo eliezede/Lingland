@@ -1,9 +1,10 @@
-
 import React from 'react';
 import { InvoiceStatus } from '../../types';
 
 export const InvoiceStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   const getColors = () => {
+    if (!status) return 'bg-gray-50 text-gray-600 border-gray-200';
+
     switch (status) {
       case InvoiceStatus.PAID: return 'bg-green-100 text-green-800 border-green-200';
       case InvoiceStatus.SENT: return 'bg-blue-100 text-blue-800 border-blue-200';
@@ -18,7 +19,7 @@ export const InvoiceStatusBadge: React.FC<{ status: string }> = ({ status }) => 
 
   return (
     <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getColors()} uppercase tracking-wide`}>
-      {status}
+      {status || 'UNKNOWN'}
     </span>
   );
 };

@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { ApplicationService } from '../../services/applicationService';
 import { InterpreterService, UserService } from '../../services/api';
@@ -29,7 +28,7 @@ export const AdminApplications = () => {
     setLoading(true);
     try {
       const data = await ApplicationService.getAll();
-      setApplications(data);
+      setApplications(data || []);
     } catch (e) {
       showToast('Failed to load applications', 'error');
     } finally {
@@ -43,14 +42,13 @@ export const AdminApplications = () => {
     setProcessingId(app.id);
     try {
       // 1. Create Interpreter Profile
-      /* Fixed: Added isAvailable: false to satisfy interface requirements */
       const newInt = await InterpreterService.create({
         name: app.name,
         email: app.email,
         phone: app.phone,
-        languages: app.languages,
+        languages: app.languages || [],
         regions: [app.postcode],
-        qualifications: app.qualifications,
+        qualifications: app.qualifications || [],
         dbsExpiry: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
         status: 'ONBOARDING',
         isAvailable: false
@@ -70,7 +68,7 @@ export const AdminApplications = () => {
       
       showToast(`${app.name} has been approved and provisioned!`, 'success');
       setSelectedApp(null);
-      await loadData(); // Recarrega a lista para refletir a mudança
+      await loadData(); 
     } catch (e) {
       console.error(e);
       showToast('Error during approval process', 'error');
@@ -91,6 +89,8 @@ export const AdminApplications = () => {
     }
   };
 
+  const safe = (val: any) => String(val ?? "").toLowerCase();
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -102,11 +102,11 @@ export const AdminApplications = () => {
 
       {loading ? <Spinner size="lg" className="py-12" /> : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {applications.filter(a => a.status === ApplicationStatus.PENDING).map(app => (
+          {(applications || []).filter(a => a.status === ApplicationStatus.PENDING).map(app => (
             <Card key={app.id} className="hover:border-blue-400 cursor-pointer transition-all flex flex-col h-full" onClick={() => setSelectedApp(app)}>
                <div className="flex justify-between items-start mb-4">
                   <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-bold text-xl">
-                    {app.name.charAt(0)}
+                    {safe(app.name).charAt(0).toUpperCase() || '?'}
                   </div>
                   <Badge variant="warning">PENDING</Badge>
                </div>
@@ -116,19 +116,19 @@ export const AdminApplications = () => {
                </div>
                
                <div className="flex flex-wrap gap-1 mb-4 flex-1">
-                  {app.languages.slice(0, 3).map(l => (
+                  {(app.languages || []).slice(0, 3).map(l => (
                     <span key={l} className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-bold text-gray-600 uppercase">{l}</span>
                   ))}
-                  {app.languages.length > 3 && <span className="text-[10px] text-gray-400">+{app.languages.length - 3} more</span>}
+                  {(app.languages || []).length > 3 && <span className="text-[10px] text-gray-400">+{(app.languages || []).length - 3} more</span>}
                </div>
 
                <div className="pt-4 border-t border-gray-100 mt-auto flex justify-between items-center">
-                  <span className="text-[10px] text-gray-400 uppercase font-bold">Applied: {new Date(app.submittedAt).toLocaleDateString()}</span>
+                  <span className="text-[10px] text-gray-400 uppercase font-bold">Applied: {app.submittedAt ? new Date(app.submittedAt).toLocaleDateString() : 'TBD'}</span>
                   <button className="text-blue-600 text-xs font-bold uppercase hover:underline">Review &rarr;</button>
                </div>
             </Card>
           ))}
-          {applications.filter(a => a.status === ApplicationStatus.PENDING).length === 0 && (
+          {(applications || []).filter(a => a.status === ApplicationStatus.PENDING).length === 0 && (
             <div className="col-span-full py-12 text-center text-gray-400 italic">No new applications at the moment.</div>
           )}
         </div>
@@ -159,12 +159,12 @@ export const AdminApplications = () => {
                 <div className="space-y-4">
                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Expertise</h4>
                    <div className="flex flex-wrap gap-2">
-                      {selectedApp.languages.map(l => <Badge key={l} variant="info">{l}</Badge>)}
+                      {(selectedApp.languages || []).map(l => <Badge key={l} variant="info">{l}</Badge>)}
                    </div>
                    <div className="pt-4 space-y-2">
                       <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Qualifications</h4>
                       <div className="flex flex-wrap gap-2">
-                        {selectedApp.qualifications.map(q => <span key={q} className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded-md border border-purple-100 flex items-center"><Award size={12} className="mr-1" /> {q}</span>)}
+                        {(selectedApp.qualifications || []).map(q => <span key={q} className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded-md border border-purple-100 flex items-center"><Award size={12} className="mr-1" /> {q}</span>)}
                       </div>
                    </div>
                 </div>
@@ -173,7 +173,7 @@ export const AdminApplications = () => {
              <div className="space-y-2">
                 <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Experience Summary</h4>
                 <p className="text-sm text-gray-700 bg-gray-50 p-4 rounded-xl border border-gray-200 italic leading-relaxed">
-                  "{selectedApp.experienceSummary}"
+                  "{selectedApp.experienceSummary || 'No summary provided.'}"
                 </p>
              </div>
 

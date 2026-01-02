@@ -1,10 +1,9 @@
-
 import React from 'react';
 import { BookingStatus } from '../types';
 
 export const StatusBadge: React.FC<{ status: BookingStatus | string | null | undefined }> = ({ status }) => {
-  const normalizedStatus = String(status ?? 'UNKNOWN');
-
+  const normalizedStatus = status ? String(status) : 'UNKNOWN';
+  
   const getStyles = () => {
     switch (normalizedStatus) {
       case BookingStatus.COMPLETED:
