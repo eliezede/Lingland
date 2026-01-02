@@ -20,8 +20,18 @@ const DEFAULT_CLIENTS: Client[] = [
 ];
 
 const DEFAULT_INTERPRETERS: Interpreter[] = [
-  { id: 'i1', name: 'John Doe', email: 'john@interp.com', phone: '07700900123', languages: ['Arabic', 'French'], regions: ['London', 'South East'], qualifications: ['DPSI'], status: 'ACTIVE', dbsExpiry: '2025-12-01' },
-  { id: 'i2', name: 'Maria Garcia', email: 'maria@interp.com', phone: '07700900456', languages: ['Spanish', 'Portuguese'], regions: ['Manchester', 'North West'], qualifications: ['Community Level 3'], status: 'ACTIVE', dbsExpiry: '2024-11-15' },
+  { 
+    id: 'i1', name: 'John Doe', email: 'john@interp.com', phone: '07700900123', 
+    languages: ['Arabic', 'French'], regions: ['London', 'South East'], 
+    qualifications: ['DPSI'], status: 'ACTIVE', dbsExpiry: '2025-12-01',
+    isAvailable: true, addressLine1: '123 Baker St', city: 'London', postcode: 'NW1 6XE'
+  },
+  { 
+    id: 'i2', name: 'Maria Garcia', email: 'maria@interp.com', phone: '07700900456', 
+    languages: ['Spanish', 'Portuguese'], regions: ['Manchester', 'North West'], 
+    qualifications: ['Community Level 3'], status: 'ACTIVE', dbsExpiry: '2024-11-15',
+    isAvailable: false, addressLine1: '45 Canal St', city: 'Manchester', postcode: 'M1 2WD'
+  },
 ];
 
 const DEFAULT_BOOKINGS: Booking[] = [
@@ -72,7 +82,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   },
   masterData: {
     activeServiceTypes: [ServiceType.FACE_TO_FACE, ServiceType.VIDEO, ServiceType.TELEPHONE],
-    priorityLanguages: ['Arabic', 'Polish', 'Romanian', 'Urdu', 'Spanish']
+    priorityLanguages: ['Arabic', 'Polish', 'Romanian', 'Urdu', 'Spanish', 'French', 'Portuguese', 'Mandarin', 'Bengali', 'Punjabi', 'BSL']
   }
 };
 

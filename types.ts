@@ -6,11 +6,11 @@ export enum UserRole {
 }
 
 export enum BookingStatus {
-  REQUESTED = 'REQUESTED',             // Client created, waiting for admin
-  SEARCHING = 'SEARCHING',             // Admin looking for interpreter
-  OFFERED = 'OFFERED',                 // Sent to interpreters
-  CONFIRMED = 'CONFIRMED',             // Interpreter assigned
-  COMPLETED = 'COMPLETED',             // Job done
+  REQUESTED = 'REQUESTED',
+  SEARCHING = 'SEARCHING',
+  OFFERED = 'OFFERED',
+  CONFIRMED = 'CONFIRMED',
+  COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
   INVOICED = 'INVOICED',
   PAID = 'PAID'
@@ -31,174 +31,26 @@ export enum ServiceType {
   BSL = 'BSL'
 }
 
-// --- SYSTEM SETTINGS ---
-
-export interface GeneralSettings {
-  companyName: string;
-  supportEmail: string;
-  businessAddress: string;
-  websiteUrl?: string;
-  logoUrl?: string;
+export enum ApplicationStatus {
+  PENDING = 'PENDING',
+  REVIEWING = 'REVIEWING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
 }
 
-export interface FinanceSettings {
-  currency: string;
-  vatRate: number;
-  vatNumber: string;
-  invoicePrefix: string;
-  nextInvoiceNumber: number;
-  paymentTermsDays: number;
-  invoiceFooterText: string;
-}
-
-export interface OperationalSettings {
-  minBookingDurationMinutes: number;
-  cancellationWindowHours: number;
-  timeIncrementMinutes: number;
-  defaultOnlinePlatformUrl: string;
-}
-
-export interface MasterDataSettings {
-  activeServiceTypes: ServiceType[];
-  priorityLanguages: string[];
-}
-
-export interface SystemSettings {
-  general: GeneralSettings;
-  finance: FinanceSettings;
-  operations: OperationalSettings;
-  masterData: MasterDataSettings;
-}
-
-// --- BILLING & INVOICING TYPES ---
-
-export enum InvoiceStatus {
-  DRAFT = 'DRAFT',
-  SENT = 'SENT',
-  PAID = 'PAID',
-  PARTIALLY_PAID = 'PARTIALLY_PAID',
-  CANCELLED = 'CANCELLED',
-  SUBMITTED = 'SUBMITTED', // For interpreter uploads
-  APPROVED = 'APPROVED',   // For interpreter uploads
-  REJECTED = 'REJECTED'    // For interpreter uploads
-}
-
-export interface Timesheet {
+export interface InterpreterApplication {
   id: string;
-  bookingId: string;
-  clientId: string;
-  interpreterId: string;
-  
-  // Time data
-  actualStart: string; // ISO Date
-  actualEnd: string;   // ISO Date
-  breakDurationMinutes: number;
-  travelDurationMinutes?: number;
-  
-  // Calculated financial data
-  unitsBillableToClient: number;
-  unitsPayableToInterpreter: number;
-  clientAmountCalculated: number;
-  interpreterAmountCalculated: number;
-  
-  // Approval workflow
-  clientSignatureUrl?: string;
-  adminApproved: boolean;
-  adminApprovedAt?: string;
-  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'INVOICED';
-  submittedAt?: string;
-  
-  // Supporting docs
-  supportingDocumentUrl?: string;
-  
-  // Invoice links
-  readyForClientInvoice: boolean;
-  clientInvoiceId?: string;
-  readyForInterpreterInvoice: boolean;
-  interpreterInvoiceId?: string;
-  
-  createdAt?: string;
-  updatedAt?: string;
-  
-  // Mock data compatibility
-  totalClientAmount?: number;
-  totalInterpreterAmount?: number;
+  name: string;
+  email: string;
+  phone: string;
+  postcode: string;
+  languages: string[];
+  qualifications: string[];
+  dbsNumber?: string;
+  experienceSummary: string;
+  status: ApplicationStatus;
+  submittedAt: string;
 }
-
-export interface Rate {
-  id: string;
-  type?: 'CLIENT_CHARGE' | 'INTERPRETER_PAY'; // Legacy support
-  rateType?: 'CLIENT' | 'INTERPRETER';
-  clientId?: string;
-  interpreterId?: string;
-  serviceType: ServiceType;
-  languageFrom?: string;
-  languageTo?: string;
-  unitType: 'HOUR' | 'SESSION' | 'WORD';
-  amountPerUnit: number;
-  minimumUnits: number;
-  roundingIncrementMinutes?: number; // Legacy support
-  nightWeekendMultiplier?: number;
-  currency: string;
-  active?: boolean;
-}
-
-export interface InvoiceLineItem {
-  id?: string; 
-  invoiceId?: string;
-  timesheetId: string;
-  bookingId?: string;
-  description: string;
-  quantity?: number; // Legacy
-  units?: number;
-  rate: number;
-  total: number;
-  lineAmount?: number; // Legacy
-}
-
-export interface ClientInvoice {
-  id: string;
-  clientId: string;
-  clientName: string;
-  invoiceNumber: string; // Legacy field name compatibility
-  reference?: string;
-  issueDate: string; // ISO
-  dueDate: string;   // ISO
-  periodStart?: string; // ISO
-  periodEnd?: string;   // ISO
-  status: InvoiceStatus | 'DRAFT' | 'SENT' | 'PAID'; // Union for legacy compat
-  totalAmount: number;
-  currency: string;
-  notes?: string;
-  pdfUrl?: string;
-  
-  items?: InvoiceLineItem[]; 
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface InterpreterInvoice {
-  id: string;
-  interpreterId: string;
-  interpreterName: string;
-  issueDate: string;
-  periodStart?: string;
-  periodEnd?: string;
-  status: InvoiceStatus | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'PAID';
-  totalAmount: number;
-  currency?: string;
-  model: 'UPLOAD' | 'SELF_BILLING';
-  
-  externalInvoiceReference?: string; 
-  uploadedPdfUrl?: string;
-  generatedPdfUrl?: string; 
-  
-  items?: InvoiceLineItem[];
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-// --- USER TYPES ---
 
 export interface User {
   id: string;
@@ -206,6 +58,7 @@ export interface User {
   role: UserRole;
   displayName: string;
   profileId?: string;
+  status: 'ACTIVE' | 'SUSPENDED';
 }
 
 export interface Client {
@@ -227,8 +80,15 @@ export interface Interpreter {
   regions: string[];
   qualifications: string[];
   status: 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED';
+  isAvailable: boolean;
   dbsExpiry: string;
+  dbsDocumentUrl?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  postcode?: string;
   avatarUrl?: string;
+  unavailableDates?: string[];
 }
 
 export interface GuestContact {
@@ -252,14 +112,14 @@ export interface Booking {
   date: string;
   startTime: string;
   durationMinutes: number;
-  expectedEndTime?: string; // Calculated or manually set
+  expectedEndTime?: string;
   locationType: 'ONLINE' | 'ONSITE';
   address?: string;
   postcode?: string;
   onlineLink?: string;
   status: BookingStatus;
   costCode?: string;
-  caseType?: string; // New field: e.g. Medical, Legal, etc.
+  caseType?: string;
   notes?: string;
   genderPreference?: 'Male' | 'Female' | 'None';
   interpreterId?: string;
@@ -274,4 +134,104 @@ export interface BookingAssignment {
   offeredAt: string;
   respondedAt?: string;
   bookingSnapshot?: Partial<Booking>;
+}
+
+export interface SystemSettings {
+  general: {
+    companyName: string;
+    supportEmail: string;
+    businessAddress: string;
+    websiteUrl?: string;
+    logoUrl?: string;
+  };
+  finance: {
+    currency: string;
+    vatRate: number;
+    vatNumber: string;
+    invoicePrefix: string;
+    nextInvoiceNumber: number;
+    paymentTermsDays: number;
+    invoiceFooterText: string;
+  };
+  operations: {
+    minBookingDurationMinutes: number;
+    cancellationWindowHours: number;
+    timeIncrementMinutes: number;
+    defaultOnlinePlatformUrl: string;
+  };
+  masterData: {
+    activeServiceTypes: ServiceType[];
+    priorityLanguages: string[];
+  };
+}
+
+export enum InvoiceStatus {
+  DRAFT = 'DRAFT',
+  SENT = 'SENT',
+  PAID = 'PAID',
+  CANCELLED = 'CANCELLED',
+  SUBMITTED = 'SUBMITTED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
+}
+
+export interface Timesheet {
+  id: string;
+  bookingId: string;
+  clientId: string;
+  interpreterId: string;
+  actualStart: string;
+  actualEnd: string;
+  breakDurationMinutes: number;
+  travelDurationMinutes?: number;
+  unitsBillableToClient: number;
+  unitsPayableToInterpreter: number;
+  clientAmountCalculated: number;
+  interpreterAmountCalculated: number;
+  adminApproved: boolean;
+  readyForClientInvoice: boolean;
+  readyForInterpreterInvoice: boolean;
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'INVOICED';
+  submittedAt?: string;
+  supportingDocumentUrl?: string;
+  clientInvoiceId?: string;
+  interpreterInvoiceId?: string;
+  totalClientAmount?: number;
+  totalInterpreterAmount?: number;
+}
+
+export interface ClientInvoice {
+  id: string;
+  clientId: string;
+  clientName: string;
+  invoiceNumber: string;
+  reference?: string;
+  issueDate: string;
+  dueDate: string;
+  status: InvoiceStatus;
+  totalAmount: number;
+  currency: string;
+  items?: any[];
+}
+
+export interface InterpreterInvoice {
+  id: string;
+  interpreterId: string;
+  interpreterName: string;
+  issueDate: string;
+  status: InvoiceStatus;
+  totalAmount: number;
+  model: 'UPLOAD' | 'SELF_BILLING';
+  externalInvoiceReference?: string;
+  uploadedPdfUrl?: string;
+  items?: any[];
+  currency?: string;
+}
+
+export interface Rate {
+  id: string;
+  rateType: 'CLIENT' | 'INTERPRETER';
+  serviceType: ServiceType;
+  amountPerUnit: number;
+  minimumUnits: number;
 }

@@ -4,7 +4,7 @@ import { UserRole } from '../types';
 import { 
   LayoutDashboard, CalendarDays, Users, Briefcase, 
   LogOut, Menu, Globe2, FileText, PoundSterling, 
-  CreditCard, UserCog, Settings
+  CreditCard, UserCog, Settings, UserPlus
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
@@ -35,7 +35,6 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Helper for active state matching
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
 
   const handleLogout = async () => {
@@ -45,7 +44,6 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-20 md:hidden" 
@@ -58,13 +56,11 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         fixed md:static inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 ease-in-out flex flex-col
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
-        {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-gray-100">
           <Globe2 className="text-blue-600 mr-2" size={24} />
           <span className="text-lg font-bold text-gray-900 tracking-tight">Lingland Admin</span>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 overflow-y-auto p-4">
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-4">Overview</div>
           <NavItem to="/admin/dashboard" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/admin/dashboard'} />
@@ -73,11 +69,12 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <NavItem to="/admin/bookings" icon={CalendarDays} label="Bookings" active={isActive('/admin/bookings')} />
           <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
           <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
+          <NavItem to="/admin/applications" icon={UserPlus} label="Applications" active={isActive('/admin/applications')} />
+          <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
           
           {user?.role === UserRole.ADMIN && (
             <>
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-4">System</div>
-              <NavItem to="/admin/users" icon={UserCog} label="Users" active={isActive('/admin/users')} />
               <NavItem to="/admin/settings" icon={Settings} label="Settings" active={isActive('/admin/settings')} />
             </>
           )}
@@ -89,7 +86,6 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           <NavItem to="/admin/billing/interpreter-invoices" icon={PoundSterling} label="Claims" active={isActive('/admin/billing/interpreter-invoices')} />
         </nav>
 
-        {/* User Footer */}
         <div className="p-4 border-t border-gray-100">
           <div className="flex items-center justify-between p-2 rounded-lg bg-gray-50 mb-2">
             <div className="flex items-center">
@@ -112,24 +108,15 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         </div>
       </aside>
 
-      {/* Main Content Wrapper */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Header (Mobile Only basically) */}
         <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:hidden">
-          <button 
-            className="p-2 rounded-md hover:bg-gray-100 text-gray-600"
-            onClick={() => setIsSidebarOpen(true)}
-          >
+          <button className="p-2 rounded-md hover:bg-gray-100 text-gray-600" onClick={() => setIsSidebarOpen(true)}>
             <Menu size={24} />
           </button>
           <span className="font-semibold text-gray-900">Admin Portal</span>
-          <div className="w-8" /> {/* Spacer */}
+          <div className="w-8" />
         </header>
-
-        {/* Scrollable Content */}
-        <main className="flex-1 overflow-auto p-4 md:p-8">
-          {children}
-        </main>
+        <main className="flex-1 overflow-auto p-4 md:p-8">{children}</main>
       </div>
     </div>
   );

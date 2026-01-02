@@ -1,4 +1,3 @@
-
 import { 
   collection, getDocs, getDoc, doc, addDoc, updateDoc, 
   query, where, orderBy, serverTimestamp, Timestamp 
@@ -8,7 +7,6 @@ import { Booking, BookingStatus, BookingAssignment, AssignmentStatus, Interprete
 import { MOCK_INTERPRETERS, MOCK_ASSIGNMENTS, saveMockData, MOCK_BOOKINGS } from './mockData';
 
 const COLLECTION_NAME = 'bookings';
-/* Define the assignments collection name */
 const ASSIGNMENTS_COLLECTION = 'assignments';
 
 export const BookingService = {
@@ -38,13 +36,12 @@ export const BookingService = {
       }
       return MOCK_BOOKINGS.find(b => b.id === id);
     } catch (error) {
-      console.error(`Erro ao buscar booking ${id}:`, error);
       return MOCK_BOOKINGS.find(b => b.id === id);
     }
   },
 
   /**
-   * Cria um novo agendamento (Cliente ou Guest)
+   * Cria um novo agendamento
    */
   create: async (bookingData: Omit<Booking, 'id' | 'status'>): Promise<Booking> => {
     const newBooking = {
@@ -70,8 +67,6 @@ export const BookingService = {
    */
   createGuestBooking: async (input: any): Promise<Booking> => {
     const bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
-    
-    // Calcular Expected End Time
     const start = new Date(`2000-01-01T${input.startTime}`);
     const end = new Date(start.getTime() + input.durationMinutes * 60000);
     const expectedEndTime = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -102,36 +97,23 @@ export const BookingService = {
   updateStatus: async (id: string, status: BookingStatus): Promise<void> => {
     try {
       const docRef = doc(db, COLLECTION_NAME, id);
-      await updateDoc(docRef, { 
-        status,
-        updatedAt: serverTimestamp()
-      });
+      await updateDoc(docRef, { status, updatedAt: serverTimestamp() });
     } catch (e) {
       const b = MOCK_BOOKINGS.find(book => book.id === id);
-      if (b) {
-        b.status = status;
-        saveMockData();
-      }
+      if (b) { b.status = status; saveMockData(); }
     }
   },
 
   /**
-   * Atualiza dados de um agendamento (Edição Admin)
+   * Atualiza dados de um agendamento
    */
   update: async (id: string, data: Partial<Booking>): Promise<void> => {
     try {
       const docRef = doc(db, COLLECTION_NAME, id);
-      await updateDoc(docRef, { 
-        ...data,
-        updatedAt: serverTimestamp()
-      });
+      await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
     } catch (error) {
-      console.error(`Erro ao atualizar booking ${id}:`, error);
       const b = MOCK_BOOKINGS.find(book => book.id === id);
-      if (b) {
-        Object.assign(b, data);
-        saveMockData();
-      }
+      if (b) { Object.assign(b, data); saveMockData(); }
     }
   },
 
@@ -159,7 +141,7 @@ export const BookingService = {
   },
 
   /**
-   * Busca intérpretes compatíveis por idioma
+   * Busca intérpretes por idioma
    */
   findInterpretersByLanguage: async (language: string): Promise<Interpreter[]> => {
     return MOCK_INTERPRETERS.filter(i => 
@@ -168,38 +150,15 @@ export const BookingService = {
   },
 
   /**
-   * Vincula um cliente a um agendamento (usado após criação de perfil de guest)
-   */
-  linkClientToBooking: async (bookingId: string, clientId: string): Promise<void> => {
-    try {
-      const docRef = doc(db, COLLECTION_NAME, bookingId);
-      await updateDoc(docRef, { 
-        clientId,
-        updatedAt: serverTimestamp()
-      });
-    } catch (e) {
-      const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      if (b) {
-        b.clientId = clientId;
-        saveMockData();
-      }
-    }
-  },
-
-  /**
-   * Busca todas as ofertas/atribuições de um agendamento
+   * Busca todas as ofertas de um agendamento
    */
   getAssignmentsByBookingId: async (bookingId: string): Promise<BookingAssignment[]> => {
     try {
       const q = query(collection(db, ASSIGNMENTS_COLLECTION), where('bookingId', '==', bookingId));
       const snap = await getDocs(q);
       const results = snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAssignment));
-      if (results.length === 0) {
-        return MOCK_ASSIGNMENTS.filter(a => a.bookingId === bookingId);
-      }
-      return results;
+      return results.length > 0 ? results : MOCK_ASSIGNMENTS.filter(a => a.bookingId === bookingId);
     } catch (error) {
-      console.error("Erro ao buscar assignments:", error);
       return MOCK_ASSIGNMENTS.filter(a => a.bookingId === bookingId);
     }
   },
@@ -217,20 +176,13 @@ export const BookingService = {
 
     try {
       const docRef = await addDoc(collection(db, ASSIGNMENTS_COLLECTION), newAssignment);
-      
-      const bookingRef = doc(db, COLLECTION_NAME, bookingId);
-      const bookingSnap = await getDoc(bookingRef);
-      if (bookingSnap.exists() && bookingSnap.data().status === BookingStatus.REQUESTED) {
-        await updateDoc(bookingRef, { status: BookingStatus.OFFERED });
-      }
+      await updateDoc(doc(db, COLLECTION_NAME, bookingId), { status: BookingStatus.OFFERED });
       return { id: docRef.id, ...newAssignment } as BookingAssignment;
     } catch (e) {
       const mockAssignment = { id: `a-${Date.now()}`, ...newAssignment } as BookingAssignment;
       MOCK_ASSIGNMENTS.push(mockAssignment);
       const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      if (b && b.status === BookingStatus.REQUESTED) {
-        b.status = BookingStatus.OFFERED;
-      }
+      if (b && b.status === BookingStatus.REQUESTED) b.status = BookingStatus.OFFERED;
       saveMockData();
       return mockAssignment;
     }
@@ -241,84 +193,60 @@ export const BookingService = {
    */
   checkScheduleConflict: async (interpreterId: string, date: string, startTime: string, durationMinutes: number, excludeBookingId?: string): Promise<Booking | null> => {
     try {
-      const q = query(
-        collection(db, COLLECTION_NAME),
-        where('interpreterId', '==', interpreterId),
-        where('date', '==', date),
-        where('status', '==', BookingStatus.CONFIRMED)
-      );
-      
-      const snap = await getDocs(q);
-      const confirmedBookings = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
       const targetStart = new Date(`${date}T${startTime}`);
       const targetEnd = new Date(targetStart.getTime() + durationMinutes * 60000);
-
-      const checkList = confirmedBookings.length > 0 ? confirmedBookings : MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId && b.date === date && b.status === BookingStatus.CONFIRMED);
-
+      const checkList = MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId && b.date === date && b.status === BookingStatus.CONFIRMED);
       for (const existing of checkList) {
         if (existing.id === excludeBookingId) continue;
         const existingStart = new Date(`${existing.date}T${existing.startTime}`);
         const existingEnd = new Date(existingStart.getTime() + existing.durationMinutes * 60000);
-        if (targetStart < existingEnd && targetEnd > existingStart) {
-          return existing;
-        }
+        if (targetStart < existingEnd && targetEnd > existingStart) return existing;
       }
       return null;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
   },
 
   /**
-   * Busca ofertas pendentes para um intérprete
+   * Busca ofertas pendentes para um intérprete (Dashboard e Service)
    */
   getInterpreterOffers: async (interpreterId: string): Promise<BookingAssignment[]> => {
     try {
       const q = query(
         collection(db, ASSIGNMENTS_COLLECTION),
-        where('interpreterId', '==', interpreterId)
+        where('interpreterId', '==', interpreterId),
+        where('status', '==', AssignmentStatus.OFFERED)
       );
       const snap = await getDocs(q);
-      const allAssignments = snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAssignment));
+      const assignments = snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAssignment));
       
-      const filtered = allAssignments.length > 0 ? allAssignments : MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId);
-      const offered = filtered.filter(a => a.status === AssignmentStatus.OFFERED);
+      const results = assignments.length > 0 ? assignments : MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId && a.status === AssignmentStatus.OFFERED);
 
-      const offersData = await Promise.all(offered.map(async (assignment) => {
-        if (!assignment.bookingSnapshot || !assignment.bookingSnapshot.date) {
-          const bookingDoc = await BookingService.getById(assignment.bookingId);
-          if (bookingDoc) {
-            assignment.bookingSnapshot = bookingDoc;
-          }
+      // Preenche os snapshots para que o Dashboard também tenha dados reais
+      const populated = await Promise.all(results.map(async (a) => {
+        if (!a.bookingSnapshot || !a.bookingSnapshot.date) {
+          const b = await BookingService.getById(a.bookingId);
+          if (b) a.bookingSnapshot = b;
         }
-        return assignment;
+        return a;
       }));
-      return offersData;
+
+      // Apenas retorna ofertas que tenham dados de agendamento válidos
+      return populated.filter(a => a.bookingSnapshot && a.bookingSnapshot.date);
     } catch (error) {
-      console.error("Error fetching interpreter offers:", error);
       return MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId && a.status === AssignmentStatus.OFFERED);
     }
   },
 
   /**
-   * Busca a agenda (jobs confirmados/completos) de um intérprete
+   * Busca a agenda de um intérprete
    */
   getInterpreterSchedule: async (interpreterId: string): Promise<Booking[]> => {
     try {
-      const q = query(
-        collection(db, COLLECTION_NAME),
-        where('interpreterId', '==', interpreterId)
-      );
+      const q = query(collection(db, COLLECTION_NAME), where('interpreterId', '==', interpreterId));
       const snap = await getDocs(q);
-      const allBookings = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
-      
-      const list = allBookings.length > 0 ? allBookings : MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId);
-      
-      return list
-        .filter(b => [BookingStatus.CONFIRMED, BookingStatus.COMPLETED].includes(b.status))
-        .sort((a, b) => a.date.localeCompare(b.date));
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
+      return all.filter(b => [BookingStatus.CONFIRMED, BookingStatus.COMPLETED].includes(b.status)).sort((a, b) => a.date.localeCompare(b.date));
     } catch (error) {
-      console.error("Error fetching interpreter schedule:", error);
       return MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId && (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED));
     }
   },
@@ -327,60 +255,40 @@ export const BookingService = {
     try {
       const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
       const assignmentSnap = await getDoc(assignmentRef);
-      let bookingId = '';
-      let interpreterId = '';
-
       if (assignmentSnap.exists()) {
         const data = assignmentSnap.data() as BookingAssignment;
-        bookingId = data.bookingId;
-        interpreterId = data.interpreterId;
         await updateDoc(assignmentRef, { status: AssignmentStatus.ACCEPTED, respondedAt: new Date().toISOString() });
-        await updateDoc(doc(db, COLLECTION_NAME, bookingId), { status: BookingStatus.CONFIRMED, interpreterId: interpreterId });
-      } else {
-        const a = MOCK_ASSIGNMENTS.find(assign => assign.id === assignmentId);
-        if (a) {
-          a.status = AssignmentStatus.ACCEPTED;
-          a.respondedAt = new Date().toISOString();
-          const b = MOCK_BOOKINGS.find(book => book.id === a.bookingId);
-          if (b) {
-            b.status = BookingStatus.CONFIRMED;
-            b.interpreterId = a.interpreterId;
-          }
-          saveMockData();
-        }
+        await updateDoc(doc(db, COLLECTION_NAME, data.bookingId), { status: BookingStatus.CONFIRMED, interpreterId: data.interpreterId });
       }
-    } catch (e) { console.log("Accept assignment offline"); }
+    } catch (e) {
+      const a = MOCK_ASSIGNMENTS.find(assign => assign.id === assignmentId);
+      if (a) {
+        a.status = AssignmentStatus.ACCEPTED;
+        const b = MOCK_BOOKINGS.find(book => book.id === a.bookingId);
+        if (b) { b.status = BookingStatus.CONFIRMED; b.interpreterId = a.interpreterId; }
+        saveMockData();
+      }
+    }
   },
 
   declineAssignment: async (assignmentId: string): Promise<void> => {
-    console.log(`RETRACT/DECLINE Assignment: ${assignmentId}`);
     try {
-      const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
-      const assignmentSnap = await getDoc(assignmentRef);
-      
-      if (assignmentSnap.exists()) {
-        await updateDoc(assignmentRef, { 
-          status: AssignmentStatus.DECLINED, 
-          respondedAt: new Date().toISOString() 
-        });
-        console.log("Firestore retraction successful");
-      } else {
-        throw new Error("Doc not found in Firestore, falling back to mock update.");
-      }
-    } catch (e) { 
-      console.log("Decline assignment: Using mock data fallback", e); 
+      await updateDoc(doc(db, ASSIGNMENTS_COLLECTION, assignmentId), { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() });
+    } catch (e) {
       const a = MOCK_ASSIGNMENTS.find(assign => assign.id === assignmentId);
-      if (a) {
-        a.status = AssignmentStatus.DECLINED;
-        a.respondedAt = new Date().toISOString();
-        saveMockData();
-        console.log("Mock assignment updated successfully to DECLINED.");
-      } else {
-        console.error("Critical: Assignment ID not found in MOCK_ASSIGNMENTS either.");
-      }
+      if (a) { a.status = AssignmentStatus.DECLINED; saveMockData(); }
     }
   },
   
   acceptOffer: async (id: string) => BookingService.acceptAssignment(id),
-  declineOffer: async (id: string) => BookingService.declineAssignment(id)
+  declineOffer: async (id: string) => BookingService.declineAssignment(id),
+  
+  linkClientToBooking: async (bookingId: string, clientId: string): Promise<void> => {
+    try {
+      await updateDoc(doc(db, COLLECTION_NAME, bookingId), { clientId, updatedAt: serverTimestamp() });
+    } catch (e) {
+      const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
+      if (b) { b.clientId = clientId; saveMockData(); }
+    }
+  }
 };

@@ -30,6 +30,27 @@ export enum ServiceType {
   BSL = 'BSL'
 }
 
+export enum ApplicationStatus {
+  PENDING = 'PENDING',
+  REVIEWING = 'REVIEWING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
+}
+
+export interface InterpreterApplication {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  postcode: string;
+  languages: string[];
+  qualifications: string[];
+  dbsNumber?: string;
+  experienceSummary: string;
+  status: ApplicationStatus;
+  submittedAt: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -58,7 +79,13 @@ export interface Interpreter {
   regions: string[];
   qualifications: string[];
   status: 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED';
+  isAvailable: boolean;
   dbsExpiry: string;
+  dbsDocumentUrl?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  postcode?: string;
   avatarUrl?: string;
 }
 
@@ -160,7 +187,6 @@ export interface Timesheet {
   clientAmountCalculated: number;
   interpreterAmountCalculated: number;
   adminApproved: boolean;
-  /* Added fields to support billing logic and fix TS errors */
   readyForClientInvoice: boolean;
   readyForInterpreterInvoice: boolean;
   status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'INVOICED';
@@ -196,7 +222,6 @@ export interface InterpreterInvoice {
   model: 'UPLOAD' | 'SELF_BILLING';
   externalInvoiceReference?: string;
   uploadedPdfUrl?: string;
-  /* Added fields to support billing logic and fix TS errors */
   items?: any[];
   currency?: string;
 }

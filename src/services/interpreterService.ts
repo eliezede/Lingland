@@ -33,10 +33,10 @@ export const InterpreterService = {
 
   create: async (data: Omit<Interpreter, 'id'>): Promise<Interpreter> => {
     try {
-      const ref = await addDoc(collection(db, 'interpreters'), { ...data, status: 'ONBOARDING' });
-      return { id: ref.id, ...data, status: 'ONBOARDING' } as Interpreter;
+      const ref = await addDoc(collection(db, 'interpreters'), { ...data, status: 'ONBOARDING', isAvailable: true });
+      return { id: ref.id, ...data, status: 'ONBOARDING', isAvailable: true } as Interpreter;
     } catch {
-      const newInt = { id: `mock-${Date.now()}`, ...data, status: 'ONBOARDING' } as Interpreter;
+      const newInt = { id: `mock-${Date.now()}`, ...data, status: 'ONBOARDING', isAvailable: true } as Interpreter;
       MOCK_INTERPRETERS.push(newInt);
       saveMockData();
       return newInt;

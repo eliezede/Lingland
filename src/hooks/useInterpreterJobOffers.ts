@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { 
   collection, 
@@ -6,12 +5,11 @@ import {
   where, 
   onSnapshot, 
   doc, 
-  getDoc,
-  updateDoc,
-  serverTimestamp 
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../services/firebaseConfig';
-import { BookingAssignment, AssignmentStatus, BookingStatus } from '../types';
+import { BookingService } from '../services/api';
+import { BookingAssignment, AssignmentStatus } from '../types';
 
 export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
   const [offers, setOffers] = useState<BookingAssignment[]>([]);
@@ -37,25 +35,27 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
         const offersData = await Promise.all(snapshot.docs.map(async (d) => {
           const assignment = { id: d.id, ...d.data() } as BookingAssignment;
           
-          // Se não houver snapshot do booking no documento, buscamos o booking real
-          // para garantir que os dados de exibição (data, hora, local) estejam atualizados
+          // CRITICAL FIX: Use BookingService instead of raw getDoc to support mock data fallback
           if (!assignment.bookingSnapshot || !assignment.bookingSnapshot.date) {
-            const bookingDoc = await getDoc(doc(db, 'bookings', assignment.bookingId));
-            if (bookingDoc.exists()) {
-              assignment.bookingSnapshot = bookingDoc.data();
+            const booking = await BookingService.getById(assignment.bookingId);
+            if (booking) {
+              assignment.bookingSnapshot = booking;
             }
           }
           return assignment;
         }));
 
+        // Filtrar apenas ofertas que conseguiram carregar o snapshot mínimo para exibição
+        const validOffers = offersData.filter(o => o.bookingSnapshot && o.bookingSnapshot.date);
+
         // Ordenar por data do agendamento (mais próximos primeiro)
-        offersData.sort((a, b) => {
+        validOffers.sort((a, b) => {
           const dateA = a.bookingSnapshot?.date || '';
           const dateB = b.bookingSnapshot?.date || '';
           return dateA.localeCompare(dateB);
         });
 
-        setOffers(offersData);
+        setOffers(validOffers);
         setLoading(false);
       } catch (err) {
         console.error("Erro ao processar ofertas:", err);
@@ -64,8 +64,11 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
       }
     }, (err) => {
       console.error("Erro no listener de ofertas:", err);
-      setError("Conexão perdida com o servidor de ofertas.");
-      setLoading(false);
+      // Se falhar a conexão com Firestore, tentamos carregar do service (que tem mocks)
+      BookingService.getInterpreterOffers(interpreterId).then(mockOffers => {
+        setOffers(mockOffers);
+        setLoading(false);
+      });
     });
 
     return () => unsubscribe();
@@ -73,26 +76,7 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
 
   const acceptOffer = async (assignmentId: string) => {
     try {
-      const assignmentRef = doc(db, 'assignments', assignmentId);
-      const assignmentSnap = await getDoc(assignmentRef);
-      
-      if (!assignmentSnap.exists()) throw new Error("Oferta não encontrada.");
-      const assignmentData = assignmentSnap.data() as BookingAssignment;
-
-      // 1. Atualiza o Assignment para ACCEPTED
-      await updateDoc(assignmentRef, {
-        status: AssignmentStatus.ACCEPTED,
-        respondedAt: new Date().toISOString()
-      });
-
-      // 2. Atualiza o Booking para CONFIRMED e vincula o Intérprete
-      const bookingRef = doc(db, 'bookings', assignmentData.bookingId);
-      await updateDoc(bookingRef, {
-        status: BookingStatus.CONFIRMED,
-        interpreterId: assignmentData.interpreterId,
-        updatedAt: serverTimestamp()
-      });
-
+      await BookingService.acceptOffer(assignmentId);
       return true;
     } catch (e) {
       console.error("Erro ao aceitar oferta:", e);
@@ -102,11 +86,7 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
 
   const declineOffer = async (assignmentId: string) => {
     try {
-      const assignmentRef = doc(db, 'assignments', assignmentId);
-      await updateDoc(assignmentRef, {
-        status: AssignmentStatus.DECLINED,
-        respondedAt: new Date().toISOString()
-      });
+      await BookingService.declineOffer(assignmentId);
       return true;
     } catch (e) {
       console.error("Erro ao recusar oferta:", e);

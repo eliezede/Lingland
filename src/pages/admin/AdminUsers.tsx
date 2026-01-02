@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { UserService } from '../../services/userService';
 import { ClientService } from '../../services/clientService';
@@ -9,7 +10,8 @@ import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../context/ToastContext';
 import { 
-  Search, Plus, Edit2, Link as LinkIcon, Send, Sparkles, AlertCircle, Info, ShieldAlert
+  Search, Plus, Edit2, Link as LinkIcon, Send, Sparkles, 
+  AlertCircle, Info, ShieldOff, ShieldCheck, Trash2, Wand2
 } from 'lucide-react';
 
 interface AdminUsersProps {
@@ -30,6 +32,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
   const [autoCreateProfile, setAutoCreateProfile] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sendingInvite, setSendingInvite] = useState<string | null>(null);
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -53,15 +56,47 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
     }
   };
 
-  const handleSendInvite = async (u: User) => {
-    setSendingInvite(u.id);
+  const handleAutoRepairProfile = async (user: User) => {
+    if (!window.confirm(`Deseja criar automaticamente um perfil de ${user.role.toLowerCase()} para ${user.displayName}?`)) return;
+    
+    setActionInProgress(user.id);
     try {
-      await UserService.sendActivationEmail(u.email, u.displayName);
-      showToast(`Activation email sent to ${u.email}`, 'success');
-    } catch (e: any) {
-      showToast('User might not exist in Firebase Auth yet. Please invite via Firebase Console.', 'error');
+      let profileId = '';
+      if (user.role === UserRole.INTERPRETER) {
+        /* Fixed: Added isAvailable: false and typed arrays for Interpreter creation */
+        const newInt = await InterpreterService.create({
+          name: user.displayName,
+          email: user.email,
+          phone: '',
+          languages: [] as string[],
+          regions: [] as string[],
+          qualifications: [] as string[],
+          dbsExpiry: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          status: 'ONBOARDING',
+          isAvailable: false
+        });
+        profileId = newInt.id;
+      } else if (user.role === UserRole.CLIENT) {
+        const newCli = await ClientService.create({
+          companyName: user.displayName,
+          email: user.email,
+          contactPerson: user.displayName,
+          billingAddress: '',
+          paymentTermsDays: 30,
+          defaultCostCodeType: 'PO'
+        });
+        profileId = newCli.id;
+      }
+
+      if (profileId) {
+        await UserService.update(user.id, { profileId });
+        showToast('Perfil criado e vinculado com sucesso!', 'success');
+        await loadData();
+      }
+    } catch (e) {
+      showToast('Falha ao reparar perfil', 'error');
     } finally {
-      setSendingInvite(null);
+      setActionInProgress(null);
     }
   };
 
@@ -71,19 +106,21 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
     try {
       let profileId = formData.profileId;
 
-      if (!editingUser && formData.role !== UserRole.ADMIN && autoCreateProfile) {
-        showToast('Auto-provisioning profile...', 'info');
-        
+      // Se for novo ou se estiver editando um usuário sem perfil e a opção auto-provision estiver ligada
+      const needsProfile = !formData.profileId;
+      if (formData.role !== UserRole.ADMIN && autoCreateProfile && needsProfile) {
         if (formData.role === UserRole.INTERPRETER) {
+          /* Fixed: Added isAvailable: false and typed arrays for Interpreter creation */
           const newInt = await InterpreterService.create({
             name: formData.displayName || '',
             email: formData.email || '',
             phone: '',
-            languages: [],
-            regions: [],
-            qualifications: [],
+            languages: [] as string[],
+            regions: [] as string[],
+            qualifications: [] as string[],
             dbsExpiry: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-            status: 'ONBOARDING'
+            status: 'ONBOARDING',
+            isAvailable: false
           });
           profileId = newInt.id;
         } else if (formData.role === UserRole.CLIENT) {
@@ -120,12 +157,31 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
 
   const toggleUserStatus = async (user: User) => {
     const newStatus = user.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+    if (!window.confirm(`Are you sure you want to ${newStatus === 'ACTIVE' ? 'unblock' : 'block'} this user?`)) return;
+
+    setActionInProgress(user.id);
     try {
       await UserService.update(user.id, { status: newStatus });
-      showToast(`User account ${newStatus.toLowerCase()}`, 'success');
-      loadData();
+      showToast(`Status updated`, 'success');
+      await loadData();
     } catch (e) {
       showToast('Failed to change status', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleDeleteUser = async (user: User) => {
+    if (!window.confirm(`CRITICAL: Permanently delete access for ${user.displayName}?`)) return;
+    setActionInProgress(user.id);
+    try {
+      await UserService.delete(user.id);
+      showToast('User access removed', 'success');
+      await loadData();
+    } catch (e) {
+      showToast('Failed to delete', 'error');
+    } finally {
+      setActionInProgress(null);
     }
   };
 
@@ -161,19 +217,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
         </div>
       )}
 
-      {isEmbedded && (
-        <div className="flex justify-end mb-4">
-          <Button icon={Plus} onClick={() => { 
-            setEditingUser(null); 
-            setFormData({ role: UserRole.INTERPRETER, displayName: '', email: '', status: 'ACTIVE' }); 
-            setAutoCreateProfile(true);
-            setIsModalOpen(true); 
-          }}>
-            Add System User
-          </Button>
-        </div>
-      )}
-
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
@@ -191,17 +234,17 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">User Identity</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Role</th>
                 <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Linked Profile</th>
                 <th className="px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {users.filter(u => u.email.toLowerCase().includes(filter.toLowerCase()) || u.displayName.toLowerCase().includes(filter.toLowerCase())).map(u => (
-                <tr key={u.id} className={`hover:bg-gray-50 transition-colors ${u.status === 'SUSPENDED' ? 'bg-red-50/30' : ''}`}>
+                <tr key={u.id} className={`hover:bg-gray-50 transition-colors ${u.status === 'SUSPENDED' ? 'bg-red-50/20' : ''}`}>
                   <td className="px-6 py-4">
                     <div className="flex items-center">
-                       <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold mr-3 border border-blue-200">
+                       <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold mr-3 border ${u.status === 'SUSPENDED' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
                          {u.displayName?.charAt(0) || 'U'}
                        </div>
                        <div>
@@ -211,12 +254,9 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex flex-col gap-1.5">
-                       <Badge variant={u.role === UserRole.ADMIN ? 'danger' : u.role === UserRole.CLIENT ? 'info' : 'success'}>
-                         {u.role}
-                       </Badge>
-                       {u.status === 'SUSPENDED' && <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Suspended</span>}
-                    </div>
+                     <Badge variant={u.role === UserRole.ADMIN ? 'danger' : u.role === UserRole.CLIENT ? 'info' : 'success'}>
+                       {u.role}
+                     </Badge>
                   </td>
                   <td className="px-6 py-4">
                     {getProfileName(u) ? (
@@ -226,34 +266,46 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                     ) : u.role === UserRole.ADMIN ? (
                       <span className="text-xs text-gray-400">System Admin</span>
                     ) : (
-                      <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded flex items-center w-fit font-medium border border-orange-100 italic">
-                        <AlertCircle size={12} className="mr-1" /> Profile Missing
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded flex items-center w-fit font-bold border border-orange-200 animate-pulse">
+                          <AlertCircle size={12} className="mr-1" /> Profile Missing
+                        </span>
+                        <button 
+                          onClick={() => handleAutoRepairProfile(u)}
+                          className="p-1 text-purple-600 hover:bg-purple-50 rounded"
+                          title="Auto-create Profile"
+                        >
+                          <Wand2 size={16} />
+                        </button>
+                      </div>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-right space-x-1">
-                    <button 
-                      onClick={() => handleSendInvite(u)} 
-                      disabled={sendingInvite === u.id || u.status === 'SUSPENDED'}
-                      className="text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition-all disabled:opacity-30"
-                      title="Send Invite / Activation"
-                    >
-                       {sendingInvite === u.id ? <Spinner size="sm" /> : <Send size={18} />}
-                    </button>
-                    <button 
-                      onClick={() => { setEditingUser(u); setFormData({...u}); setIsModalOpen(true); }} 
-                      className="text-gray-400 p-2 rounded-lg hover:bg-gray-100 transition-all"
-                      title="Edit Account"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                    <button 
-                      onClick={() => toggleUserStatus(u)}
-                      className={`p-2 rounded-lg transition-all ${u.status === 'ACTIVE' ? 'text-gray-400 hover:text-red-600 hover:bg-red-50' : 'text-red-600 bg-red-100 hover:bg-red-200'}`}
-                      title={u.status === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
-                    >
-                      <ShieldAlert size={18} />
-                    </button>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button 
+                        onClick={() => { setEditingUser(u); setFormData({...u}); setAutoCreateProfile(!u.profileId); setIsModalOpen(true); }} 
+                        className="text-gray-400 p-2 rounded-lg hover:bg-gray-100 transition-all"
+                        title="Edit Details"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                      <button 
+                        onClick={() => toggleUserStatus(u)}
+                        disabled={actionInProgress === u.id}
+                        className={`p-2 rounded-lg transition-all ${u.status === 'ACTIVE' ? 'text-orange-500 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}`}
+                        title={u.status === 'ACTIVE' ? 'Block User' : 'Unblock User'}
+                      >
+                        {actionInProgress === u.id ? <Spinner size="sm" /> : (u.status === 'ACTIVE' ? <ShieldOff size={18} /> : <ShieldCheck size={18} />)}
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteUser(u)}
+                        disabled={actionInProgress === u.id}
+                        className="text-gray-400 p-2 rounded-lg hover:text-red-600 hover:bg-red-50 transition-all"
+                        title="Delete Permanently"
+                      >
+                        {actionInProgress === u.id ? <Spinner size="sm" /> : <Trash2 size={18} />}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -279,7 +331,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                 className={inputClasses + " disabled:bg-gray-100 disabled:text-gray-400"} 
                 value={formData.email || ''} 
                 onChange={e => setFormData({...formData, email: e.target.value})} 
-                placeholder="user@example.com"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -290,7 +341,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                   className={inputClasses} 
                   value={formData.displayName || ''} 
                   onChange={e => setFormData({...formData, displayName: e.target.value})} 
-                  placeholder="Full Name"
                 />
               </div>
               <div>
@@ -315,7 +365,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                     <Sparkles size={14} className="mr-2" />
                     Profile Linkage
                   </div>
-                  {!editingUser && (
+                  {(!editingUser || !editingUser.profileId) && (
                     <label className="flex items-center text-[10px] font-extrabold text-blue-600 bg-white px-3 py-1 rounded-full border border-blue-200 cursor-pointer hover:bg-blue-50 transition-colors shadow-sm">
                       <input 
                         type="checkbox" 
@@ -328,10 +378,9 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                   )}
                </div>
 
-               {(!autoCreateProfile || editingUser) ? (
+               {(!autoCreateProfile || (editingUser && editingUser.profileId)) ? (
                  <div className="animate-fade-in">
                    <select 
-                     required 
                      className={inputClasses} 
                      value={formData.profileId || ''} 
                      onChange={e => setFormData({...formData, profileId: e.target.value})}
@@ -342,19 +391,15 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ isEmbedded = false }) =>
                         : interpreters.map(i => <option key={i.id} value={i.id}>{i.name}</option>)
                      }
                    </select>
-                   <p className="text-[10px] text-gray-500 mt-2 flex items-start">
-                     <Info size={10} className="mr-1 mt-0.5" /> 
-                     Connect this login to an existing {formData.role?.toLowerCase()} profile.
-                   </p>
                  </div>
                ) : (
                  <div className="flex items-center p-4 bg-white rounded-xl border border-dashed border-blue-300">
                    <div className="bg-blue-100 p-2 rounded-lg mr-3">
-                     <Sparkles size={18} className="text-blue-600" />
+                     <Wand2 size={18} className="text-blue-600" />
                    </div>
                    <div>
                      <p className="text-sm font-bold text-blue-900">Atomic Profile Enabled</p>
-                     <p className="text-[11px] text-blue-700">A new {formData.role?.toLowerCase()} profile will be created automatically.</p>
+                     <p className="text-[11px] text-blue-700">A new {formData.role?.toLowerCase()} profile will be created automatically upon save.</p>
                    </div>
                  </div>
                )}

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -20,6 +19,7 @@ import { Dashboard } from './pages/Dashboard';
 import { LoginPage } from './pages/LoginPage';
 import { LandingPage } from './pages/public/LandingPage';
 import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
+import { InterpreterApplication } from './pages/public/InterpreterApplication';
 
 // Admin Pages
 import { AdminBookings } from './pages/admin/AdminBookings';
@@ -35,6 +35,7 @@ import { AdminInterpreters } from './pages/admin/AdminInterpreters';
 import { AdminInterpreterDetails } from './pages/admin/interpreters/AdminInterpreterDetails';
 import { AdminUsers } from './pages/admin/AdminUsers';
 import { AdminSettings } from './pages/admin/AdminSettings';
+import { AdminApplications } from './pages/admin/AdminApplications';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -73,7 +74,6 @@ const RootRoute = () => {
     }
   }
 
-  // Not logged in -> Show Landing Page
   return <LandingPage />;
 };
 
@@ -88,6 +88,7 @@ const App = () => {
                 <Route path="/" element={<RootRoute />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/request" element={<GuestBookingRequest />} />
+                <Route path="/apply" element={<InterpreterApplication />} />
                 
                 {/* --- INTERPRETER ROUTES --- */}
                 <Route path="/interpreter/*" element={
@@ -97,8 +98,6 @@ const App = () => {
                         <Route path="dashboard" element={<InterpreterDashboard />} />
                         <Route path="jobs" element={<InterpreterJobs />} />
                         <Route path="jobs/:id" element={<InterpreterJobDetails />} />
-                        <Route path="offers" element={<Navigate to="jobs" replace />} />
-                        <Route path="schedule" element={<Navigate to="jobs" replace />} />
                         <Route path="timesheets" element={<InterpreterTimesheets />} />
                         <Route path="timesheets/new/:bookingId" element={<InterpreterTimesheetForm />} />
                         <Route path="billing" element={<InterpreterPayments />} />
@@ -136,6 +135,9 @@ const App = () => {
                         <Route path="bookings" element={<AdminBookings />} />
                         <Route path="bookings/:id" element={<AdminBookingDetails />} />
                         
+                        {/* Recrutamento */}
+                        <Route path="applications" element={<AdminApplications />} />
+
                         {/* Directory Management */}
                         <Route path="clients" element={<AdminClients />} />
                         <Route path="interpreters" element={<AdminInterpreters />} />
@@ -153,15 +155,12 @@ const App = () => {
                         <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
                         
                         <Route path="timesheets" element={<AdminTimesheets />} />
-                        <Route path="invoices" element={<Navigate to="billing" replace />} />
-                        
                         <Route path="*" element={<NotFound />} />
                       </Routes>
                     </AdminLayout>
                   </ProtectedRoute>
                 } />
                 
-                {/* Fallback */}
                 <Route path="*" element={<NotFound />} />
 
               </Routes>

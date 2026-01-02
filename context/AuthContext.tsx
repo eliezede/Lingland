@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { auth, db } from '../services/firebaseConfig';
@@ -27,24 +28,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            /* Fixed: Added missing required status property to User object */
             setUser({
               id: firebaseUser.uid,
               email: firebaseUser.email || '',
               displayName: userData.displayName || firebaseUser.email,
               role: userData.role as UserRole,
-              profileId: userData.profileId
+              profileId: userData.profileId,
+              status: userData.status || 'ACTIVE'
             });
           } else {
             // User authenticated but no profile doc exists
             // Check mock data as fallback before creating default
             const mockUser = MOCK_USERS.find(u => u.email === firebaseUser.email);
             
+            /* Fixed: Added missing required status property to User object */
             setUser({
               id: firebaseUser.uid,
               email: firebaseUser.email || '',
               displayName: mockUser?.displayName || firebaseUser.displayName || 'User',
               role: mockUser?.role || UserRole.CLIENT, // Default to CLIENT if unknown
-              profileId: mockUser?.profileId
+              profileId: mockUser?.profileId,
+              status: mockUser?.status || 'ACTIVE'
             });
           }
         } catch (error) {
@@ -60,11 +65,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
           } else {
              // Fallback for unknown users in offline mode
+             /* Fixed: Added missing required status property to User object */
              setUser({
                id: firebaseUser.uid,
                email: firebaseUser.email || '',
                displayName: firebaseUser.displayName || 'Offline User',
-               role: UserRole.CLIENT 
+               role: UserRole.CLIENT,
+               status: 'ACTIVE'
              });
           }
         }
