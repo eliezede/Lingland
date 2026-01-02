@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   collection, 
   query, 
@@ -12,6 +12,10 @@ import { Booking, BookingStatus } from '../types';
 export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) => {
   const [jobs, setJobs] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Added refresh key to allow manual re-triggering of the onSnapshot listener if required by the UI
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = useCallback(() => setRefreshKey(prev => prev + 1), []);
 
   useEffect(() => {
     if (!interpreterId) {
@@ -46,7 +50,8 @@ export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) =>
     });
 
     return () => unsubscribe();
-  }, [interpreterId]);
+  }, [interpreterId, refreshKey]);
 
-  return { jobs, loading };
+  // Fixed: Included refresh in the return object to satisfy component requirements
+  return { jobs, loading, refresh };
 };

@@ -49,10 +49,37 @@ const DEFAULT_BOOKINGS: Booking[] = [
     locationType: 'ONLINE', onlineLink: 'https://zoom.us/j/123',
     status: BookingStatus.COMPLETED, interpreterId: 'i2', interpreterName: 'Maria Garcia',
     costCode: 'CASE-123'
+  },
+  // Novo job para aparecer nas ofertas do John Doe (i1)
+  {
+    id: 'b3', clientId: 'c1', clientName: 'NHS London', requestedByUserId: 'u2',
+    serviceType: ServiceType.FACE_TO_FACE, languageFrom: 'English', languageTo: 'French',
+    date: getDate(2), startTime: '09:30', durationMinutes: 120,
+    locationType: 'ONSITE', address: 'Central Clinic, London', postcode: 'WC1H 9AJ',
+    status: BookingStatus.OFFERED, costCode: 'MOCK-OFFER'
   }
 ];
 
-const DEFAULT_ASSIGNMENTS: BookingAssignment[] = [];
+const DEFAULT_ASSIGNMENTS: BookingAssignment[] = [
+  {
+    id: 'a1',
+    bookingId: 'b3',
+    interpreterId: 'i1',
+    status: AssignmentStatus.OFFERED,
+    offeredAt: new Date().toISOString(),
+    bookingSnapshot: {
+      id: 'b3',
+      languageTo: 'French',
+      date: getDate(2),
+      startTime: '09:30',
+      durationMinutes: 120,
+      locationType: 'ONSITE',
+      postcode: 'WC1H 9AJ',
+      clientName: 'NHS London'
+    }
+  }
+];
+
 const DEFAULT_RATES: Rate[] = [];
 const DEFAULT_TIMESHEETS: Timesheet[] = [];
 const DEFAULT_CLIENT_INVOICES: ClientInvoice[] = [];
