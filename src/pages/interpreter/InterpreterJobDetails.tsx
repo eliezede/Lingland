@@ -1,15 +1,16 @@
-
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BookingService } from '../../services/api';
+import { BookingService, ChatService } from '../../services/api';
 import { Booking, BookingStatus } from '../../types';
-import { MapPin, Clock, Calendar, Video, Phone, ChevronLeft, FileText } from 'lucide-react';
+import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useChat } from '../../context/ChatContext';
 
 export const InterpreterJobDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { openThread } = useChat();
   const [job, setJob] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -19,6 +20,22 @@ export const InterpreterJobDetails = () => {
     }
   }, [id]);
 
+  const handleJobChat = async () => {
+    if (!user || !job) return;
+    
+    const names = {
+      [user.id]: user.displayName || 'Interpreter',
+      'u1': 'Sarah Admin' // Admin fallback
+    };
+    
+    const threadId = await ChatService.getOrCreateThread(
+      [user.id, 'u1'],
+      names,
+      job.id
+    );
+    openThread(threadId);
+  };
+
   if (loading) return <div className="p-8 text-center text-gray-500">Loading job details...</div>;
   if (!job) return <div className="p-8 text-center text-red-500">Job not found.</div>;
 
@@ -27,11 +44,19 @@ export const InterpreterJobDetails = () => {
   return (
     <div className="bg-gray-50 min-h-screen pb-20">
       {/* Header */}
-      <div className="bg-white px-4 py-4 sticky top-0 z-10 border-b border-gray-200 flex items-center">
-        <button onClick={() => navigate(-1)} className="mr-3 text-gray-600">
-          <ChevronLeft size={24} />
+      <div className="bg-white px-4 py-4 sticky top-0 z-10 border-b border-gray-200 flex items-center justify-between">
+        <div className="flex items-center">
+          <button onClick={() => navigate(-1)} className="mr-3 text-gray-600">
+            <ChevronLeft size={24} />
+          </button>
+          <h1 className="text-lg font-bold text-gray-900">Job Details</h1>
+        </div>
+        <button 
+          onClick={handleJobChat}
+          className="p-2 bg-blue-50 text-blue-600 rounded-lg"
+        >
+          <MessageSquare size={20} />
         </button>
-        <h1 className="text-lg font-bold text-gray-900">Job Details</h1>
       </div>
 
       {/* Content */}
@@ -98,6 +123,14 @@ export const InterpreterJobDetails = () => {
             </div>
           )}
         </div>
+
+        <button 
+          onClick={handleJobChat}
+          className="w-full flex items-center justify-center p-4 bg-blue-50 text-blue-600 font-bold rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors"
+        >
+          <MessageSquare className="mr-2" size={18} />
+          Message Admin about this job
+        </button>
 
         {/* Client / Notes */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">

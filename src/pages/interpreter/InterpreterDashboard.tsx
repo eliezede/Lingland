@@ -1,15 +1,15 @@
-
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { BookingService } from '../../services/api';
-import { StatsService } from '../../services/api';
-import { Booking, BookingAssignment } from '../../types';
+import { BookingService, ChatService } from '../../services/api';
+import { Booking } from '../../types';
 import { MobileJobCard } from '../../components/MobileJobCard';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ChevronRight } from 'lucide-react';
+import { AlertCircle, ChevronRight, MessageSquare } from 'lucide-react';
+import { useChat } from '../../context/ChatContext';
 
 export const InterpreterDashboard = () => {
   const { user } = useAuth();
+  const { openThread } = useChat();
   const [nextJob, setNextJob] = useState<Booking | null>(null);
   const [offerCount, setOfferCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -25,13 +25,11 @@ export const InterpreterDashboard = () => {
   const loadDashboardData = async (interpreterId: string) => {
     setLoading(true);
     try {
-      // Parallel fetch
       const [schedule, offers] = await Promise.all([
         BookingService.getInterpreterSchedule(interpreterId),
         BookingService.getInterpreterOffers(interpreterId)
       ]);
 
-      // Find next job (future only)
       const upcoming = schedule
         .filter(b => new Date(b.date + 'T' + b.startTime) > new Date())
         .sort((a, b) => new Date(a.date + 'T' + a.startTime).getTime() - new Date(b.date + 'T' + b.startTime).getTime());
@@ -45,20 +43,33 @@ export const InterpreterDashboard = () => {
     }
   };
 
+  const handleSupportChat = async () => {
+    if (!user) return;
+    // For support chat, we'd ideally have a global support UID or just link to 'admin'
+    // For demo, we search for an admin or use a fixed ID
+    const names = {
+      [user.id]: user.displayName || 'Interpreter',
+      'u1': 'Sarah Admin' // Fixed admin from mock data for demo consistency
+    };
+    
+    const threadId = await ChatService.getOrCreateThread(
+      [user.id, 'u1'],
+      names
+    );
+    openThread(threadId);
+  };
+
   if (loading) return <div className="p-8 text-center text-gray-400">Loading...</div>;
 
-  // Safe display name access
   const firstName = user?.displayName?.split(' ')[0] || 'Interpreter';
 
   return (
     <div className="space-y-6">
-      {/* Greeting */}
       <div>
         <h2 className="text-2xl font-bold text-gray-900">Good morning,</h2>
         <p className="text-gray-500">{firstName}</p>
       </div>
 
-      {/* Urgent Action: Offers */}
       {offerCount > 0 && (
         <Link to="/interpreter/jobs" className="block bg-blue-600 rounded-xl p-4 text-white shadow-lg shadow-blue-200 transform active:scale-95 transition-transform">
           <div className="flex items-center justify-between">
@@ -76,7 +87,23 @@ export const InterpreterDashboard = () => {
         </Link>
       )}
 
-      {/* Next Job */}
+      {/* Support Chat Quick Action */}
+      <button 
+        onClick={handleSupportChat}
+        className="w-full flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm hover:border-blue-500 transition-colors group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+            <MessageSquare size={20} />
+          </div>
+          <div className="text-left">
+             <p className="text-sm font-bold text-gray-900">Chat with Support</p>
+             <p className="text-xs text-gray-500">Instant help for active jobs</p>
+          </div>
+        </div>
+        <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
+      </button>
+
       <div>
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-bold text-gray-800">Up Next</h3>
@@ -91,7 +118,6 @@ export const InterpreterDashboard = () => {
         )}
       </div>
 
-      {/* Quick Stats */}
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white p-4 rounded-xl border border-gray-200">
           <p className="text-gray-500 text-xs uppercase tracking-wide font-bold">This Week</p>

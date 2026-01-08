@@ -37,6 +37,7 @@ import { AdminInterpreterDetails } from './pages/admin/interpreters/AdminInterpr
 import { AdminUsers } from './pages/admin/AdminUsers.tsx';
 import { AdminSettings } from './pages/admin/AdminSettings.tsx';
 import { AdminApplications } from './pages/admin/AdminApplications.tsx';
+import { AdminMessages } from './pages/admin/AdminMessages.tsx';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard.tsx';
@@ -127,6 +128,7 @@ const App = () => {
                         <AdminLayout>
                           <Routes>
                             <Route path="dashboard" element={<Dashboard />} />
+                            <Route path="messages" element={<AdminMessages />} />
                             <Route path="bookings" element={<AdminBookings />} />
                             <Route path="bookings/:id" element={<AdminBookingDetails />} />
                             <Route path="applications" element={<AdminApplications />} />

@@ -1,7 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { InterpreterService } from '../../services/interpreterService';
+import { ChatService } from '../../services/chatService';
 import { Interpreter } from '../../types';
 import { Spinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';
@@ -9,13 +9,17 @@ import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useSettings } from '../../context/SettingsContext';
+import { useAuth } from '../../context/AuthContext';
+import { useChat } from '../../context/ChatContext';
 import { 
   Search, UserCircle2, MapPin, 
-  Languages, ShieldCheck, Edit, Check 
+  Languages, ShieldCheck, Edit, Check, MessageSquare 
 } from 'lucide-react';
 
 export const AdminInterpreters = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { openThread } = useChat();
   const { settings } = useSettings();
   const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +62,27 @@ export const AdminInterpreters = () => {
     setEditingId(interpreter.id);
     setFormData({ ...interpreter });
     setIsModalOpen(true);
+  };
+
+  const handleStartChat = async (e: React.MouseEvent, interpreter: Interpreter) => {
+    e.stopPropagation();
+    if (!user) return;
+
+    try {
+      const names = {
+        [user.id]: user.displayName || 'Admin',
+        [interpreter.id]: interpreter.name
+      };
+
+      const threadId = await ChatService.getOrCreateThread(
+        [user.id, interpreter.id],
+        names
+      );
+
+      openThread(threadId);
+    } catch (error) {
+      console.error("Failed to start chat", error);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -180,7 +205,16 @@ export const AdminInterpreters = () => {
                    </div>
                 </div>
 
-                <div className="pt-4 border-t border-gray-100 flex justify-end">
+                <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
+                   <Button 
+                     variant="ghost" 
+                     size="sm" 
+                     icon={MessageSquare} 
+                     onClick={(e) => handleStartChat(e, interpreter)}
+                     className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                   >
+                     Message
+                   </Button>
                    <Button variant="ghost" size="sm" icon={Edit} onClick={(e) => handleEdit(e, interpreter)}>
                      Edit Profile
                    </Button>

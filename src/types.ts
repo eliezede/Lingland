@@ -280,4 +280,6 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   createdAt: string;
+  fileUrl?: string;
+  fileType?: 'IMAGE' | 'DOCUMENT';
 }

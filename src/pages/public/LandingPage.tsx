@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { 
   Globe2, ArrowRight, ShieldCheck, Zap, Clock, 
   CheckCircle2, Building2, Users, LayoutDashboard,
-  Menu, X, Sparkles, Check
+  Menu, X, Sparkles, Check, LogIn
 } from 'lucide-react';
 
 export const LandingPage = () => {
@@ -27,7 +27,7 @@ export const LandingPage = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             {/* Logo */}
-            <div className="flex items-center cursor-pointer" onClick={() => window.scrollTo(0,0)}>
+            <div className="flex items-center cursor-pointer" onClick={() => window.scrollTo({top: 0, behavior: 'smooth'})}>
               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white mr-3 shadow-lg shadow-blue-200">
                 <Globe2 size={24} />
               </div>
@@ -64,12 +64,42 @@ export const LandingPage = () => {
 
             {/* Mobile Menu Button */}
             <div className="md:hidden">
-              <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-gray-600">
+              <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-gray-600 rounded-lg hover:bg-slate-100 transition-colors">
                 {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
               </button>
             </div>
           </div>
         </div>
+
+        {/* Mobile Menu Overlay */}
+        {mobileMenuOpen && (
+          <div className="md:hidden absolute top-20 left-0 w-full bg-white border-b border-slate-100 shadow-xl animate-in slide-in-from-top-4 duration-300">
+            <div className="p-6 space-y-4">
+              <button onClick={() => scrollToSection('features')} className="block w-full text-left p-4 rounded-xl hover:bg-slate-50 font-bold text-slate-700">Why Us</button>
+              <button onClick={() => scrollToSection('interpreters')} className="block w-full text-left p-4 rounded-xl hover:bg-slate-50 font-bold text-slate-700">Join as Interpreter</button>
+              <div className="pt-4 border-t border-slate-100 flex flex-col gap-3">
+                {user ? (
+                  <Link 
+                    to={user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'CLIENT' ? '/client/dashboard' : '/interpreter/dashboard'}
+                    className="w-full py-4 bg-slate-900 text-white text-center font-black rounded-2xl flex items-center justify-center"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <LayoutDashboard size={18} className="mr-2" /> Dashboard
+                  </Link>
+                ) : (
+                  <>
+                    <Link to="/login" onClick={() => setMobileMenuOpen(false)} className="w-full py-4 text-center font-bold text-slate-900 bg-slate-100 rounded-2xl flex items-center justify-center">
+                      <LogIn size={18} className="mr-2" /> Log in
+                    </Link>
+                    <Link to="/request" onClick={() => setMobileMenuOpen(false)} className="w-full py-4 text-center font-black text-white bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+                      Book Interpreter
+                    </Link>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* --- HERO SECTION --- */}

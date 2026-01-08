@@ -1,25 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
 import { 
   LayoutDashboard, CalendarDays, Users, Briefcase, 
   LogOut, Menu, Globe2, FileText, PoundSterling, 
-  CreditCard, UserCog, Settings, UserPlus, X, ChevronRight
+  CreditCard, UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { NotificationCenter } from '../components/notifications/NotificationCenter';
 import { ChatSystem } from '../components/chat/ChatSystem';
+import { ChatService } from '../services/chatService';
 
 interface NavItemProps {
   to: string;
   icon: React.ElementType;
   label: string;
   active: boolean;
+  badge?: number;
   onClick?: () => void;
 }
 
-const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active, onClick }) => (
+const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active, badge, onClick }) => (
   <Link 
     to={to} 
     onClick={onClick}
@@ -33,7 +35,13 @@ const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active, onClic
       <Icon size={20} className={active ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'} />
       <span className="font-medium">{label}</span>
     </div>
-    {active && <ChevronRight size={14} className="text-blue-200" />}
+    <div className="flex items-center">
+      {badge ? (
+        <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full mr-2">
+          {badge}
+        </span>
+      ) : active && <ChevronRight size={14} className="text-blue-200" />}
+    </div>
   </Link>
 );
 
@@ -42,6 +50,15 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [totalUnread, setTotalUnread] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    return ChatService.subscribeToThreads(user.id, (threads) => {
+      const count = threads.reduce((acc, t) => acc + (t.unreadCount[user.id] || 0), 0);
+      setTotalUnread(count);
+    });
+  }, [user]);
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
 
@@ -54,10 +71,8 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden font-sans">
-      {/* Chat System Layer */}
       <ChatSystem />
 
-      {/* Mobile Backdrop */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden transition-opacity" 
@@ -65,7 +80,6 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         />
       )}
 
-      {/* Sidebar */}
       <aside className={`
         fixed lg:static inset-y-0 left-0 z-50 w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 
         transform transition-transform duration-300 ease-in-out flex flex-col
@@ -86,6 +100,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         <nav className="flex-1 overflow-y-auto p-4 scrollbar-hide">
           <div className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 px-4 mt-2">Core</div>
           <NavItem to="/admin/dashboard" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/admin/dashboard'} onClick={closeSidebar} />
+          <NavItem to="/admin/messages" icon={MessageSquare} label="Messages" badge={totalUnread} active={isActive('/admin/messages')} onClick={closeSidebar} />
           
           <div className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 px-4 mt-8">Operations</div>
           <NavItem to="/admin/bookings" icon={CalendarDays} label="Bookings" active={isActive('/admin/bookings')} onClick={closeSidebar} />
