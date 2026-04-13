@@ -43,4 +43,6 @@ __exportStar(require("./billing/generateClientInvoice"), exports);
 __exportStar(require("./billing/generateInterpreterInvoices"), exports);
 __exportStar(require("./mail/onEmailCreated"), exports);
 __exportStar(require("./auth/onUserCreated"), exports);
+__exportStar(require("./airtable/onAirtableFormSubmit"), exports);
+__exportStar(require("./notifications/onNotificationCreated"), exports);
 //# sourceMappingURL=index.js.map
