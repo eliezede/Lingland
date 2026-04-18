@@ -37,14 +37,14 @@ export const StatsService = {
         ...onboardingStats
       };
     }, {
-      totalBookings: MOCK_BOOKINGS.length,
-      pendingRequests: MOCK_BOOKINGS.filter(b => b.status === BookingStatus.INCOMING).length,
-      activeInterpreters: MOCK_INTERPRETERS.length,
-      unpaidInvoices: 3,
-      revenueMonth: 12500,
-      pendingApplications: 1,
-      pendingOnboardingDocs: 2,
-      totalOnboarding: 3
+      totalBookings: 0,
+      pendingRequests: 0,
+      activeInterpreters: 0,
+      unpaidInvoices: 0,
+      revenueMonth: 0,
+      pendingApplications: 0,
+      pendingOnboardingDocs: 0,
+      totalOnboarding: 0
     });
   },
 
@@ -69,9 +69,9 @@ export const StatsService = {
         totalOnboarding: onboardingInterpsSnap.size
       };
     }, {
-      pendingApplications: 1,
+      pendingApplications: 0,
       pendingOnboardingDocs: 0,
-      totalOnboarding: 1
+      totalOnboarding: 0
     });
   },
 

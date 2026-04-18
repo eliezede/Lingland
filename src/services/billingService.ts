@@ -316,11 +316,33 @@ export const BillingService = {
         if (userId) {
           await NotificationService.notify(
             userId,
-            'Timesheet Approved',
-            `Your timesheet for job on ${ts.actualStart.split('T')[0]} has been verified and approved for billing.`,
+            '✅ Timesheet Approved',
+            `Your timesheet for job on ${ts.actualStart.split('T')[0]} has been verified and approved — payment is now being processed.`,
             NotificationType.SUCCESS,
             '/interpreter/timesheets'
           );
+
+          // TS-03: Send confirmation email to interpreter
+          const interpSnap = await getDoc(doc(db, 'interpreters', ts.interpreterId));
+          const interpEmail = interpSnap.exists() ? (interpSnap.data() as any).email : '';
+          const interpName = interpSnap.exists() ? (interpSnap.data() as any).name : 'Interpreter';
+          if (interpEmail) {
+            await addDoc(collection(db, 'mail'), {
+              to: [interpEmail],
+              message: {
+                subject: `Timesheet Approved — Job on ${ts.actualStart.split('T')[0]}`,
+                html: `Dear ${interpName},<br><br>
+Great news! Your timesheet for the job on <strong>${ts.actualStart.split('T')[0]}</strong> has been reviewed and approved by our administrative team.<br><br>
+<strong>Approved Amount:</strong> £${(ts.interpreterAmountCalculated || ts.totalToPay || 0).toFixed(2)}<br><br>
+Payment will be processed and submitted in accordance with your payment schedule. You can view your payment history by logging into the Lingland app.<br><br>
+Thank you for your continued support.<br><br>
+Kind regards,<br>The Lingland Finance Team`
+              },
+              timesheetId: id,
+              source: 'timesheet_approved',
+              createdAt: new Date().toISOString()
+            });
+          }
         }
       }
     } catch (e) {

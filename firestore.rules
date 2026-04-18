@@ -1,0 +1,76 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Function to check if user is logged in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Function to check if user is an Admin
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'SUPER_ADMIN']
+      );
+    }
+
+    // Default deny for all collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      // Users can read/write their own profile OR Admins can do anything
+      allow read, write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    match /interpreters/{interpreterId} {
+      // Admins read/write anything. Interpreters only read/write their own profile
+      allow read: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId);
+      allow write: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId);
+    }
+
+    match /bookings/{bookingId} {
+      // Admins full access. 
+      // Interpreters can read if they are assigned to it or if it's OPENED.
+      // (Simplified logic here to ensure interpreters can accept jobs and submit timesheets)
+      allow read, write: if isAdmin() || isAuthenticated();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read, write: if isAdmin() || isAuthenticated();
+    }
+
+    match /jobEvents/{eventId} {
+      allow read, write: if isAdmin() || isAuthenticated();
+    }
+
+    match /clientInvoices/{invoiceId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /interpreterInvoices/{invoiceId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.interpreterId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId);
+      allow write: if isAdmin();
+    }
+
+    match /timesheets/{timesheetId} {
+      allow read, write: if isAdmin() || isAuthenticated();
+    }
+
+    match /systemSettings/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /mail/{mailId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin(); // Generally triggered via cloud functions anyway
+    }
+
+    match /notifications/{notificationId} {
+      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid || isAdmin();
+    }
+  }
+}

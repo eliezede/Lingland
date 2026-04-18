@@ -229,6 +229,13 @@ export interface InterpreterRates {
 
 export type OnboardingDocStatus = 'MISSING' | 'IN_REVIEW' | 'VERIFIED' | 'REJECTED';
 
+export interface BankDetails {
+  accountName: string;
+  accountNumber: string; // 8 digits in UK
+  sortCode: string;      // 00-00-00 format
+  bankName?: string;
+}
+
 export interface Interpreter extends TenantScopedEntity {
   // Identification
   name: string;
@@ -299,6 +306,9 @@ export interface Interpreter extends TenantScopedEntity {
 
   // Rates
   rates: InterpreterRates;
+
+  // Payments & Finance (UK BACS)
+  bankDetails?: BankDetails;
 
   // Auxiliary
   notes?: string;

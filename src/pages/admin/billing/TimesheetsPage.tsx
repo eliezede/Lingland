@@ -96,7 +96,7 @@ export const AdminTimesheets = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">
                       <Link to={`/admin/interpreters/${ts.interpreterId}`} className="hover:text-blue-600 hover:underline">
-                        {ts.interpreterId.substring(0, 8).toUpperCase()}
+                        {(ts as any).interpreterName || ts.interpreterId.substring(0, 8).toUpperCase()}
                       </Link>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -104,10 +104,10 @@ export const AdminTimesheets = () => {
                       <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Break: {ts.breakDurationMinutes}m</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-black text-emerald-700">
-                      {ts.adminApproved ? `£${ts.totalClientAmount?.toFixed(2)}` : <span className="text-slate-300 font-medium">Pending</span>}
+                      {ts.adminApproved ? `£${ts.clientAmountCalculated?.toFixed(2) ?? '—'}` : <span className="text-slate-300 font-medium">Pending</span>}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-black text-blue-700">
-                      {ts.adminApproved ? `£${ts.totalInterpreterAmount?.toFixed(2)}` : <span className="text-slate-300 font-medium">Pending</span>}
+                      {ts.adminApproved ? `£${(ts.interpreterAmountCalculated || ts.totalToPay)?.toFixed(2) ?? '—'}` : <span className="text-slate-300 font-medium">Pending</span>}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2.5 py-1 text-[10px] rounded-full font-black uppercase tracking-widest border ${ts.adminApproved ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>

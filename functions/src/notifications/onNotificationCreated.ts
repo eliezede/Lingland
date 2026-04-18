@@ -3,12 +3,11 @@ import * as admin from 'firebase-admin';
 
 /**
  * Cloud Function: onNotificationCreated
- * 
+ *
  * Triggers when a new document is created in the 'notifications' collection.
- * Looks up the target user's interpreter profile to find their Expo Push Token,
- * then sends a native push notification via the Expo Push API.
- * 
- * This enables real-time push notifications when the app is in background/closed.
+ * 1. Looks up push token — checks interpreter profile first, then admin user doc
+ * 2. Calculates dynamic badge count from unread notifications
+ * 3. Sends native push notification via the Expo Push API
  */
 export const onNotificationCreated = functions.firestore
   .document('notifications/{notificationId}')
@@ -19,22 +18,31 @@ export const onNotificationCreated = functions.firestore
     const { userId, title, message, type } = data;
 
     try {
-      // 1. Look up the interpreter's push token
+      // 1. Resolve push token — check interpreter first, then admin user doc
+      let expoPushToken: string | null = null;
+
       const interpreterDoc = await admin.firestore()
         .collection('interpreters')
         .doc(userId)
         .get();
 
-      if (!interpreterDoc.exists) {
-        console.log(`[Push] No interpreter found for userId: ${userId}`);
-        return;
+      if (interpreterDoc.exists) {
+        expoPushToken = interpreterDoc.data()?.expoPushToken || null;
       }
 
-      const interpreterData = interpreterDoc.data();
-      const expoPushToken = interpreterData?.expoPushToken;
+      // NT-01: If not an interpreter, check the users collection (for admins)
+      if (!expoPushToken) {
+        const userDoc = await admin.firestore()
+          .collection('users')
+          .doc(userId)
+          .get();
+        if (userDoc.exists) {
+          expoPushToken = userDoc.data()?.expoPushToken || null;
+        }
+      }
 
       if (!expoPushToken) {
-        console.log(`[Push] No push token for interpreter: ${userId}`);
+        console.log(`[Push] No push token for user: ${userId}`);
         return;
       }
 
@@ -43,6 +51,14 @@ export const onNotificationCreated = functions.firestore
         console.log(`[Push] Invalid token format: ${expoPushToken}`);
         return;
       }
+
+      // NT-02: Dynamic badge count — count unread notifications for this user
+      const unreadSnap = await admin.firestore()
+        .collection('notifications')
+        .where('userId', '==', userId)
+        .where('read', '==', false)
+        .get();
+      const badgeCount = unreadSnap.size;
 
       // 2. Send via Expo Push API
       const pushMessage = {
@@ -54,7 +70,7 @@ export const onNotificationCreated = functions.firestore
           type: type || 'INFO',
           notificationId: snapshot.id
         },
-        badge: 1,
+        badge: badgeCount,
         channelId: 'default',
       };
 
@@ -73,15 +89,20 @@ export const onNotificationCreated = functions.firestore
       if (result.data?.status === 'error') {
         console.error(`[Push] Expo API error:`, result.data.message);
 
-        // If token is invalid, clear it from the interpreter's profile
+        // If token is invalid, clear it from the profile
         if (result.data.details?.error === 'DeviceNotRegistered') {
+          // Clear from interpreters collection
           await admin.firestore().collection('interpreters').doc(userId).update({
             expoPushToken: admin.firestore.FieldValue.delete()
-          });
+          }).catch(() => {}); // ignore if doc doesn't exist
+          // Clear from users collection
+          await admin.firestore().collection('users').doc(userId).update({
+            expoPushToken: admin.firestore.FieldValue.delete()
+          }).catch(() => {});
           console.log(`[Push] Removed invalid token for: ${userId}`);
         }
       } else {
-        console.log(`[Push] Sent to ${userId}: "${title}"`);
+        console.log(`[Push] Sent to ${userId}: "${title}" (badge: ${badgeCount})`);
       }
 
     } catch (error) {

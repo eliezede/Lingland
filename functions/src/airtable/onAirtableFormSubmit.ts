@@ -2,16 +2,16 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 
-// Security Token: In production, configure this via Firebase Secrets or Environment Variables.
-// For now, we use this hardcoded string as the "password" for the integration.
-const AIRTABLE_SECRET_TOKEN = 'LL_SECRET_AIRTABLE_2024_TOKEN_X92J';
-
-export const onAirtableFormSubmit = functions.https.onRequest(async (req, res) => {
-  // 1. Basic Security check
+export const onAirtableFormSubmit = functions.runWith({
+  secrets: ['AIRTABLE_SECRET_TOKEN'],
+  timeoutSeconds: 60,
+}).https.onRequest(async (req, res) => {
+  // 1. Basic Security check — token loaded from Firebase Secret Manager (via runWith secrets)
   const token = req.get('X-Airtable-Token') || req.query.token;
-  
-  if (token !== AIRTABLE_SECRET_TOKEN) {
-    console.warn('Unauthorized Airtable sync attempt');
+  const expectedToken = process.env.AIRTABLE_SECRET_TOKEN;
+
+  if (!expectedToken || token !== expectedToken) {
+    console.warn('[Airtable] Unauthorized sync attempt from IP:', req.ip);
     res.status(401).send('Unauthorized');
     return;
   }
@@ -144,14 +144,36 @@ export const onAirtableFormSubmit = functions.https.onRequest(async (req, res) =
       const notifRef = db.collection('notifications').doc();
       batch.set(notifRef, {
         userId: adminDoc.id,
-        title: 'New Airtable Request',
-        message: `New booking ${bookingRef} submitted via Airtable for ${languageTo} on ${dateStr}.`,
+        title: '📋 New Airtable Request',
+        message: `New booking ${bookingRef} submitted via Airtable for ${languageTo} interpretation on ${dateStr}.`,
         type: 'URGENT',
         read: false,
         link: `/admin/bookings/${bookingDoc.id}`,
         createdAt: new Date().toISOString()
       });
     });
+
+    // 8. Email confirmation to client (BK-05)
+    if (contactEmail) {
+      const mailRef = db.collection('mail').doc();
+      batch.set(mailRef, {
+        to: [contactEmail],
+        message: {
+          subject: `Booking Request Received — Ref: ${bookingRef}`,
+          html: `Dear ${professionalName},<br><br>Thank you for your booking request with Lingland.<br><br>
+<strong>Your Booking Reference:</strong> ${bookingRef}<br>
+<strong>Language:</strong> ${languageTo}<br>
+<strong>Date:</strong> ${dateStr} at ${startTimeStr}<br>
+<strong>Session Type:</strong> ${sessionMode}<br>${sessionLocation ? `<strong>Location:</strong> ${sessionLocation}<br>` : ''}
+<br>Our team is reviewing your request and will match you with a qualified interpreter. You will receive a further confirmation once an interpreter has been assigned.<br><br>
+If you have any questions, please contact us by replying to this email.<br><br>
+Kind regards,<br>The Lingland Team`
+        },
+        bookingId: bookingDoc.id,
+        source: 'airtable_webhook',
+        createdAt: new Date().toISOString()
+      });
+    }
 
     await batch.commit();
 

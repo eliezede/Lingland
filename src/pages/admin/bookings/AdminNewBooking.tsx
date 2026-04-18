@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
     Building2, Globe2, MapPin, Video,
     Search, ChevronLeft, Save, Plus, X, Phone, Mail,
@@ -20,12 +20,15 @@ export const AdminNewBooking = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
     const { showToast } = useToast();
+    const { id } = useParams<{ id: string }>();
+    const isEditMode = !!id;
     const { clientsMap } = useClients();
 
     const [loading, setLoading] = useState(false);
     const clients = Object.values(clientsMap);
     const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
     const [searchingInterpreter, setSearchingInterpreter] = useState('');
+    const [organizationId, setOrganizationId] = useState<string>('');
     const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
     const [clientModalOpen, setClientModalOpen] = useState(false);
     const [clientSearchQuery, setClientSearchQuery] = useState('');
@@ -67,7 +70,69 @@ export const AdminNewBooking = () => {
 
     useEffect(() => {
         loadInitialData();
-    }, []);
+        if (isEditMode) {
+            loadBookingData();
+        }
+    }, [id]);
+
+    const loadBookingData = async () => {
+        if (!id) return;
+        setLoading(true);
+        try {
+            const booking = await BookingService.getById(id);
+            if (booking) {
+                // Populate form data
+                setFormData({
+                    costCode: booking.costCode || '',
+                    serviceType: booking.serviceType,
+                    languageFrom: booking.languageFrom || 'English',
+                    languageTo: booking.languageTo || '',
+                    date: booking.date,
+                    startTime: booking.startTime,
+                    durationMinutes: booking.durationMinutes,
+                    locationType: booking.locationType,
+                    address: booking.address || '',
+                    postcode: booking.postcode || '',
+                    houseNumber: booking.houseNumber || '',
+                    onlineLink: booking.onlineLink || '',
+                    notes: booking.notes || '',
+                    genderPreference: booking.genderPreference || 'None',
+                    organization: booking.guestContact?.organisation || '',
+                    contactName: booking.guestContact?.name || '',
+                    contactEmail: booking.guestContact?.email || '',
+                    contactPhone: booking.guestContact?.phone || '',
+                    translationFormat: booking.translationFormat || 'Only Word',
+                    translationFormatOther: booking.translationFormatOther || '',
+                    quoteRequested: !!booking.quoteRequested,
+                    sourceFiles: booking.sourceFiles || [],
+                    deliveryEmail: booking.deliveryEmail || '',
+                    lat: booking.lat,
+                    lng: booking.lng
+                });
+                
+                if (booking.organizationId) {
+                    setOrganizationId(booking.organizationId);
+                }
+
+                if (booking.clientId) {
+                    setClientSource('EXISTING');
+                    const client = clientsMap[booking.clientId];
+                    if (client) setSelectedClient(client);
+                } else {
+                    setClientSource('GUEST');
+                }
+
+                if (booking.interpreterId) {
+                    const int = await InterpreterService.getById(booking.interpreterId);
+                    if (int) setSelectedInterpreter(int);
+                }
+            }
+        } catch (e) {
+            showToast('Failed to load booking data', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const loadInitialData = async () => {
         try {
@@ -107,10 +172,9 @@ export const AdminNewBooking = () => {
                 onlineLink: formData.onlineLink,
                 notes: formData.notes,
                 genderPreference: formData.genderPreference,
+                organizationId: organizationId || (user as any)?.organizationId || 'lingland-main',
                 status: selectedInterpreter ? 'PENDING_ASSIGNMENT' : 'INCOMING',
                 requestedByUserId: user?.id || 'admin',
-                bookingRef: `LL-${Math.floor(1000 + Math.random() * 9000)}`,
-                createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 // Translation-specific fields
                 translationFormat: formData.translationFormat,
@@ -146,8 +210,15 @@ export const AdminNewBooking = () => {
                 bookingData.interpreterName = selectedInterpreter.name;
             }
 
-            await BookingService.create(bookingData);
-            showToast('Booking created successfully', 'success');
+            if (isEditMode) {
+                await BookingService.update(id!, bookingData);
+                showToast('Booking updated successfully', 'success');
+            } else {
+                bookingData.bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
+                bookingData.createdAt = new Date().toISOString();
+                await BookingService.create(bookingData);
+                showToast('Booking created successfully', 'success');
+            }
             navigate('/admin/bookings');
         } catch (error) {
             showToast('Failed to create booking', 'error');
@@ -181,8 +252,12 @@ export const AdminNewBooking = () => {
                         <ChevronLeft size={20} />
                     </button>
                     <div>
-                        <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Create Manual Booking</h1>
-                        <p className="text-slate-500 dark:text-slate-400 font-medium">Register a request received via email or phone</p>
+                        <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                            {isEditMode ? 'Edit Booking Record' : 'Create Manual Booking'}
+                        </h1>
+                        <p className="text-slate-500 dark:text-slate-400 font-medium">
+                            {isEditMode ? `Updating ${formData.organization || 'Booking'}` : 'Register a request received via email or phone'}
+                        </p>
                     </div>
                 </div>
             </div>
@@ -769,7 +844,7 @@ export const AdminNewBooking = () => {
                             ) : (
                                 <>
                                     <Save size={20} className="group-hover:scale-110 transition-transform" />
-                                    Publish Booking
+                                    {isEditMode ? 'Save Changes' : 'Publish Booking'}
                                 </>
                             )}
                         </button>

@@ -18,9 +18,13 @@ export const NotFound = () => {
              <Link to="/">
                 <Button icon={Home} variant="primary">Go Home</Button>
              </Link>
-             <button onClick={() => window.history.back()}>
-                <Button icon={ArrowLeft} variant="secondary">Go Back</Button>
-             </button>
+              <Button 
+                icon={ArrowLeft} 
+                variant="secondary" 
+                onClick={() => window.history.back()}
+              >
+                Go Back
+              </Button>
           </div>
         </div>
       </div>

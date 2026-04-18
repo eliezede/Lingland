@@ -174,6 +174,7 @@ const App = () => {
                               <Route path="operations/timesheets" element={<TimesheetQueue />} />
                               <Route path="bookings/new" element={<AdminNewBooking />} />
                               <Route path="bookings/:id" element={<AdminBookingDetails />} />
+                              <Route path="bookings/edit/:id" element={<AdminNewBooking />} />
                               <Route path="applications" element={<AdminApplications />} />
                               <Route path="clients" element={<AdminClients />} />
                               <Route path="clients/:id" element={<AdminClientDetails />} />

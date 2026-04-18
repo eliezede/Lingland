@@ -198,11 +198,11 @@ export const AdminBookingDetails = () => {
                 </button>
                 <div className="h-px bg-slate-100 dark:bg-slate-800" />
                 <button 
-                  onClick={() => handleStatusChange('COMPLETED')}
+                  onClick={() => handleStatusChange('TIMESHEET_SUBMITTED')}
                   className="w-full px-4 py-3 text-left text-xs font-bold text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors flex items-center gap-2"
                 >
                   <CheckCircle2 size={14} />
-                  Mark as Completed
+                  Mark as Done
                 </button>
               </div>
             </div>
@@ -255,11 +255,11 @@ export const AdminBookingDetails = () => {
                           </div>
                           <div className="flex flex-wrap gap-2 text-xs">
                              <div className="px-3 py-1.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg font-black border border-blue-200 dark:border-blue-800/50 uppercase transition-colors">
-                               {booking.sourceLanguage || 'English'}
+                               {booking.languageFrom || 'English'}
                              </div>
                              <div className="w-6 flex items-center justify-center font-black text-slate-300 dark:text-slate-700">TO</div>
                              <div className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 rounded-lg font-black border border-emerald-200 dark:border-emerald-800/50 uppercase transition-colors">
-                               {booking.targetLanguage}
+                               {booking.languageTo}
                              </div>
                           </div>
                         </div>

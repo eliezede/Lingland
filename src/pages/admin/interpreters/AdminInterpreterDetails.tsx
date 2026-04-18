@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 type Tab = 'JOBS' | 'FINANCE' | 'COMPLIANCE' | 'RATES';
-type EditModalTab = 'PERSONAL' | 'COMPLIANCE' | 'QUALIFICATIONS' | 'LANGUAGES' | 'RATES' | 'NOTES';
+type EditModalTab = 'PERSONAL' | 'FINANCE' | 'COMPLIANCE' | 'QUALIFICATIONS' | 'LANGUAGES' | 'RATES' | 'NOTES';
 
 export const AdminInterpreterDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -119,7 +119,11 @@ export const AdminInterpreterDetails = () => {
 
   const handleEdit = () => {
     if (interpreter) {
-      setFormData({ ...interpreter });
+      setFormData({ 
+        ...interpreter,
+        bankDetails: interpreter.bankDetails || { accountName: '', accountNumber: '', sortCode: '' },
+        languageProficiencies: interpreter.languageProficiencies || []
+      });
       setEditModalTab('PERSONAL');
       setIsEditModalOpen(true);
     }
@@ -150,7 +154,13 @@ export const AdminInterpreterDetails = () => {
 
     setSaving(true);
     try {
-      await InterpreterService.updateProfile(id, formData);
+      // Sync simple legacy 'languages' array before saving
+      const syncData = {
+        ...formData,
+        languages: (formData.languageProficiencies || []).map(p => p.language)
+      };
+
+      await InterpreterService.updateProfile(id, syncData);
       showToast('Profile updated successfully', 'success');
       await loadData(id);
       setIsEditModalOpen(false);
@@ -257,7 +267,8 @@ export const AdminInterpreterDetails = () => {
   const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && ['BOOKED', 'PENDING_ASSIGNMENT'].includes(String(j.status))).length;
   const completedJobsCount = jobs.filter(j => ['TIMESHEET_SUBMITTED', 'VERIFIED', 'INVOICING', 'INVOICED', 'PAID'].includes(String(j.status))).length;
   return (
-    <div className="space-y-4 pb-20">
+    <>
+      <div className="space-y-4 pb-20">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
         <div className="flex items-center">
           <button onClick={() => navigate('/admin/interpreters')} className="mr-3 p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500">
@@ -674,6 +685,31 @@ export const AdminInterpreterDetails = () => {
               )}
 
               {activeTab === 'FINANCE' && (
+                <div className="p-8 animate-in fade-in duration-300">
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-8 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-100">
+                        <Banknote size={24} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Bank Details (UK BACS)</h4>
+                        {interpreter.bankDetails ? (
+                           <p className="text-xs text-slate-500 font-medium tracking-widest uppercase">
+                             {interpreter.bankDetails.sortCode} • <span className="font-bold text-slate-800 tracking-[0.2em]">{interpreter.bankDetails.accountNumber}</span>
+                           </p>
+                        ) : (
+                           <p className="text-xs text-red-500 font-bold uppercase tracking-widest">Bank Details Missing</p>
+                        )}
+                      </div>
+                    </div>
+                    {interpreter.bankDetails && (
+                      <div className="text-right">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Account Name</p>
+                        <p className="text-xs font-bold text-slate-700">{interpreter.bankDetails.accountName}</p>
+                      </div>
+                    )}
+                  </div>
+
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50/80">
@@ -710,11 +746,13 @@ export const AdminInterpreterDetails = () => {
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
+            )}
             </div>
           </div>
         </div>
       </div>
+    </div>
 
       {/* ─────────────────────────── EDIT MODAL ─────────────────────────── */}
       <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Edit Interpreter Profile" maxWidth="4xl">
@@ -730,7 +768,7 @@ export const AdminInterpreterDetails = () => {
           </div>
 
           <div className="flex gap-1 mb-5 overflow-x-auto pb-1">
-            {(['PERSONAL', 'COMPLIANCE', 'QUALIFICATIONS', 'LANGUAGES', 'RATES', 'NOTES'] as EditModalTab[]).map(tab => (
+            {(['PERSONAL', 'FINANCE', 'COMPLIANCE', 'QUALIFICATIONS', 'LANGUAGES', 'RATES', 'NOTES'] as EditModalTab[]).map(tab => (
               <button
                 key={tab}
                 type="button"
@@ -913,6 +951,68 @@ export const AdminInterpreterDetails = () => {
                       </label>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Tab: FINANCE ── */}
+          {editModalTab === 'FINANCE' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-6">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-blue-600 shadow-sm border border-blue-50">
+                    <Banknote size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">UK BACS Payment Details</h4>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Automated Self-Billing Settlement</p>
+                  </div>
+                </div>
+
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Account Holder Name</label>
+                    <input type="text"
+                      className="w-full px-4 py-3 text-sm font-black text-slate-800 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 shadow-sm transition-all"
+                      placeholder="e.g. MR JOHN DOE"
+                      value={formData.bankDetails?.accountName || ''}
+                      onChange={e => setFormData({ ...formData, bankDetails: { ...formData.bankDetails!, accountName: e.target.value.toUpperCase() } })} />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Account Number (8 Digits)</label>
+                      <input type="text" maxLength={8}
+                        className="w-full px-4 py-3 text-sm font-black text-slate-800 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 shadow-sm transition-all tracking-[0.2em]"
+                        placeholder="00000000"
+                        value={formData.bankDetails?.accountNumber || ''}
+                        onChange={e => {
+                          const val = e.target.value.replace(/\D/g, '').substring(0, 8);
+                          setFormData({ ...formData, bankDetails: { ...formData.bankDetails!, accountNumber: val } });
+                        }} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Sort Code (HH-HH-HH)</label>
+                      <input type="text" maxLength={8}
+                        className="w-full px-4 py-3 text-sm font-black text-slate-800 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 shadow-sm transition-all tracking-[0.2em]"
+                        placeholder="00-00-00"
+                        value={formData.bankDetails?.sortCode || ''}
+                        onChange={e => {
+                          let val = e.target.value.replace(/\D/g, '');
+                          if (val.length > 2) val = val.substring(0, 2) + '-' + val.substring(2);
+                          if (val.length > 5) val = val.substring(0, 5) + '-' + val.substring(5, 7);
+                          setFormData({ ...formData, bankDetails: { ...formData.bankDetails!, sortCode: val.substring(0, 8) } });
+                        }} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 p-4 bg-white/60 border border-blue-50 rounded-2xl flex gap-3 items-start">
+                  <Info size={16} className="text-blue-500 mt-0.5" />
+                  <p className="text-[10px] font-bold text-slate-500 leading-relaxed uppercase tracking-tight">
+                    Ensuring BACS data accuracy is critical. These details are used to generate self-billing invoices and process payouts every 15 days.
+                  </p>
                 </div>
               </div>
             </div>
@@ -1220,28 +1320,109 @@ export const AdminInterpreterDetails = () => {
                     <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                        <Globe2 size={16} className="text-blue-500" /> Language Proficiency
                     </h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">Select all languages the interpreter is qualified to work in.</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">Select languages and configure proficiency levels for each.</p>
                   </div>
-                  <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{formData.languages?.length || 0} SELECTED</span>
+                  <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{formData.languageProficiencies?.length || 0} CONFIGURED</span>
                 </div>
                 
-                <div className="flex flex-wrap gap-2 p-4 bg-white border border-slate-100 rounded-xl shadow-inner min-h-[240px] max-h-[400px] overflow-y-auto">
-                  {Array.from(new Set(settings.masterData.priorityLanguages)).map(lang => {
-                    const selected = formData.languages?.includes(lang);
-                    return (
-                      <button
-                        key={lang}
-                        type="button"
-                        onClick={() => toggleLanguage(lang)}
-                        className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all border ${selected
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/20'
-                          : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-blue-300 hover:text-blue-600 hover:bg-white'
-                          }`}
-                      >
-                        {selected && <Check size={12} className="inline mr-1.5" strokeWidth={4} />}{lang}
-                      </button>
-                    );
-                  })}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Selection List */}
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Available Languages</p>
+                    <div className="flex flex-wrap gap-2 p-4 bg-white border border-slate-100 rounded-xl shadow-inner max-h-[300px] overflow-y-auto">
+                      {Array.from(new Set(settings.masterData.priorityLanguages)).map(lang => {
+                        const isConfigured = formData.languageProficiencies?.some(p => p.language === lang);
+                        return (
+                          <button
+                            key={lang}
+                            type="button"
+                            onClick={() => {
+                              const current = formData.languageProficiencies || [];
+                              if (isConfigured) {
+                                setFormData({ ...formData, languageProficiencies: current.filter(p => p.language !== lang) });
+                              } else {
+                                setFormData({ ...formData, languageProficiencies: [...current, { language: lang, l1: 1, translateOrder: 'T1' }] });
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border ${isConfigured
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/20'
+                              : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-blue-300 hover:text-blue-600 hover:bg-white'
+                              }`}
+                          >
+                            {isConfigured && <Check size={10} className="inline mr-1" strokeWidth={4} />}{lang}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Configuration Area */}
+                  <div className="space-y-4">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Active Proficiencies</p>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                      {formData.languageProficiencies?.length === 0 ? (
+                        <div className="p-8 text-center bg-white/50 border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 font-medium">
+                          No languages configured. Select from the left.
+                        </div>
+                      ) : (
+                        formData.languageProficiencies?.map((p, idx) => (
+                          <div key={p.language} className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm space-y-3 relative group">
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-black text-slate-800 uppercase flex items-center gap-1.5">
+                                <Globe2 size={12} className="text-blue-500" /> {p.language}
+                              </span>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...(formData.languageProficiencies || [])];
+                                  updated.splice(idx, 1);
+                                  setFormData({ ...formData, languageProficiencies: updated });
+                                }}
+                                className="text-slate-300 hover:text-red-500 transition-colors"
+                              >
+                                <Zap size={14} />
+                              </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">L-Level (L1-15)</label>
+                                <select 
+                                  className="w-full px-2 py-1.5 text-[10px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg focus:outline-none"
+                                  value={p.l1}
+                                  onChange={e => {
+                                    const updated = [...(formData.languageProficiencies || [])];
+                                    updated[idx].l1 = parseInt(e.target.value);
+                                    setFormData({ ...formData, languageProficiencies: updated });
+                                  }}
+                                >
+                                  {Array.from({ length: 15 }, (_, i) => i + 1).map(l => (
+                                    <option key={l} value={l}>Level {l} {l === 1 ? '(Expert)' : ''}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">T-Order (T1-7)</label>
+                                <select 
+                                  className="w-full px-2 py-1.5 text-[10px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg focus:outline-none"
+                                  value={p.translateOrder}
+                                  onChange={e => {
+                                    const updated = [...(formData.languageProficiencies || [])];
+                                    updated[idx].translateOrder = e.target.value as any;
+                                    setFormData({ ...formData, languageProficiencies: updated });
+                                  }}
+                                >
+                                  {['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'no'].map(t => (
+                                    <option key={t} value={t}>{t === 'no' ? 'Disabled' : t}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1325,6 +1506,6 @@ export const AdminInterpreterDetails = () => {
           </div>
         </div>
       </Modal>
-    </div>
+    </>
   );
 };

@@ -280,6 +280,8 @@ export const EmailService = {
             dictionary['{{durationMinutes}}'] = booking.durationMinutes ? booking.durationMinutes.toString() : '';
             dictionary['{{totalAmount}}'] = booking.totalAmount ? `£${booking.totalAmount.toFixed(2)}` : 'TBC';
             dictionary['{{status}}'] = booking.status || '';
+            // EM-02: Support for Cancellation Emails with reason
+            if (extraData.cancelReason) dictionary['{{cancelReason}}'] = extraData.cancelReason;
         } else {
             const app = entity as InterpreterApplication;
             dictionary['{{applicantName}}'] = app.name || '';
@@ -310,7 +312,7 @@ export const EmailService = {
     sendStatusEmail: async (
         booking: Booking,
         newStatus: BookingStatus,
-        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string } = {}
+        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; cancelReason?: string } = {}
     ) => {
         console.log(`[EmailService] Triggered for status: ${newStatus}, bookingId: ${booking.id}`);
         try {
@@ -336,6 +338,15 @@ export const EmailService = {
                     console.log(`[EmailService] Client recipient: ${recipientEmail}`);
                 } else if (template.recipientType === 'INTERPRETER') {
                     recipientEmail = extraData.interpreterEmail || '';
+                    // EM-01: Auto-fetch missing interpreter email globally
+                    if (!recipientEmail && booking.interpreterId) {
+                        try {
+                            const iDoc = await getDoc(doc(db, 'interpreters', booking.interpreterId));
+                            if (iDoc.exists()) recipientEmail = iDoc.data()?.email || '';
+                        } catch (e) {
+                            console.error('[EmailService] Failed to fetch missing interpreter email', e);
+                        }
+                    }
                     console.log(`[EmailService] Interpreter recipient: ${recipientEmail}`);
                 }
 
@@ -369,7 +380,7 @@ export const EmailService = {
     sendApplicationEmail: async (
         application: InterpreterApplication,
         triggerEvent: string,
-        adminSystemEmail: string = 'admin@lingland.com',
+        adminSystemEmail: string = '', // Will fallback to systemSettings
         extraData: any = {}
     ) => {
         console.log(`[EmailService] Application Triggered: ${triggerEvent}, appId: ${application.id}`);
@@ -387,6 +398,15 @@ export const EmailService = {
                 if (template.recipientType === 'APPLICANT') {
                     recipientEmail = application.email;
                 } else if (template.recipientType === 'ADMIN') {
+                    // EM-05: Resolve Admin System Email via SystemSettings when requested
+                    if (!adminSystemEmail) {
+                        try {
+                            const sDoc = await getDoc(doc(db, 'systemSettings', 'main'));
+                            adminSystemEmail = sDoc.data()?.finance?.invoiceEmail || 'admin@lingland.com';
+                        } catch {
+                            adminSystemEmail = 'admin@lingland.com';
+                        }
+                    }
                     recipientEmail = adminSystemEmail;
                 }
 

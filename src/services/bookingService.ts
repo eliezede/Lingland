@@ -44,10 +44,10 @@ export const BookingService = {
     try {
       const q = query(collection(db, COLLECTION_NAME), orderBy('date', 'desc'));
       const snap = await getDocs(q);
-      const results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
-      return results.length > 0 ? results : MOCK_BOOKINGS;
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
     } catch (error) {
-      return MOCK_BOOKINGS;
+      console.error('Failed to get all bookings', error);
+      return [];
     }
   },
 
@@ -55,9 +55,10 @@ export const BookingService = {
     try {
       const snap = await getDoc(doc(db, COLLECTION_NAME, id));
       if (snap.exists()) return { id: snap.id, ...snap.data() } as Booking;
-      return MOCK_BOOKINGS.find(b => b.id === id);
+      return undefined;
     } catch (error) {
-      return MOCK_BOOKINGS.find(b => b.id === id);
+      console.error('Failed to get booking by id', error);
+      return undefined;
     }
   },
 
@@ -65,10 +66,10 @@ export const BookingService = {
     try {
       const q = query(collection(db, COLLECTION_NAME), where('interpreterId', '==', interpreterId));
       const snap = await getDocs(q);
-      const results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
-      return results.length > 0 ? results : MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId);
-    } catch {
-      return MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
+    } catch (e) {
+      console.error('Failed to get bookings by interpreter', e);
+      return [];
     }
   },
 
@@ -86,15 +87,21 @@ export const BookingService = {
     try {
       const q = query(collection(db, COLLECTION_NAME), where('clientId', '==', clientId));
       const snap = await getDocs(q);
-      const results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
-      return results.length > 0 ? results : MOCK_BOOKINGS.filter(b => b.clientId === clientId);
-    } catch {
-      return MOCK_BOOKINGS.filter(b => b.clientId === clientId);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
+    } catch (e) {
+      console.error('Failed to get bookings by client', e);
+      return [];
     }
   },
 
-  create: async (bookingData: Omit<Booking, 'id' | 'status'>): Promise<Booking> => {
-    const newBooking = { ...bookingData, status: BookingStatus.INCOMING, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  create: async (bookingData: any): Promise<Booking> => {
+    const newBooking = { 
+      ...bookingData, 
+      status: bookingData.status || BookingStatus.INCOMING,
+      organizationId: bookingData.organizationId || 'lingland-main',
+      createdAt: serverTimestamp(), 
+      updatedAt: serverTimestamp() 
+    };
     try {
       const docRef = await addDoc(collection(db, COLLECTION_NAME), newBooking);
 
@@ -109,10 +116,8 @@ export const BookingService = {
 
       return { id: docRef.id, ...newBooking } as unknown as Booking;
     } catch (e) {
-      const mockBooking = { id: `b-${Date.now()}`, ...newBooking, createdAt: new Date().toISOString() } as unknown as Booking;
-      MOCK_BOOKINGS.push(mockBooking);
-      saveMockData();
-      return mockBooking;
+      console.error('Failed to create booking', e);
+      throw e;
     }
   },
 
@@ -163,10 +168,8 @@ export const BookingService = {
 
       return { id: docRef.id, ...newBooking } as unknown as Booking;
     } catch (e) {
-      const mockBooking = { id: `b-g-${Date.now()}`, ...newBooking, createdAt: new Date().toISOString() } as unknown as Booking;
-      MOCK_BOOKINGS.push(mockBooking);
-      saveMockData();
-      return mockBooking;
+      console.error('Failed to create guest booking', e);
+      throw e;
     }
   },
 
@@ -191,13 +194,7 @@ export const BookingService = {
       }
     } catch (e) {
       console.warn('Firebase updateStatus failed', e);
-    }
-
-    // Always update Mock for consistency
-    const b = MOCK_BOOKINGS.find(book => book.id === id);
-    if (b) {
-      b.status = status;
-      saveMockData();
+      throw e;
     }
   },
 
@@ -206,13 +203,7 @@ export const BookingService = {
       await updateDoc(doc(db, COLLECTION_NAME, id), { ...data, updatedAt: serverTimestamp() });
     } catch (error) {
       console.warn('Firebase update failed', error);
-    }
-
-    // Always update Mock for consistency
-    const b = MOCK_BOOKINGS.find(book => book.id === id);
-    if (b) {
-      Object.assign(b, data);
-      saveMockData();
+      throw error;
     }
   },
 
@@ -267,26 +258,12 @@ export const BookingService = {
       });
 
     } catch (e) {
-      const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      const i = MOCK_INTERPRETERS.find(inter => inter.id === interpreterId);
-      if (b && i) {
-        b.status = BookingStatus.OPENED;
-        b.interpreterId = interpreterId;
-        b.interpreterName = i.name;
-        b.interpreterPhotoUrl = i.photoUrl;
-        MOCK_ASSIGNMENTS.forEach(a => {
-          if (a.bookingId === bookingId && a.interpreterId !== interpreterId && a.status === AssignmentStatus.OFFERED) {
-            a.status = AssignmentStatus.DECLINED;
-          } else if (a.bookingId === bookingId && a.interpreterId === interpreterId) {
-            a.status = AssignmentStatus.ACCEPTED;
-          }
-        });
-        saveMockData();
-      }
+      console.error('Failed to assign interpreter', e);
+      throw e;
     }
   },
 
-  unassignInterpreterFromBooking: async (bookingId: string): Promise<void> => {
+  unassignInterpreterFromBooking: async (bookingId: string, reason?: string): Promise<void> => {
     try {
       const bookingRef = doc(db, COLLECTION_NAME, bookingId);
       const bookingSnap = await getDoc(bookingRef);
@@ -295,10 +272,7 @@ export const BookingService = {
       const bookingData = { id: bookingId, ...bookingSnap.data() } as Booking;
       const interpreterId = bookingData.interpreterId;
 
-      // Update booking: reset status to OPENED (if it was BOOKED) or INCOMING
-      // The user requested it to stay as "opened" but usually unassigning means making it available again.
-      // If it goes to OPENED without an interpreter, it's inconsistent. 
-      // Reverting to INCOMING makes it available for new offers.
+      // Update booking: reset status to INCOMING so admin can re-allocate
       await updateDoc(bookingRef, {
         status: BookingStatus.INCOMING,
         interpreterId: null,
@@ -335,45 +309,14 @@ export const BookingService = {
           await EmailService.sendStatusEmail({ ...bookingData, status: BookingStatus.CANCELLED }, BookingStatus.CANCELLED, {
             interpreterId: interpreterId,
             interpreterName: bookingData.interpreterName || 'Interpreter',
-            interpreterEmail: interpreterUser.email
+            interpreterEmail: interpreterUser.email,
+            cancelReason: reason || 'Administrative reshuffling or client request'
           });
         }
       }
     } catch (e) {
-      const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      if (b) {
-        const oldId = b.interpreterId;
-        const oldName = b.interpreterName;
-        const oldDate = b.date;
-
-        b.status = BookingStatus.INCOMING;
-        b.interpreterId = undefined;
-        b.interpreterName = undefined;
-        b.interpreterPhotoUrl = undefined;
-
-        if (oldId) {
-          MOCK_ASSIGNMENTS.forEach(a => {
-            if (a.bookingId === bookingId && a.interpreterId === oldId) {
-              a.status = AssignmentStatus.DECLINED;
-            }
-          });
-
-          const interpreterUser = MOCK_USERS.find(u => u.profileId === oldId);
-          if (interpreterUser) {
-            NotificationService.notify(
-              interpreterUser.id,
-              'Assignment Removed',
-              `You have been unassigned from the job on ${oldDate}. Please check your portal for updates.`,
-              NotificationType.URGENT,
-              '/interpreter/jobs'
-            );
-
-            // Mock Email
-            console.log(`[MOCK EMAIL] To: ${interpreterUser.email} - Subject: Assignment Removed for job on ${oldDate}`);
-          }
-        }
-        saveMockData();
-      }
+      console.error('Failed to unassign interpreter', e);
+      throw e;
     }
   },
 
@@ -443,7 +386,8 @@ export const BookingService = {
       const snap = await getDocs(q);
       return snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
     } catch (error) {
-      return MOCK_BOOKINGS.slice(0, limitCount);
+      console.error('Failed to get recent bookings', error);
+      return [];
     }
   },
 
@@ -480,7 +424,8 @@ export const BookingService = {
       const snap = await getDocs(q);
       return snap.docs.map(d => ({ id: d.id, ...d.data() } as BookingAssignment));
     } catch (error) {
-      return MOCK_ASSIGNMENTS.filter(a => a.interpreterId === interpreterId && a.status === AssignmentStatus.OFFERED);
+      console.error('Failed to get interpreter offers', error);
+      return [];
     }
   },
 
@@ -491,7 +436,8 @@ export const BookingService = {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
       return all.filter(b => [BookingStatus.OPENED, 'PENDING_ASSIGNMENT' as any, BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).sort((a, b) => a.date.localeCompare(b.date));
     } catch (error) {
-      return MOCK_BOOKINGS.filter(b => b.interpreterId === interpreterId && (b.status === BookingStatus.OPENED || (b.status as any) === 'PENDING_ASSIGNMENT' || b.status === BookingStatus.BOOKED || b.status === BookingStatus.READY_FOR_INVOICE || b.status === BookingStatus.INVOICED || b.status === BookingStatus.PAID));
+      console.error('Failed to get interpreter schedule', error);
+      return [];
     }
   },
 
@@ -525,10 +471,10 @@ export const BookingService = {
           interpreterPhotoUrl: (intSnap.data() as Interpreter).photoUrl || null
         });
 
-        // Notify Admins
-        const admins = MOCK_USERS.filter(u => u.role === 'ADMIN');
-        admins.forEach(admin => {
-          NotificationService.notify(admin.id, 'Interpreter Accepted Offer', `Job #${data.bookingId} has been accepted and is waiting for your final confirmation.`, NotificationType.URGENT, `/admin/bookings/${data.bookingId}`);
+        // NT-03: Notify real Firestore admins (not mock users)
+        const realAdmins = await getAdminUsers();
+        realAdmins.forEach(admin => {
+          NotificationService.notify(admin.id, '✅ Interpreter Accepted Offer', `Job #${data.bookingId.substring(0, 8).toUpperCase()} has been confirmed by ${intName}. Ready for deployment.`, NotificationType.SUCCESS, `/admin/bookings/${data.bookingId}`);
         });
 
         // Email System - send BOOKED email to both client and interpreter
@@ -543,30 +489,54 @@ export const BookingService = {
 
       }
     } catch (e) {
-      const a = MOCK_ASSIGNMENTS.find(assign => assign.id === assignmentId);
-      if (a) {
-        a.status = AssignmentStatus.ACCEPTED;
-        const b = MOCK_BOOKINGS.find(book => book.id === a.bookingId);
-        const i = MOCK_INTERPRETERS.find(inter => inter.id === a.interpreterId);
-        if (b) {
-          b.status = BookingStatus.BOOKED;
-          b.interpreterId = a.interpreterId;
-          if (i) {
-            b.interpreterName = i.name;
-            b.interpreterPhotoUrl = i.photoUrl;
-          }
-        }
-        saveMockData();
-      }
+      console.error('Failed to accept offer', e);
+      throw e;
     }
   },
 
   declineOffer: async (assignmentId: string): Promise<void> => {
     try {
-      await updateDoc(doc(db, ASSIGNMENTS_COLLECTION, assignmentId), { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() });
+      const assignmentRef = doc(db, ASSIGNMENTS_COLLECTION, assignmentId);
+      const snap = await getDoc(assignmentRef);
+
+      await updateDoc(assignmentRef, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() });
+
+      if (snap.exists()) {
+        const assignment = snap.data() as BookingAssignment;
+
+        // BK-06: Check if ALL offers for this booking have now been declined
+        const remainingQ = query(
+          collection(db, ASSIGNMENTS_COLLECTION),
+          where('bookingId', '==', assignment.bookingId),
+          where('status', '==', AssignmentStatus.OFFERED)
+        );
+        const remainingSnap = await getDocs(remainingQ);
+
+        if (remainingSnap.empty) {
+          // No more open offers — revert booking to INCOMING so admin can re-allocate
+          await updateDoc(doc(db, COLLECTION_NAME, assignment.bookingId), {
+            status: BookingStatus.INCOMING,
+            interpreterId: null,
+            interpreterName: null,
+            updatedAt: serverTimestamp()
+          });
+
+          // Alert admins that re-assignment is needed
+          const admins = await getAdminUsers();
+          admins.forEach(admin => {
+            NotificationService.notify(
+              admin.id,
+              '⚠️ All Offers Declined',
+              `All interpreters declined booking ${assignment.bookingId.substring(0, 8).toUpperCase()}. Re-assignment required.`,
+              NotificationType.URGENT,
+              `/admin/bookings/${assignment.bookingId}`
+            );
+          });
+        }
+      }
     } catch (e) {
-      const a = MOCK_ASSIGNMENTS.find(assign => assign.id === assignmentId);
-      if (a) { a.status = AssignmentStatus.DECLINED; saveMockData(); }
+      console.error('Failed to decline offer', e);
+      throw e;
     }
   },
 
@@ -574,8 +544,8 @@ export const BookingService = {
     try {
       await updateDoc(doc(db, COLLECTION_NAME, bookingId), { clientId, updatedAt: serverTimestamp() });
     } catch (e) {
-      const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      if (b) { b.clientId = clientId; saveMockData(); }
+      console.error('Failed to link client to booking', e);
+      throw e;
     }
   },
 
@@ -601,14 +571,7 @@ export const BookingService = {
       if (count > 0) await batch.commit();
       return count;
     } catch (e) {
-      // Mock Fallback
-      MOCK_BOOKINGS.forEach(b => {
-        if (b.guestContact?.email === email && !b.clientId) {
-          b.clientId = clientId;
-          count++;
-        }
-      });
-      if (count > 0) saveMockData();
+      console.error('Failed to link orphaned bookings', e);
       return count;
     }
   },
@@ -625,20 +588,8 @@ export const BookingService = {
       // 2. Delete the booking from Firebase
       await deleteDoc(doc(db, COLLECTION_NAME, id));
     } catch (e) {
-      console.warn('Firebase deletion failed or not configured, relying on mock cleanup.', e);
-    }
-
-    // 3. Always check and remove from Mock data to avoid "stuck" example jobs
-    const index = MOCK_BOOKINGS.findIndex(b => b.id === id);
-    if (index > -1) {
-      MOCK_BOOKINGS.splice(index, 1);
-      // Also remove mock assignments
-      for (let i = MOCK_ASSIGNMENTS.length - 1; i >= 0; i--) {
-        if (MOCK_ASSIGNMENTS[i].bookingId === id) {
-          MOCK_ASSIGNMENTS.splice(i, 1);
-        }
-      }
-      saveMockData();
+      console.error('Firebase deletion failed', e);
+      throw e;
     }
   }
 };

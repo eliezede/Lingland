@@ -23,24 +23,40 @@ export const onTimesheetAdminApproved = functions.firestore
         return null;
       }
 
-      // 2. Fetch Rates (Simplified Logic)
-      // In production, query the 'rates' collection based on serviceType, client, etc.
-      const clientRateSnapshot = await db.collection('rates')
-        .where('rateType', '==', 'CLIENT')
-        .where('serviceType', '==', booking.serviceType)
-        .limit(1)
-        .get();
+      // 2. Fetch Client and Interpreter data
+      const clientDoc = await db.collection('clients').doc(newData.clientId).get();
+      const client = clientDoc.data() || {};
+      
+      const interpDoc = await db.collection('interpreters').doc(newData.interpreterId).get();
+      const interpreter = interpDoc.data() || {};
 
-      const interpreterRateSnapshot = await db.collection('rates')
-        .where('rateType', '==', 'INTERPRETER')
-        .where('serviceType', '==', booking.serviceType)
-        .limit(1)
-        .get();
+      // 3. Extract Rates for Interpreter
+      let sessionRate = 25; // Base fallback
+      let travelRate = 12; // Base fallback
+      let mileageRate = 0.45;
 
-      const clientRate = !clientRateSnapshot.empty ? clientRateSnapshot.docs[0].data() : { amountPerUnit: 40, minimumUnits: 1 };
-      const interpRate = !interpreterRateSnapshot.empty ? interpreterRateSnapshot.docs[0].data() : { amountPerUnit: 25, minimumUnits: 1 };
+      if (interpreter.rates) {
+        const rates = interpreter.rates;
+        const mode = newData.sessionMode || 'F2F';
+        const isOOH = booking.isOOH || false;
 
-      // 3. Calculate Units (Assuming Hourly for simplicity)
+        if (isOOH) {
+          if (mode === 'F2F') sessionRate = rates.oohF2F || sessionRate;
+          if (mode === 'VIDEO') sessionRate = rates.oohVideo || sessionRate;
+          if (mode === 'PHONE') sessionRate = rates.oohPhone || sessionRate;
+        } else {
+          if (mode === 'F2F') sessionRate = rates.f2fRate || sessionRate;
+          if (mode === 'VIDEO') sessionRate = rates.stVideo || sessionRate;
+          if (mode === 'PHONE') sessionRate = rates.stPhone || sessionRate;
+        }
+        travelRate = rates.travelTimeST || travelRate;
+        mileageRate = rates.mileageST || mileageRate;
+      }
+
+      // 4. Client Rate (Fallback)
+      const clientRate = { amountPerUnit: 40, minimumUnits: 1 }; // Default client rate, to evolve in future
+
+      // 5. Calculate Durations & Units
       const start = new Date(newData.actualStart);
       const end = new Date(newData.actualEnd);
       let durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
@@ -49,16 +65,20 @@ export const onTimesheetAdminApproved = functions.firestore
       if (newData.breakDurationMinutes) {
         durationHours -= (newData.breakDurationMinutes / 60);
       }
-      
       if (durationHours < 0) durationHours = 0;
 
       // Apply minimums
       const unitsClient = Math.max(durationHours, clientRate.minimumUnits || 1);
-      const unitsInterp = Math.max(durationHours, interpRate.minimumUnits || 1);
+      const unitsInterp = Math.max(durationHours, 1);
 
-      // 4. Calculate Totals
-      const clientAmount = unitsClient * clientRate.amountPerUnit;
-      const interpAmount = unitsInterp * interpRate.amountPerUnit;
+      // 6. Calculate Totals for Interpreter
+      const sessionEarnings = unitsInterp * sessionRate;
+      const travelEarnings = ((newData.travelTimeMinutes || 0) / 60) * travelRate;
+      const mileageEarnings = (newData.mileage || 0) * mileageRate;
+      const extras = (newData.parking || 0) + (newData.transport || 0);
+
+      const interpAmount = sessionEarnings + travelEarnings + mileageEarnings + extras;
+      const clientAmount = unitsClient * clientRate.amountPerUnit; // Oversimplified for now
 
       // 5. Update Timesheet
       return change.after.ref.update({
