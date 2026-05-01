@@ -111,16 +111,16 @@ export const LoginPage = () => {
           <div className="lg:hidden flex justify-center mb-6 text-blue-600">
             <Globe2 size={40} />
           </div>
-          <h2 className="mt-2 text-3xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="mt-2 text-4xl font-black text-slate-900 tracking-tight">
             Welcome back
           </h2>
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="mt-4 text-sm text-slate-600 font-medium">
             Don't have an account?{' '}
-            <Link to="/apply" className="font-bold text-blue-600 hover:text-blue-500 transition-colors">
+            <Link to="/apply" className="font-bold text-blue-600 hover:text-blue-500 transition-colors underline-offset-4 hover:underline">
               Apply as Interpreter
             </Link>
             {' or '}
-            <Link to="/request" className="font-bold text-blue-600 hover:text-blue-500 transition-colors">
+            <Link to="/request" className="font-bold text-blue-600 hover:text-blue-500 transition-colors underline-offset-4 hover:underline">
               Book as Guest
             </Link>
           </p>
@@ -137,11 +137,11 @@ export const LoginPage = () => {
               )}
 
               <div>
-                <label htmlFor="email" className="block text-sm font-bold text-slate-700 mb-2">
+                <label htmlFor="email" className="block text-xs font-black text-slate-900 uppercase tracking-widest mb-2">
                   Email address
                 </label>
                 <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-600 transition-colors">
                     <Mail size={18} />
                   </div>
                   <input
@@ -152,7 +152,7 @@ export const LoginPage = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="appearance-none block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm font-medium transition-all shadow-sm hover:border-slate-300"
+                    className="appearance-none block w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300"
                     placeholder="you@company.com"
                   />
                 </div>
@@ -160,13 +160,13 @@ export const LoginPage = () => {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label htmlFor="password" className="block text-sm font-bold text-slate-700">
+                  <label htmlFor="password" className="block text-xs font-black text-slate-900 uppercase tracking-widest">
                     Password
                   </label>
-                  <a href="#" className="text-sm font-bold text-blue-600 hover:text-blue-500">Forgot password?</a>
+                  <a href="#" className="text-xs font-bold text-blue-600 hover:text-blue-500 transition-colors">Forgot password?</a>
                 </div>
                 <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-600 transition-colors">
                     <Lock size={18} />
                   </div>
                   <input
@@ -177,7 +177,7 @@ export const LoginPage = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="appearance-none block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm font-medium transition-all shadow-sm hover:border-slate-300"
+                    className="appearance-none block w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300"
                     placeholder="••••••••"
                   />
                 </div>
