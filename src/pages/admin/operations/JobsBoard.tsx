@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Clock, Building2, Globe2, MapPin, Video, Eye, Pencil, Trash2, CheckCircle2, UserPlus, UserCircle2 } from 'lucide-react';
+import { Plus, Clock, Building2, Globe2, MapPin, Video, Eye, Pencil, Trash2, CheckCircle2, UserPlus, UserCircle2, ChevronDown, List, Search, LayoutGrid } from 'lucide-react';
 import { useBookings } from '../../../hooks/useBookings';
 import { useAuth } from '../../../context/AuthContext';
 import { useClients } from '../../../context/ClientContext';
@@ -35,6 +35,7 @@ export const JobsBoard = () => {
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [isBulkLoading, setIsBulkLoading] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     // Assignment States
     const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -44,6 +45,19 @@ export const JobsBoard = () => {
     // View Manager States
     const [isViewManagerOpen, setIsViewManagerOpen] = useState(false);
     const [editingViewId, setEditingViewId] = useState<string | null>(null);
+    const [isViewsMenuOpen, setIsViewsMenuOpen] = useState(false);
+    const [viewSearchQuery, setViewSearchQuery] = useState('');
+    const viewsMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (viewsMenuRef.current && !viewsMenuRef.current.contains(e.target as Node)) {
+                setIsViewsMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleRowClick = (job: Booking) => {
         setSelectedJob(job);
@@ -107,28 +121,49 @@ export const JobsBoard = () => {
     const columns = [
         {
             header: 'Date / Ref',
-            accessor: (job: Booking) => (
-                <div className="flex flex-col">
-                    <span className="font-bold text-slate-900 dark:text-white">
-                        {new Date(job.date).toLocaleDateString([], { day: '2-digit', month: 'short' })}
-                    </span>
-                    <span className="text-[10px] text-blue-600 font-bold">{job.startTime}</span>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-tighter">Ref: {job.bookingRef || 'TBD'}</span>
-                </div>
-            )
+            accessor: (job: Booking) => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const jobDate = new Date(job.date);
+                jobDate.setHours(0, 0, 0, 0);
+                
+                const isOverdue = jobDate < today && !['PAID', 'CANCELLED', 'INVOICED', 'TIMESHEET_SUBMITTED', 'READY_FOR_INVOICE'].includes(job.status);
+                const isToday = jobDate.getTime() === today.getTime();
+                const isTomorrow = jobDate.getTime() === today.getTime() + 86400000;
+                
+                return (
+                    <div className="flex items-center gap-3">
+                        {(isOverdue || isToday || isTomorrow) && (
+                            <div className={`w-1 h-8 rounded-full ${isOverdue ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : isToday ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-blue-500'}`} />
+                        )}
+                        <div className="flex flex-col">
+                            <span className="font-bold text-slate-900 dark:text-white">
+                                {new Date(job.date).toLocaleDateString([], { day: '2-digit', month: 'short' })}
+                            </span>
+                            <span className="text-[10px] text-blue-600 font-bold">{job.startTime} {job.durationMinutes ? `(${job.durationMinutes}m)` : ''}</span>
+                            <span className="text-[10px] text-slate-400 uppercase tracking-tighter">Ref: {job.bookingRef || 'TBD'}</span>
+                        </div>
+                    </div>
+                );
+            }
         },
         {
             header: 'Client',
             accessor: (job: Booking) => (
                 <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-500">
+                    <div className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-500 shrink-0">
                         <Building2 size={14} />
                     </div>
-                    <div className="flex flex-col">
-                        <span className="font-bold text-slate-900 dark:text-white truncate max-w-[180px]">
+                    <div className="flex flex-col min-w-0">
+                        <span 
+                            className="font-bold text-slate-900 dark:text-white truncate max-w-[180px]"
+                            title={getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName)}
+                        >
                             {getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName)}
                         </span>
-                        <span className="text-[10px] text-slate-500 uppercase">{job.guestContact?.name || 'Contact'}</span>
+                        <span className="text-[10px] text-slate-500 uppercase truncate" title={job.guestContact?.name || 'Contact'}>
+                            {job.guestContact?.name || 'Contact'}
+                        </span>
                     </div>
                 </div>
             )
@@ -138,12 +173,25 @@ export const JobsBoard = () => {
             accessor: (job: Booking) => (
                 <div className="flex flex-col">
                     <div className="flex items-center text-xs font-bold text-slate-800 dark:text-slate-200">
-                        <Globe2 size={12} className="mr-1.5 text-blue-500" />
-                        {job.languageFrom} → {job.languageTo}
+                        <Globe2 size={12} className="mr-1.5 text-blue-500 shrink-0" />
+                        <span className="truncate max-w-[140px]">{job.languageFrom} → {job.languageTo}</span>
                     </div>
                     <div className="flex items-center text-[10px] text-slate-500 mt-1 uppercase font-medium">
-                        {job.locationType === 'ONLINE' ? <Video size={10} className="mr-1 text-indigo-500" /> : <MapPin size={10} className="mr-1 text-red-500" />}
                         {job.serviceType}
+                    </div>
+                </div>
+            )
+        },
+        {
+            header: 'Location / Area',
+            accessor: (job: Booking) => (
+                <div className="flex flex-col">
+                    <div className="flex items-center text-xs font-bold text-slate-800 dark:text-slate-200">
+                        {job.locationType === 'ONLINE' ? <Video size={12} className="mr-1.5 text-indigo-500 shrink-0" /> : <MapPin size={12} className="mr-1.5 text-red-500 shrink-0" />}
+                        <span className="truncate max-w-[120px]">{job.locationType === 'ONLINE' ? 'Remote / Online' : (job.postcode || 'TBD')}</span>
+                    </div>
+                    <div className="flex items-center text-[10px] text-slate-500 mt-1 uppercase font-medium">
+                        {job.locationType === 'ONLINE' ? 'Virtual' : 'On-Site'}
                     </div>
                 </div>
             )
@@ -185,79 +233,134 @@ export const JobsBoard = () => {
         }
     ];
 
-    const filteredBookings = filterBookings(bookings, activeView);
+    const searchFilteredBookings = bookings.filter(b => {
+        if (!searchQuery) return true;
+        const query = searchQuery.toLowerCase();
+        return (
+            b.bookingRef?.toLowerCase().includes(query) ||
+            b.clientName?.toLowerCase().includes(query) ||
+            b.guestContact?.organisation?.toLowerCase().includes(query) ||
+            b.languageTo?.toLowerCase().includes(query) ||
+            b.interpreterName?.toLowerCase().includes(query) ||
+            b.postcode?.toLowerCase().includes(query)
+        );
+    });
+
+    const filteredBookings = filterBookings(searchFilteredBookings, activeView);
     const groupedBookings = groupBookings(filteredBookings, activeView.groupBy);
     const groupKeys = Object.keys(groupedBookings);
 
     return (
         <div className="space-y-6">
             <PageHeader title="Jobs Board" subtitle="Operational request management">
-                <div className="flex items-center space-x-2 mr-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 rounded-xl shadow-sm">
-                    {views.map(view => (
-                        <div key={view.id} className="relative group/view">
-                            <button
-                                onClick={() => setActiveViewId(view.id)}
-                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeView.id === view.id
-                                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
-                                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                    }`}
-                            >
-                                {view.name}
-                                {activeView.id === view.id && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditingViewId(view.id);
-                                            setIsViewManagerOpen(true);
-                                        }}
-                                        className="p-0.5 hover:bg-slate-700 dark:hover:bg-slate-200 rounded transition-colors"
+                <div className="flex items-center gap-2 mr-4">
+                    <div className="relative" ref={viewsMenuRef}>
+                        <button 
+                            onClick={() => setIsViewsMenuOpen(!isViewsMenuOpen)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white rounded-xl hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors shadow-sm h-10"
+                        >
+                            <LayoutGrid size={16} className="opacity-70" />
+                            <span className="text-[11px] font-black uppercase tracking-wider">{activeView?.name || 'All Bookings'}</span>
+                            <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[9px] bg-white/20 dark:bg-black/20 text-white dark:text-slate-900 font-bold`}>
+                                {filterBookings(searchFilteredBookings, activeView).length}
+                            </span>
+                            <ChevronDown size={14} className={`opacity-70 transition-transform ${isViewsMenuOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                        
+                        {isViewsMenuOpen && (
+                            <div className="absolute top-full left-0 mt-2 w-72 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+                                    <button 
+                                        onClick={() => { setEditingViewId(null); setIsViewManagerOpen(true); setIsViewsMenuOpen(false); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
                                     >
-                                        <Settings size={10} />
+                                        <Plus size={14} className="text-slate-400" /> Create new view...
                                     </button>
-                                )}
-                            </button>
-                        </div>
-                    ))}
-                    <button
-                        onClick={() => {
-                            setEditingViewId(null);
-                            setIsViewManagerOpen(true);
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
-                        title="Create New View"
-                    >
-                        <PlusIcon size={14} />
-                    </button>
+                                </div>
+                                <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+                                    <div className="relative">
+                                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Find a view" 
+                                            value={viewSearchQuery}
+                                            onChange={(e) => setViewSearchQuery(e.target.value)}
+                                            className="w-full pl-9 pr-8 py-2 text-xs border-none bg-slate-50 dark:bg-slate-800/50 rounded-lg focus:ring-0 outline-none text-slate-700 dark:text-slate-300 placeholder:text-slate-400"
+                                            autoFocus
+                                        />
+                                        <button className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                                            <Settings size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="max-h-64 overflow-y-auto p-2 space-y-0.5 scrollbar-thin">
+                                    {views.filter(v => v.name.toLowerCase().includes(viewSearchQuery.toLowerCase())).map(view => {
+                                        const count = filterBookings(searchFilteredBookings, view).length;
+                                        return (
+                                            <div key={view.id} className="relative group flex items-center">
+                                                <button
+                                                    onClick={() => { setActiveViewId(view.id); setIsViewsMenuOpen(false); }}
+                                                    className={`flex-1 flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${activeView.id === view.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'}`}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <LayoutGrid size={14} className={activeView.id === view.id ? "text-blue-500" : "text-slate-400"} />
+                                                        <span className="text-xs font-bold">{view.name}</span>
+                                                    </div>
+                                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${activeView.id === view.id ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>{count}</span>
+                                                </button>
+                                                {activeView.id === view.id && (
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setEditingViewId(view.id); setIsViewManagerOpen(true); setIsViewsMenuOpen(false); }}
+                                                        className={`absolute right-12 p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/30 opacity-0 group-hover:opacity-100 transition-all ${activeView.id === view.id ? 'opacity-100' : ''}`}
+                                                    >
+                                                        <Settings size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                    {views.filter(v => v.name.toLowerCase().includes(viewSearchQuery.toLowerCase())).length === 0 && (
+                                        <div className="py-4 text-center text-xs text-slate-400">
+                                            No views found.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
-                <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">Create Booking</Button>
+                
+                <div className="relative mr-4 shrink-0">
+                    <input
+                        type="text"
+                        placeholder="Search bookings..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-48 lg:w-64 pl-9 pr-4 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                    />
+                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+
+                <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm" className="shrink-0">Create Booking</Button>
             </PageHeader>
 
             {groupKeys.length > 1 || (groupKeys.length === 1 && groupKeys[0] !== 'All Jobs') ? (
-                <div className="space-y-12">
-                    {groupKeys.map(groupKey => (
-                        <div key={groupKey} className="space-y-4">
-                            <div className="flex items-center gap-3 px-2">
-                                <div className="h-8 w-1.5 bg-blue-600 rounded-full shadow-[0_0_10px_rgba(37,99,235,0.4)]" />
-                                <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-[0.2em]">
-                                    {groupKey}
-                                    <span className="ml-3 text-[10px] text-slate-400 font-bold bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
-                                        {groupedBookings[groupKey].length} jobs
-                                    </span>
-                                </h2>
-                            </div>
-                            <Table
-                                data={groupedBookings[groupKey]}
-                                columns={columns}
-                                selectable
-                                selectedIds={selectedIds}
-                                onSelectionChange={setSelectedIds}
-                                onRowClick={handleRowClick}
-                                renderContextMenu={renderContextMenu}
-                                isLoading={loading}
-                            />
-                        </div>
-                    ))}
-                </div>
+                <Table
+                    groups={groupKeys.map(key => ({
+                        key,
+                        items: groupedBookings[key]
+                    }))}
+                    columns={columns}
+                    selectable
+                    selectedIds={selectedIds}
+                    onSelectionChange={setSelectedIds}
+                    onRowClick={handleRowClick}
+                    renderContextMenu={renderContextMenu}
+                    isLoading={loading}
+                    defaultGroupsCollapsed={false}
+                />
             ) : (
                 <Table
                     data={filteredBookings}

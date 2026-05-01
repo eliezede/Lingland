@@ -18,7 +18,8 @@ export const SYSTEM_VIEWS: BookingView[] = [
         icon: 'table',
         isSystem: true,
         filters: {},
-        sortBy: 'status' // Requires custom client-side sort logic to sort by status then date
+        sortBy: 'status', // Requires custom client-side sort logic to sort by status then date
+        groupBy: 'status'
     },
     {
         id: 'sys-date-time',
@@ -26,7 +27,8 @@ export const SYSTEM_VIEWS: BookingView[] = [
         icon: 'table',
         isSystem: true,
         filters: {},
-        sortBy: 'dateAsc'
+        sortBy: 'dateAsc',
+        groupBy: 'date'
     },
     {
         id: 'sys-unassigned',
@@ -64,10 +66,16 @@ export function useBookingViews(userId: string) {
             const stored = localStorage.getItem(storageKey);
             if (stored) {
                 const storedViews = JSON.parse(stored) as BookingView[];
-                // Merge saved system views with default system views to preserve edits
                 const mergedSystemViews = SYSTEM_VIEWS.map(sv => {
                     const existing = storedViews.find(v => v.id === sv.id);
-                    return existing || sv;
+                    if (existing) {
+                        return {
+                            ...sv,
+                            ...existing,
+                            groupBy: existing.groupBy || sv.groupBy // Apply default system groupBy if user hasn't explicitly set one
+                        };
+                    }
+                    return sv;
                 });
                 const customViews = storedViews.filter(v => !v.isSystem);
                 setViews([...mergedSystemViews, ...customViews]);

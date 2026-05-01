@@ -444,7 +444,7 @@ export const AdminNewBooking = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div>
-                                <label className={labelClasses}>Language Category</label>
+                                <label className={labelClasses}>Service Type</label>
                                 <select
                                     id="serviceType"
                                     name="serviceType"
@@ -458,7 +458,7 @@ export const AdminNewBooking = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className={labelClasses}>Target Language</label>
+                                <label className={labelClasses}>Target Language <span className="text-red-500 ml-1">*</span></label>
                                 <select
                                     required
                                     id="languageTo"
@@ -475,7 +475,7 @@ export const AdminNewBooking = () => {
                             </div>
 
                             <div>
-                                <label className={labelClasses}>Date of Service</label>
+                                <label className={labelClasses}>Date of Service <span className="text-red-500 ml-1">*</span></label>
                                 <div className="relative">
                                     <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                     <input
@@ -493,7 +493,7 @@ export const AdminNewBooking = () => {
                              <div className={isTranslation ? 'hidden' : ''}>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className={labelClasses}>Time</label>
+                                        <label className={labelClasses}>Time {!isTranslation && <span className="text-red-500 ml-1">*</span>}</label>
                                         <input
                                             type="time"
                                             required={!isTranslation}
@@ -505,7 +505,7 @@ export const AdminNewBooking = () => {
                                         />
                                     </div>
                                     <div>
-                                        <label className={labelClasses}>Dur. (min)</label>
+                                        <label className={labelClasses}>Duration (minutes) {!isTranslation && <span className="text-red-500 ml-1">*</span>}</label>
                                         <input
                                             type="number"
                                             required={!isTranslation}
@@ -833,24 +833,26 @@ export const AdminNewBooking = () => {
                     </Card>
 
                     {/* Submit Action */}
-                    <div className="pt-4">
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full h-20 bg-blue-600 text-white rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[12px] shadow-2xl shadow-blue-200 dark:shadow-none hover:bg-blue-700 hover:-translate-y-1 transition-all active:scale-95 flex items-center justify-center gap-4 group"
-                        >
-                            {loading ? (
-                                <div className="w-6 h-6 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-                            ) : (
-                                <>
-                                    <Save size={20} className="group-hover:scale-110 transition-transform" />
-                                    {isEditMode ? 'Save Changes' : 'Publish Booking'}
-                                </>
-                            )}
-                        </button>
-                        <p className="text-center mt-6 text-[9px] font-black text-slate-300 dark:text-slate-700 uppercase tracking-[0.3em]">
-                            Validated Secure Submission • Lingland V3
-                        </p>
+                    <div className="pt-4 pb-24 lg:pb-4 sticky bottom-4 z-40 lg:static">
+                        <div className="bg-slate-50/80 dark:bg-slate-950/80 lg:bg-transparent backdrop-blur-md lg:backdrop-blur-none p-4 -mx-4 lg:p-0 lg:mx-0 rounded-3xl lg:rounded-none shadow-[0_-10px_40px_-10px_rgba(0,0,0,0.1)] lg:shadow-none border border-slate-200/50 dark:border-slate-800/50 lg:border-transparent">
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full h-16 lg:h-20 bg-blue-600 text-white rounded-2xl lg:rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[12px] shadow-2xl shadow-blue-200 dark:shadow-none hover:bg-blue-700 hover:-translate-y-1 transition-all active:scale-95 flex items-center justify-center gap-4 group"
+                            >
+                                {loading ? (
+                                    <div className="w-6 h-6 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+                                ) : (
+                                    <>
+                                        <Save size={20} className="group-hover:scale-110 transition-transform" />
+                                        {isEditMode ? 'Save Changes' : 'Publish Booking'}
+                                    </>
+                                )}
+                            </button>
+                            <p className="text-center mt-4 lg:mt-6 text-[9px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.3em]">
+                                Validated Secure Submission • Lingland V3
+                            </p>
+                        </div>
                     </div>
                 </div>
             </form>

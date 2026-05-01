@@ -77,5 +77,22 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow read: if isAdmin();
     }
+
+    match /staff_profiles/{profileId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    match /departments/{deptId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /jobTitles/{jobId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
   }
 }

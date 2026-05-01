@@ -58,6 +58,17 @@ export const StaffOnboarding = () => {
         }
       } catch (err) {
         showToast('Error loading profile', 'error');
+        // Fallback to skeleton so inputs don't freeze if there's an error (e.g., permission denied)
+        setProfile({
+          id: '', 
+          userId: user.id,
+          jobTitleId: '',
+          departmentId: '',
+          preferences: { theme: 'system', language: 'en', notifications: true },
+          onboardingCompleted: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as StaffProfile);
       } finally {
         setLoading(false);
       }
@@ -66,9 +77,13 @@ export const StaffOnboarding = () => {
   }, [user, navigate]);
 
   const handleUpdate = (field: string, value: any) => {
+    console.log('handleUpdate called:', field, value);
     setProfile(prev => {
+      console.log('Previous profile:', prev);
       if (!prev) return null;
-      return { ...prev, [field]: value };
+      const next = { ...prev, [field]: value };
+      console.log('Next profile:', next);
+      return next;
     });
   };
 
@@ -256,7 +271,7 @@ export const StaffOnboarding = () => {
                 <div>
                   <label htmlFor="phone" className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Phone Number</label>
                   <div className="relative">
-                    <Phone className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                    <Phone className="absolute left-4 top-3.5 text-slate-400 pointer-events-none" size={18} />
                     <input 
                       type="tel"
                       id="phone"
@@ -272,7 +287,7 @@ export const StaffOnboarding = () => {
                 <div>
                   <label htmlFor="dob" className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Date of Birth</label>
                   <div className="relative">
-                    <Calendar className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                    <Calendar className="absolute left-4 top-3.5 text-slate-400 pointer-events-none" size={18} />
                     <input 
                       type="date"
                       id="dob"
@@ -350,7 +365,7 @@ export const StaffOnboarding = () => {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3 mb-3">
                     <input 
                       id="town"
                       name="town"
@@ -361,6 +376,18 @@ export const StaffOnboarding = () => {
                       value={profile?.address?.town || ''}
                       onChange={e => handleAddressUpdate('town', e.target.value)}
                     />
+                    <input 
+                      id="county"
+                      name="county"
+                      autoComplete="address-level1"
+                      aria-label="County"
+                      placeholder="County"
+                      className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                      value={profile?.address?.county || ''}
+                      onChange={e => handleAddressUpdate('county', e.target.value)}
+                    />
+                  </div>
+                  <div>
                     <input 
                       id="postcode"
                       name="postcode"

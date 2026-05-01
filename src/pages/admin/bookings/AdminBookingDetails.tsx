@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ChevronLeft, Clock, MapPin, Globe, Phone, Mail, Building, 
@@ -7,6 +7,7 @@ import {
   Edit2, Trash2, Send, Download, MessageSquare, Briefcase, Languages
 } from 'lucide-react';
 import { BookingService } from '../../../services/bookingService';
+import { Booking } from '../../../types';
 import { BillingService } from '../../../services/billingService';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { ApplicationService } from '../../../services/applicationService';
@@ -36,19 +37,46 @@ export const AdminBookingDetails = () => {
   const { openThread } = useChat();
   const { clientsMap, getClientCompany } = useClients();
 
-  const [booking, setBooking] = useState<any>(null);
+  const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAllocationDrawerOpen, setIsAllocationDrawerOpen] = useState(false);
   const [selectedInterpreterId, setSelectedInterpreterId] = useState<string | null>(null);
   const [isInterpreterPreviewOpen, setIsInterpreterPreviewOpen] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (id) {
       loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
     }
   }, [id]);
+
+  // Close actions menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setIsActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Safe date formatter for Firestore Timestamps and ISO strings
+  const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string => {
+    if (!value) return 'N/A';
+    try {
+      const date = value?.toDate ? value.toDate() : new Date(value);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleDateString('en-GB', options || { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      return 'N/A';
+    }
+  };
 
   const loadBooking = async () => {
     try {
@@ -154,7 +182,7 @@ export const AdminBookingDetails = () => {
               <div className="flex items-center gap-4 mt-1">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter">
                   <Clock size={14} />
-                  Created {new Date(booking.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  Created {formatDate(booking.createdAt)}
                 </div>
                 <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter border-l border-slate-200 dark:border-slate-800 pl-4 transition-colors">
                   <ShieldCheck size={14} />
@@ -182,29 +210,32 @@ export const AdminBookingDetails = () => {
             >
               Edit Booking
             </Button>
-            <div className="relative group">
+            <div className="relative" ref={actionsRef}>
               <Button 
                 variant="primary" 
                 icon={MoreVertical}
                 className="h-11 shadow-lg shadow-blue-500/20"
+                onClick={() => setIsActionsOpen(!isActionsOpen)}
               />
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl opacity-0 translate-y-2 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto transition-all z-50 overflow-hidden">
-                <button 
-                  onClick={() => handleStatusChange('CANCELLED')}
-                  className="w-full px-4 py-3 text-left text-xs font-bold text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors flex items-center gap-2"
-                >
-                  <Trash2 size={14} />
-                  Cancel Booking
-                </button>
-                <div className="h-px bg-slate-100 dark:bg-slate-800" />
-                <button 
-                  onClick={() => handleStatusChange('TIMESHEET_SUBMITTED')}
-                  className="w-full px-4 py-3 text-left text-xs font-bold text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors flex items-center gap-2"
-                >
-                  <CheckCircle2 size={14} />
-                  Mark as Done
-                </button>
-              </div>
+              {isActionsOpen && (
+                <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                  <button 
+                    onClick={() => { handleStatusChange('CANCELLED'); setIsActionsOpen(false); }}
+                    className="w-full px-4 py-3 text-left text-xs font-bold text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 size={14} />
+                    Cancel Booking
+                  </button>
+                  <div className="h-px bg-slate-100 dark:bg-slate-800" />
+                  <button 
+                    onClick={() => { handleStatusChange('TIMESHEET_SUBMITTED'); setIsActionsOpen(false); }}
+                    className="w-full px-4 py-3 text-left text-xs font-bold text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors flex items-center gap-2"
+                  >
+                    <CheckCircle2 size={14} />
+                    Mark as Done
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -237,11 +268,11 @@ export const AdminBookingDetails = () => {
                           </div>
                           <div>
                             <p className="text-lg font-black text-slate-900 dark:text-white leading-none">
-                              {new Date(booking.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                              {formatDate(booking.date, { day: 'numeric', month: 'long', year: 'numeric' })}
                             </p>
                             <p className="text-sm font-bold text-blue-600 dark:text-blue-400 mt-1 uppercase">
-                              {booking.startTime} - {booking.endTime} 
-                              <span className="text-slate-400 dark:text-slate-500 ml-2 font-black italic">({Math.round(((new Date(`2000-01-01 ${booking.endTime}`).getTime() - new Date(`2000-01-01 ${booking.startTime}`).getTime()) / 60000))} Mins)</span>
+                              {booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}
+                              <span className="text-slate-400 dark:text-slate-500 ml-2 font-black italic">({booking.durationMinutes || '—'} Mins)</span>
                             </p>
                           </div>
                         </div>
@@ -279,12 +310,24 @@ export const AdminBookingDetails = () => {
                         </div>
                         <div className="flex-1">
                           <p className="text-sm font-bold text-slate-900 dark:text-white leading-relaxed">
-                            {booking.address}, {booking.postcode}
+                            {[booking.address, booking.postcode].filter(Boolean).join(', ') || 'No address provided'}
                           </p>
                           <div className="mt-3 flex items-center gap-2">
-                             <button className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter hover:underline flex items-center gap-1">
-                               View on Map <ArrowUpRight size={12} />
-                             </button>
+                             {(booking.lat && booking.lng) ? (
+                               <button 
+                                 onClick={() => window.open(`https://www.google.com/maps?q=${booking.lat},${booking.lng}`, '_blank')}
+                                 className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter hover:underline flex items-center gap-1"
+                               >
+                                 View on Map <ArrowUpRight size={12} />
+                               </button>
+                             ) : booking.postcode ? (
+                               <button 
+                                 onClick={() => window.open(`https://www.google.com/maps?q=${encodeURIComponent(booking.postcode)}`, '_blank')}
+                                 className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter hover:underline flex items-center gap-1"
+                               >
+                                 View on Map <ArrowUpRight size={12} />
+                               </button>
+                             ) : null}
                              {booking.location?.meetingLink && (
                                <a href={booking.location.meetingLink} target="_blank" rel="noreferrer" className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-tighter hover:underline flex items-center gap-1 pl-3 border-l border-slate-200 dark:border-slate-800 transition-colors">
                                  Join Meeting <Globe size={12} />
@@ -301,13 +344,7 @@ export const AdminBookingDetails = () => {
                              zoom={12}
                              height="250px"
                              markers={[
-                               { lat: booking.lat, lng: booking.lng, label: 'Job Location', color: '#ef4444' },
-                               ...(booking.interpreterId ? [{ 
-                                 lat: booking.lat + 0.01, // Mocking proximity for demo if interp doesn't have real coords yet
-                                 lng: booking.lng + 0.01, 
-                                 label: booking.interpreterName || 'Interpreter',
-                                 color: '#3b82f6' 
-                               }] : [])
+                               { lat: booking.lat!, lng: booking.lng!, label: 'Job Location', color: '#ef4444' }
                              ]}
                            />
                         </div>
@@ -488,17 +525,17 @@ export const AdminBookingDetails = () => {
                     <div className="space-y-6">
                        <div className="flex justify-between items-end border-b border-white/5 pb-4 transition-colors">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Base Payout</p>
-                          <p className="text-2xl font-black">£{booking.amount?.toFixed(2) || '0.00'}</p>
+                          <p className="text-2xl font-black">£{(booking.totalAmount ?? 0).toFixed(2)}</p>
                        </div>
                        
                        <div className="grid grid-cols-2 gap-4">
                           <div className="p-4 bg-white/5 rounded-2xl border border-white/5 transition-colors">
-                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Tax Estimate</p>
-                            <p className="text-sm font-black text-slate-100">£{(booking.amount * 0.2).toFixed(2) || '0.00'}</p>
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Tax Estimate (20%)</p>
+                            <p className="text-sm font-black text-slate-100">£{((booking.totalAmount ?? 0) * 0.2).toFixed(2)}</p>
                           </div>
                           <div className="p-4 bg-white/5 rounded-2xl border border-white/5 transition-colors">
-                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Profit Yield</p>
-                            <p className="text-sm font-black text-emerald-400">+ £{(booking.amount * 0.45).toFixed(2) || '0.00'}</p>
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Margin (45%)</p>
+                            <p className="text-sm font-black text-emerald-400">+ £{((booking.totalAmount ?? 0) * 0.45).toFixed(2)}</p>
                           </div>
                        </div>
                     </div>
@@ -526,10 +563,9 @@ export const AdminBookingDetails = () => {
                 </div>
                 <div className="p-6">
                    <ActivityTimeline 
-                     events={[
+                     events={auditEvents.length > 0 ? auditEvents : [
                        { id: '1', type: 'BOOKING_CREATED', createdAt: booking.createdAt, description: 'Booking provisioned in the system.' },
-                       { id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: 'Interpreter confirmed by system logic.' },
-                       { id: '3', type: 'DEPLOYMENT_LIVE', createdAt: booking.date, description: 'On-site session started as scheduled.' }
+                       ...(booking.interpreterId ? [{ id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: `${booking.interpreterName || 'Interpreter'} assigned to this booking.` }] : []),
                      ]}
                    />
                    
