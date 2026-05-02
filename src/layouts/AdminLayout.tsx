@@ -294,6 +294,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   {!isSecondarySlim && <div className="sidebar-group-label">System</div>}
                   <NavItem to="/admin/users" icon={UserCog} label="Users & Roles" active={isActive('/admin/users')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/settings" icon={Settings} label="System Config" active={location.pathname === '/admin/settings'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/administration/migration" icon={Database} label="Airtable Migration" active={isActive('/admin/administration/migration')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/system/audit-log" icon={History} label="Audit Logs" active={isActive('/admin/system/audit-log')} isCollapsed={isSecondarySlim} />
                 </div>
               )}

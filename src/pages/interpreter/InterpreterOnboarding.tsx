@@ -179,8 +179,10 @@ export const InterpreterOnboarding = () => {
 
   const updateLanguageProficiency = (index: number, field: keyof LanguageProficiency, value: any) => {
     const profs = [...(formData.languageProficiencies || [])];
-    if (profs[index].language === 'English' && (field === 'language')) return; // Cannot change English name
-    profs[index] = { ...profs[index], [field]: value };
+    if (profs[index].language === 'English' && (field === 'language')) return; 
+    
+    // Default L1 to 18 (lowest priority)
+    profs[index] = { ...profs[index], [field]: value, l1: 18 };
     handleUpdate('languageProficiencies', profs);
   };
 
@@ -359,14 +361,14 @@ export const InterpreterOnboarding = () => {
               </div>
             )}
 
-            {/* STEP 2: Languages & Proficiency */}
+            {/* STEP 2: Language Selection */}
             {step === 2 && (
               <div className="animate-in slide-in-from-right-8 duration-500 space-y-8">
                 <div className="flex items-center gap-3 pb-2 border-b border-slate-50">
                   <Languages className="text-blue-500" size={20} />
                   <div>
-                    <h2 className="text-lg font-bold text-slate-800">Language Proficiency</h2>
-                    <p className="text-xs text-slate-500">English is required as your primary interface language.</p>
+                    <h2 className="text-lg font-bold text-slate-800">Language Selection</h2>
+                    <p className="text-xs text-slate-500">Select all the languages you speak fluently to/from English.</p>
                   </div>
                 </div>
 
@@ -376,14 +378,13 @@ export const InterpreterOnboarding = () => {
                       <Info size={20} />
                     </div>
                     <div className="text-[11px] text-blue-800 leading-relaxed font-medium">
-                      <p className="mb-2"><strong>Fluency Priority (L1):</strong> Set to <strong>1</strong> for your native or strongest language. High numbers (up to 15) indicate lower priority.</p>
-                      <p><strong>Written Translation:</strong> Rates your priority for translation tasks (T1 is highest). Select <strong>'None'</strong> if you only provide interpreting.</p>
+                      <p className="mb-2"><strong>Expertise Review:</strong> Our team will review your qualifications and assign a call priority level (L1) based on your background.</p>
+                      <p><strong>Written Translation:</strong> Select <strong>'T1'</strong> if you also provide written translation services, or <strong>'None'</strong> if you only provide interpreting.</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-12 gap-4 px-2 hidden md:grid mb-2">
-                    <div className="col-span-12 md:col-span-5 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-5">Language Pair</div>
-                    <div className="col-span-12 md:col-span-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Fluency (L1)</div>
+                    <div className="col-span-12 md:col-span-8 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-5">Language Pair</div>
                     <div className="col-span-12 md:col-span-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Translation</div>
                     <div className="col-span-12 md:col-span-1"></div>
                   </div>
@@ -391,7 +392,7 @@ export const InterpreterOnboarding = () => {
                   <div className="space-y-3">
                     {formData.languageProficiencies?.map((prof, idx) => (
                       <div key={idx} className={`grid grid-cols-1 md:grid-cols-12 gap-4 p-5 rounded-[2rem] border-2 transition-all ${prof.language === 'English' ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-100 hover:border-blue-100'}`}>
-                        <div className="col-span-12 md:col-span-5 self-center">
+                        <div className="col-span-12 md:col-span-8 self-center">
                           <label className={labelClasses + " md:hidden"}>Language</label>
                           <select 
                             disabled={prof.language === 'English'}
@@ -407,29 +408,15 @@ export const InterpreterOnboarding = () => {
                           </select>
                         </div>
                         
-                        <div className="col-span-6 md:col-span-3">
-                          <label className={labelClasses + " md:hidden text-center"}>L1 Priority</label>
-                          <input 
-                            type="number" 
-                            min="1" 
-                            max="15"
-                            className={inputClasses + " text-center"}
-                            value={prof.l1}
-                            onChange={e => updateLanguageProficiency(idx, 'l1', parseInt(e.target.value))}
-                          />
-                        </div>
-
-                        <div className="col-span-6 md:col-span-3">
-                          <label className={labelClasses + " md:hidden text-center"}>Trans. Order</label>
+                        <div className="col-span-12 md:col-span-3">
+                          <label className={labelClasses + " md:hidden text-center"}>Written Translation?</label>
                           <select 
                             className={inputClasses}
                             value={prof.translateOrder}
                             onChange={e => updateLanguageProficiency(idx, 'translateOrder', e.target.value)}
                           >
-                            <option value="no">None</option>
-                            {['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map(t => (
-                              <option key={t} value={t}>{t}</option>
-                            ))}
+                            <option value="no">Interpreting Only</option>
+                            <option value="T1">Yes (Translating Too)</option>
                           </select>
                         </div>
 

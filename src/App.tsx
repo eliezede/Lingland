@@ -30,6 +30,7 @@ import WhyUsPage from './pages/public/WhyUsPage';
 import InterpretersPage from './pages/public/InterpretersPage';
 import { TermsPage } from './pages/public/TermsPage';
 import { StaffSetup } from './pages/public/StaffSetup';
+import { ActivateAccount } from './pages/public/ActivateAccount';
 
 // Admin Pages
 import { JobsBoard } from './pages/admin/operations/JobsBoard';
@@ -61,6 +62,7 @@ import { AdminEmailTemplates } from './pages/admin/settings/AdminEmailTemplates'
 import { AdminApplications } from './pages/admin/AdminApplications';
 import { AdminMessages } from './pages/admin/AdminMessages';
 import { StaffOnboarding } from './pages/admin/StaffOnboarding';
+import { AdminMigration } from './pages/admin/AdminMigration';
 
 // Interpreter Pages
 import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
@@ -121,7 +123,8 @@ const App = () => {
                       <Route path="/why-us" element={<WhyUsPage />} />
                       <Route path="/interpreters" element={<InterpretersPage />} />
                       <Route path="/terms" element={<TermsPage />} />
-                      <Route path="/setup" element={<StaffSetup />} />
+                       <Route path="/setup" element={<StaffSetup />} />
+                       <Route path="/activate" element={<ActivateAccount />} />
 
                       {/* Interpreter Section */}
                       <Route path="/interpreter/*" element={
@@ -198,6 +201,7 @@ const App = () => {
                               <Route path="billing/interpreter-invoices" element={<AdminInterpreterInvoicesPage />} />
                                <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
                                <Route path="onboarding" element={<StaffOnboarding />} />
+                               <Route path="administration/migration" element={<AdminMigration />} />
                                <Route path="*" element={<NotFound />} />
                             </Routes>
                           </AdminLayout>

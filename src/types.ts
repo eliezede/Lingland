@@ -36,7 +36,7 @@ export interface User {
   email: string;
   role: UserRole;
   photoUrl?: string;
-  status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  status: 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'IMPORTED';
   profileId?: string;
   staffProfileId?: string;
   createdAt?: string;
@@ -267,7 +267,8 @@ export interface Interpreter extends TenantScopedEntity {
   languageProficiencies: LanguageProficiency[];
   
   // Status & Activity
-  status: 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE' | 'UNRELIABLE' | 'ONLY_TRANSL' | 'APPLICANT' | 'ONBOARDING' | 'SUSPENDED' | 'BLOCKED';
+  status: 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE' | 'UNRELIABLE' | 'ONLY_TRANSL' | 'APPLICANT' | 'ONBOARDING' | 'SUSPENDED' | 'BLOCKED' | 'IMPORTED';
+  activationEmailSentAt?: string;
   keyInterpreter: boolean;
   nhsLevel?: 'Level 1' | 'Level 2' | 'Level 3';
 

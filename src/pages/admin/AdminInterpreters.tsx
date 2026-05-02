@@ -21,7 +21,7 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import {
   Search, MapPin, Languages, ShieldCheck, Check, MessageSquare,
-  AlertCircle, Trash2, Calendar, Mail, ExternalLink, UserCircle2, ChevronRight, Users, User, Clock
+  AlertCircle, Trash2, Calendar, Mail, Phone, ExternalLink, UserCircle2, ChevronRight, Users, User, Clock
 } from 'lucide-react';
 
 export const AdminInterpreters = () => {
@@ -36,7 +36,7 @@ export const AdminInterpreters = () => {
 
   const [textFilter, setTextFilter] = useState('');
   const [langFilter, setLangFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED' | 'IMPORTED'>('ALL');
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -144,6 +144,13 @@ export const AdminInterpreters = () => {
     loadInterpreters();
   };
 
+  const formatFullAddress = (i: Interpreter) => {
+    if (!i.address) return i.regions[0] || 'No address';
+    const { street, town, county, postcode } = i.address;
+    const parts = [street, town || county, postcode].filter(Boolean);
+    return parts.join(', ') || i.regions[0] || 'No address';
+  };
+
   const interpreterColumns = [
     {
       header: 'Interpreter',
@@ -158,22 +165,31 @@ export const AdminInterpreters = () => {
       )
     },
     {
-      header: 'Languages',
+      header: 'Languages & Priority',
       accessor: (i: Interpreter) => (
         <div className="flex flex-wrap gap-1 max-w-[200px]">
-          {i.languages.slice(0, 3).map(l => (
-            <span key={l} className="bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{l}</span>
+          {(i.languageProficiencies && i.languageProficiencies.length > 0 ? i.languageProficiencies : i.languages.map(l => ({ language: l, l1: 18 }))).slice(0, 3).map(p => (
+            <span key={p.language} className="bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+              {p.language} <span className="text-indigo-600 dark:text-indigo-400 ml-0.5">P{p.l1}</span>
+            </span>
           ))}
           {i.languages.length > 3 && <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">+{i.languages.length - 3}</span>}
         </div>
       )
     },
     {
-      header: 'Region',
+      header: 'Region / Address',
       accessor: (i: Interpreter) => (
-        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-          <MapPin size={12} />
-          <span className="text-xs truncate max-w-[120px]">{i.regions[0]}{i.regions.length > 1 ? ` +${i.regions.length - 1}` : ''}</span>
+        <div className="flex items-start gap-2 text-slate-500 dark:text-slate-400 py-1">
+          <MapPin size={12} className="mt-0.5 shrink-0" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate max-w-[180px]">
+              {i.address?.street || 'No street'}
+            </span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+              {i.address?.town || i.address?.county || ''} {i.address?.postcode || ''}
+            </span>
+          </div>
         </div>
       )
     },
@@ -181,7 +197,7 @@ export const AdminInterpreters = () => {
       header: 'Status',
       accessor: (i: Interpreter) => (
         <div className="flex flex-col gap-1">
-          <Badge variant={i.status === 'ACTIVE' ? 'success' : i.status === 'SUSPENDED' ? 'danger' : 'warning'}>
+          <Badge variant={i.status === 'ACTIVE' ? 'success' : i.status === 'SUSPENDED' ? 'danger' : i.status === 'IMPORTED' ? 'info' : 'warning'}>
             {i.status}
           </Badge>
           {i.onboarding?.overallStatus === 'IN_REVIEW' && (
@@ -230,6 +246,7 @@ export const AdminInterpreters = () => {
           >
             <option value="ALL" className="dark:bg-slate-900">All Statuses</option>
             <option value="ACTIVE" className="dark:bg-slate-900">Active</option>
+            <option value="IMPORTED" className="dark:bg-slate-900">Imported (Airtable)</option>
             <option value="ONBOARDING" className="dark:bg-slate-900">Onboarding</option>
             <option value="SUSPENDED" className="dark:bg-slate-900">Suspended</option>
           </select>
@@ -255,14 +272,49 @@ export const AdminInterpreters = () => {
         />
       ) : (
         <div className="relative">
-          <Table
-            data={filteredInterpreters}
-            columns={interpreterColumns}
-            selectable
-            selectedIds={selectedIds}
-            onSelectionChange={setSelectedIds}
-            onRowClick={handleOpenPreview}
-          />
+          {viewMode === 'list' ? (
+            <Table
+              data={filteredInterpreters}
+              columns={interpreterColumns}
+              selectable
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              onRowClick={handleOpenPreview}
+            />
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {filteredInterpreters.map(interpreter => (
+                <div 
+                  key={interpreter.id}
+                  onClick={() => handleOpenPreview(interpreter)}
+                  className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:border-blue-500 transition-all cursor-pointer group"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <UserAvatar src={interpreter.photoUrl} name={interpreter.name} size="md" />
+                    <Badge variant={interpreter.status === 'ACTIVE' ? 'success' : interpreter.status === 'SUSPENDED' ? 'danger' : interpreter.status === 'IMPORTED' ? 'info' : 'warning'}>
+                      {interpreter.status}
+                    </Badge>
+                  </div>
+                  <h3 className="font-bold text-slate-900 dark:text-white mb-1 group-hover:text-blue-600 transition-colors">{interpreter.name}</h3>
+                  <p className="text-xs text-slate-500 mb-4">{interpreter.email}</p>
+                  
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-1">
+                      {interpreter.languages.slice(0, 3).map(l => (
+                        <span key={l} className="bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{l}</span>
+                      ))}
+                      {interpreter.languages.length > 3 && <span className="text-[10px] text-slate-400 font-bold">+{interpreter.languages.length - 3}</span>}
+                    </div>
+                    
+                    <div className="flex items-center gap-2 text-slate-400 text-xs">
+                      <MapPin size={12} />
+                      <span>{interpreter.regions[0] || 'No region'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <BulkActionBar
             selectedCount={selectedIds.length}
@@ -287,92 +339,88 @@ export const AdminInterpreters = () => {
       >
         {selectedInterpreter && (
           <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row items-center justify-between p-6 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 gap-4">
-              <div className="flex items-center gap-4 text-center sm:text-left">
-                <UserAvatar src={selectedInterpreter.photoUrl} name={selectedInterpreter.name} size="xl" />
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">{selectedInterpreter.name}</h2>
-                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-1">
-                    <Badge variant={selectedInterpreter.status === 'ACTIVE' ? 'success' : 'warning'}>
-                      {selectedInterpreter.status}
-                    </Badge>
-                    <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-xs font-medium bg-white dark:bg-slate-800 px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 shadow-sm">
-                      <Mail size={12} className="text-slate-400" />
-                      {selectedInterpreter.email}
-                    </span>
+            <div className="p-6 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+              <div className="flex justify-between items-start mb-6">
+                <div className="flex items-start gap-4">
+                  <UserAvatar src={selectedInterpreter.photoUrl} name={selectedInterpreter.name} size="xl" />
+                  <div className="space-y-1">
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white leading-tight">{selectedInterpreter.name}</h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={selectedInterpreter.status === 'ACTIVE' ? 'success' : 'warning'}>
+                        {selectedInterpreter.status}
+                      </Badge>
+                      <span className="flex items-center gap-1 text-slate-500 text-[10px] font-bold uppercase tracking-widest">
+                        <Mail size={10} /> {selectedInterpreter.email}
+                      </span>
+                    </div>
+                    {/* Capabilities (Languages) in Head */}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {selectedInterpreter.languages.map(l => (
+                        <span key={l} className="bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded text-[10px] font-bold text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-800">
+                          {l}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex sm:flex-col gap-2 w-full sm:w-auto mt-4 sm:mt-0">
                 <Button
                   size="sm"
-                  variant="primary"
+                  variant="outline"
                   icon={ExternalLink}
                   onClick={() => navigate(`/admin/interpreters/${selectedInterpreter.id}`)}
-                  className="w-full rounded-md text-xs font-medium shadow-sm py-2 px-4 h-auto"
+                  className="text-[10px] font-black uppercase tracking-widest py-1.5 px-3 h-auto"
                 >View Full Profile</Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                  <Phone size={12} className="shrink-0" />
+                  <span className="text-xs font-medium">{selectedInterpreter.phone || 'No phone'}</span>
+                </div>
+                <div className="flex items-start gap-2 text-slate-500 dark:text-slate-400">
+                  <MapPin size={12} className="shrink-0 mt-0.5" />
+                  <span className="text-xs font-medium leading-relaxed">
+                    {[
+                      selectedInterpreter.address?.street,
+                      selectedInterpreter.address?.town,
+                      selectedInterpreter.address?.county,
+                      selectedInterpreter.address?.postcode
+                    ].filter(Boolean).join(', ') || 'No address registered'}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <ShieldCheck size={14} className="text-slate-400" />
-                  Capabilities
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg"><Languages size={16} /></div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-1">Languages</p>
-                      <div className="flex flex-wrap gap-1">
-                        {selectedInterpreter.languages.map(l => (
-                          <span key={l} className="bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded text-[10px] font-medium text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{l}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg"><MapPin size={16} /></div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-1">Service Regions</p>
-                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{selectedInterpreter.regions.join(', ')}</p>
-                    </div>
-                  </div>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+              <h3 className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Calendar size={14} className="text-slate-400" />
+                Recent Assignments
+              </h3>
+              {loadingJobs ? (
+                <div className="py-12 flex items-center justify-center"><Spinner /></div>
+              ) : interpreterJobs.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-4">
+                  <AlertCircle className="text-slate-300 dark:text-slate-600 mb-2" size={24} />
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">No assigned jobs</p>
                 </div>
-              </div>
-
-              <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col h-full">
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Calendar size={14} className="text-slate-400" />
-                  Recent Assignments
-                </h3>
-                {loadingJobs ? (
-                  <div className="flex-1 flex items-center justify-center"><Spinner /></div>
-                ) : interpreterJobs.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-4">
-                    <AlertCircle className="text-slate-300 dark:text-slate-600 mb-2" size={24} />
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">No assigned jobs</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1 flex-1">
-                    {interpreterJobs.slice(0, 5).map(job => (
-                      <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-800 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer" onClick={() => navigate(`/admin/bookings/${job.id}`)}>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-xs font-bold text-slate-900 dark:text-white">{job.bookingRef || `#${job.id.slice(-4)}`}</span>
-                          <span className="text-[10px] text-slate-500 dark:text-slate-400">{job.date} • {job.startTime}</span>
-                        </div>
-                        <Badge variant={job.status === 'COMPLETED' ? 'success' : 'info'} className="text-[10px] py-0 px-1.5 h-5">
-                          {job.status}
-                        </Badge>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {interpreterJobs.slice(0, 5).map(job => (
+                    <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-800 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer" onClick={() => navigate(`/admin/bookings/${job.id}`)}>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">{job.bookingRef || `#${job.id.slice(-4)}`}</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400">{job.date} • {job.startTime}</span>
                       </div>
-                    ))}
-                    {interpreterJobs.length > 5 && (
-                      <p className="text-[10px] text-center font-medium text-slate-500 dark:text-slate-500 py-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md mt-2">+{interpreterJobs.length - 5} More historical records</p>
-                    )}
-                  </div>
-                )}
-              </div>
+                      <Badge variant={job.status === 'COMPLETED' ? 'success' : 'info'} className="text-[10px] py-0 px-1.5 h-5">
+                        {job.status}
+                      </Badge>
+                    </div>
+                  ))}
+                  {interpreterJobs.length > 5 && (
+                    <p className="text-[10px] text-center font-medium text-slate-500 dark:text-slate-500 py-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-md mt-2">+{interpreterJobs.length - 5} More historical records</p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="pt-4 flex gap-3 border-t border-slate-100">

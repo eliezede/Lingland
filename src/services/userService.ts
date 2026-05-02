@@ -85,6 +85,23 @@ export const UserService = {
     }
   },
 
+  sendActivationInvite: async (email: string, displayName: string) => {
+    const activationLink = `${window.location.origin}/#/activate?email=${encodeURIComponent(email)}`;
+    
+    // Queue email via 'mail' collection (Firebase Extension)
+    await addDoc(collection(db, 'mail'), {
+      to: [email],
+      template: {
+        name: 'ACCOUNT_ACTIVATION',
+        data: {
+          interpreterName: displayName,
+          activationLink: activationLink
+        }
+      },
+      createdAt: new Date().toISOString()
+    });
+  },
+
   uploadProfilePhoto: async (userId: string, file: File | string, role: string): Promise<string> => {
     const path = `profiles/${role.toLowerCase()}/${userId}/${Date.now()}_profile.jpg`;
     const photoUrl = await StorageService.uploadFile(file, path);

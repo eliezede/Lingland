@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  InterpreterService, BookingService, BillingService, ChatService, NotificationService, EmailService
+  InterpreterService, BookingService, BillingService, ChatService, NotificationService, EmailService, UserService
 } from '../../../services/api';
 import {
   Interpreter, Booking, InterpreterInvoice, BookingStatus, NotificationType
@@ -22,7 +22,7 @@ import {
   ChevronLeft, Mail, Phone, MapPin, Languages,
   Award, ShieldCheck, ArrowUpRight, FileText, UserCircle2, Edit, Check, MessageSquare,
   Globe2, Zap, Clock, Banknote, Car, Info, AlertCircle, ExternalLink,
-  User2, Home, Settings
+  User2, Home, Settings, Trash2
 } from 'lucide-react';
 
 type Tab = 'JOBS' | 'FINANCE' | 'COMPLIANCE' | 'RATES';
@@ -47,6 +47,7 @@ export const AdminInterpreterDetails = () => {
   const [formData, setFormData] = useState<Partial<Interpreter>>({});
   const [saving, setSaving] = useState(false);
   const [processingChat, setProcessingChat] = useState(false);
+  const [sendingInvite, setSendingInvite] = useState(false);
 
   // Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -112,8 +113,27 @@ export const AdminInterpreterDetails = () => {
       );
       openThread(threadId);
     } finally {
-
       setProcessingChat(false);
+    }
+  };
+
+  const handleSendActivation = async () => {
+    if (!interpreter) return;
+    setSendingInvite(true);
+    try {
+      const now = new Date().toISOString();
+      await UserService.sendActivationInvite(interpreter.email, interpreter.name);
+      await InterpreterService.updateProfile(interpreter.id, { activationEmailSentAt: now });
+      
+      // Update local state
+      setInterpreter({ ...interpreter, activationEmailSentAt: now });
+      
+      showToast(interpreter.activationEmailSentAt ? 'Activation email resent successfully' : 'Activation email queued successfully', 'success');
+    } catch (error) {
+      console.error('Failed to send activation email', error);
+      showToast('Failed to queue activation email', 'error');
+    } finally {
+      setSendingInvite(false);
     }
   };
 
@@ -286,6 +306,24 @@ export const AdminInterpreterDetails = () => {
           </div>
         </div>
         <div className="flex gap-2">
+          {interpreter.status === 'IMPORTED' && (
+            <div className="flex flex-col items-end gap-1">
+              <Button 
+                variant="outline" 
+                className={interpreter.activationEmailSentAt ? "border-amber-200 text-amber-700 hover:bg-amber-50" : "border-indigo-200 text-indigo-700 hover:bg-indigo-50"}
+                icon={interpreter.activationEmailSentAt ? Check : Mail} 
+                isLoading={sendingInvite} 
+                onClick={handleSendActivation}
+              >
+                {interpreter.activationEmailSentAt ? 'Resend Activation' : 'Send Activation'}
+              </Button>
+              {interpreter.activationEmailSentAt && (
+                <span className="text-[9px] font-bold text-slate-400 uppercase">
+                  Last sent: {new Date(interpreter.activationEmailSentAt).toLocaleString()}
+                </span>
+              )}
+            </div>
+          )}
           <Button variant="outline" icon={MessageSquare} isLoading={processingChat} onClick={handleStartChat}>Message</Button>
           <Button variant="primary" icon={Edit} onClick={handleEdit}>Edit Profile</Button>
         </div>
@@ -332,22 +370,41 @@ export const AdminInterpreterDetails = () => {
               </div>
 
               <div>
-                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Language Proficiency</label>
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Home size={10} className="text-slate-400" /> Residential Address
+                </label>
+                <div className="mt-1.5 p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+                  <p className="text-xs font-bold text-slate-800">{interpreter.address.street || 'No street'}</p>
+                  <p className="text-[10px] text-slate-500 font-medium">
+                    {interpreter.address.town}{interpreter.address.county ? `, ${interpreter.address.county}` : ''}
+                  </p>
+                  <p className="text-[10px] text-blue-600 font-black tracking-widest">{interpreter.address.postcode}</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Call Priority (L1 Order)</label>
                 <div className="mt-1.5 space-y-1.5">
-                  {(interpreter.languageProficiencies || []).map(p => (
-                    <div key={p.language} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
-                      <div className="flex items-center gap-2">
-                        <Globe2 size={12} className="text-blue-500" />
-                        <span className="text-[10px] font-bold text-slate-700 uppercase">{p.language}</span>
+                  {(interpreter.languageProficiencies || []).length > 0 ? (
+                    (interpreter.languageProficiencies || []).map(p => (
+                      <div key={p.language} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <Globe2 size={12} className="text-blue-500" />
+                          <span className="text-[10px] font-bold text-slate-700 uppercase">{p.language}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <span className="bg-white px-2 py-0.5 rounded text-[8px] font-black border text-indigo-600 shadow-sm">PRIO {p.l1 || 18}</span>
+                          {p.translateOrder !== 'no' && (
+                            <span className="bg-white px-2 py-0.5 rounded text-[8px] font-black border text-emerald-600 shadow-sm">{p.translateOrder}</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <span className="bg-white px-2 py-0.5 rounded text-[8px] font-black border text-indigo-600">L{p.l1 || 0}</span>
-                        {p.translateOrder !== 'no' && (
-                          <span className="bg-white px-2 py-0.5 rounded text-[8px] font-black border text-emerald-600">{p.translateOrder}</span>
-                        )}
-                      </div>
+                    ))
+                  ) : (
+                    <div className="p-3 bg-slate-50 rounded-lg border border-dashed border-slate-200 text-center">
+                      <p className="text-[10px] text-slate-400 font-medium">No priority assigned yet</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
 
@@ -868,7 +925,7 @@ export const AdminInterpreterDetails = () => {
                         className="w-full px-4 py-2.5 text-sm font-semibold text-slate-800 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 shadow-sm uppercase tracking-wider"
                         value={formData.address?.postcode || ''}
                         onChange={e => setFormData({ ...formData, address: { ...formData.address!, postcode: e.target.value } })} />
-                      <input type="text" placeholder="Country" defaultValue="United Kingdom"
+                      <input type="text" placeholder="Country"
                         className="w-full px-4 py-2.5 text-sm font-semibold text-slate-800 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 shadow-sm"
                         value={formData.address?.country || 'United Kingdom'}
                         onChange={e => setFormData({ ...formData, address: { ...formData.address!, country: e.target.value } })} />
@@ -1318,9 +1375,9 @@ export const AdminInterpreterDetails = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                       <Globe2 size={16} className="text-blue-500" /> Language Proficiency
+                       <Globe2 size={16} className="text-blue-500" /> Call Priority
                     </h4>
-                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">Select languages and configure proficiency levels for each.</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">Select languages and configure priority levels (L1) for each.</p>
                   </div>
                   <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{formData.languageProficiencies?.length || 0} CONFIGURED</span>
                 </div>
@@ -1331,7 +1388,7 @@ export const AdminInterpreterDetails = () => {
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Available Languages</p>
                     <div className="flex flex-wrap gap-2 p-4 bg-white border border-slate-100 rounded-xl shadow-inner max-h-[300px] overflow-y-auto">
                       {Array.from(new Set(settings.masterData.priorityLanguages)).map(lang => {
-                        const isConfigured = formData.languageProficiencies?.some(p => p.language === lang);
+                        const isConfigured = formData.languageProficiencies?.some(p => p.language?.toLowerCase() === lang?.toLowerCase());
                         return (
                           <button
                             key={lang}
@@ -1339,9 +1396,9 @@ export const AdminInterpreterDetails = () => {
                             onClick={() => {
                               const current = formData.languageProficiencies || [];
                               if (isConfigured) {
-                                setFormData({ ...formData, languageProficiencies: current.filter(p => p.language !== lang) });
+                                setFormData({ ...formData, languageProficiencies: current.filter(p => p.language?.toLowerCase() !== lang?.toLowerCase()) });
                               } else {
-                                setFormData({ ...formData, languageProficiencies: [...current, { language: lang, l1: 1, translateOrder: 'T1' }] });
+                                setFormData({ ...formData, languageProficiencies: [...current, { language: lang, l1: 18, translateOrder: 'no' }] });
                               }
                             }}
                             className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border ${isConfigured
@@ -1380,13 +1437,13 @@ export const AdminInterpreterDetails = () => {
                                 }}
                                 className="text-slate-300 hover:text-red-500 transition-colors"
                               >
-                                <Zap size={14} />
+                                <Trash2 size={14} />
                               </button>
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">L-Level (L1-15)</label>
+                                <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Priority (L1-18)</label>
                                 <select 
                                   className="w-full px-2 py-1.5 text-[10px] font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-lg focus:outline-none"
                                   value={p.l1}
@@ -1396,8 +1453,8 @@ export const AdminInterpreterDetails = () => {
                                     setFormData({ ...formData, languageProficiencies: updated });
                                   }}
                                 >
-                                  {Array.from({ length: 15 }, (_, i) => i + 1).map(l => (
-                                    <option key={l} value={l}>Level {l} {l === 1 ? '(Expert)' : ''}</option>
+                                  {Array.from({ length: 18 }, (_, i) => i + 1).map(l => (
+                                    <option key={l} value={l}>P{l} {l === 1 ? '(First Call)' : ''}</option>
                                   ))}
                                 </select>
                               </div>

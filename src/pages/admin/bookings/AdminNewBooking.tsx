@@ -235,10 +235,20 @@ export const AdminNewBooking = () => {
         c.contactPerson.toLowerCase().includes(clientSearchQuery.toLowerCase())
     );
 
-    const filteredInterpreters = interpreters.filter(i =>
-        i.name.toLowerCase().includes(searchingInterpreter.toLowerCase()) ||
-        i.languages.some(l => l.toLowerCase().includes(searchingInterpreter.toLowerCase()))
-    );
+    const filteredInterpreters = interpreters
+        .filter(i =>
+            i.name.toLowerCase().includes(searchingInterpreter.toLowerCase()) ||
+            i.languages.some(l => l.toLowerCase().includes(searchingInterpreter.toLowerCase()))
+        )
+        .sort((a, b) => {
+            // Sort by priority for the selected target language first
+            if (formData.languageTo) {
+                const aPrio = a.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
+                const bPrio = b.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
+                if (aPrio !== bPrio) return aPrio - bPrio;
+            }
+            return a.name.localeCompare(b.name);
+        });
 
     return (
         <div className="space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">

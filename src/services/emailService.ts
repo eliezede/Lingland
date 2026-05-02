@@ -102,6 +102,20 @@ export const DEFAULT_TEMPLATES: EmailTemplate[] = [
         isActive: true
     },
     {
+        id: 'ACCOUNT_ACTIVATION',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'SYSTEM',
+        triggerStatus: 'IMPORTED',
+        recipientType: 'INTERPRETER',
+        name: 'Account Activation (Migrated)',
+        subject: 'Activate your Lingland Account',
+        body: `Dear {{interpreterName}},<br><br>Welcome to the new Lingland platform! We have successfully migrated your profile from our legacy system.<br><br>To get started, please click the link below to set your password and activate your account:<br><br><div style="text-align: center; margin: 30px 0;"><a href="{{activationLink}}" style="background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Activate My Account</a></div><br><br>If the button above does not work, copy and paste this link into your browser:<br><br>{{activationLink}}<br><br>Welcome aboard!<br><br>Kind regards,<br>The Lingland Team`,
+        allowedVariables: ['interpreterName', 'activationLink'],
+        isActive: true
+    },
+    {
         id: 'APP_RECEIVED_ADMIN',
         organizationId: 'SYSTEM',
         createdAt: new Date().toISOString(),

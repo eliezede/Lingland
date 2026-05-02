@@ -93,7 +93,9 @@ export const InterpreterApplicationPage = () => {
   const updateLanguageProficiency = (index: number, field: keyof LanguageProficiency, value: any) => {
     const profs = [...formData.languageProficiencies];
     if (profs[index].language === 'English' && field === 'language') return;
-    profs[index] = { ...profs[index], [field]: value };
+    
+    // Always set L1 to 18 (default low priority for new applicants)
+    profs[index] = { ...profs[index], [field]: value, l1: 18 };
     handleUpdate('languageProficiencies', profs);
     
     // Sync legacy languages array
@@ -427,7 +429,7 @@ export const InterpreterApplicationPage = () => {
               </div>
             )}
 
-            {/* STEP 2: Language Matrix */}
+            {/* STEP 2: Language Selection */}
             {step === 2 && (
               <div className="animate-in slide-in-from-right-12 fade-in duration-700 space-y-10">
                 <div className="flex items-center gap-4 pb-6 border-b border-slate-50">
@@ -446,14 +448,13 @@ export const InterpreterApplicationPage = () => {
                       <Info size={20} />
                     </div>
                     <div className="text-[11px] text-blue-800 leading-relaxed font-medium">
-                      <p className="mb-2"><strong>Fluency Priority (L1):</strong> Set to <strong>1</strong> for your native or strongest language. High numbers (up to 15) indicate lower priority.</p>
-                      <p><strong>Written Translation:</strong> Rates your priority for translation tasks (T1 is highest). Select <strong>'None'</strong> if you only provide interpreting.</p>
+                      <p className="mb-2"><strong>Language Selection:</strong> Please select all the languages you speak fluently. Your application will be reviewed and prioritized by our admin team.</p>
+                      <p><strong>Written Translation:</strong> Select <strong>'T1'</strong> if you also provide written translation services, or <strong>'None'</strong> if you only provide interpreting.</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-12 gap-4 px-2 hidden md:grid mb-2">
-                    <div className="col-span-12 md:col-span-5 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-5">Language Pair</div>
-                    <div className="col-span-12 md:col-span-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Fluency (L1)</div>
+                    <div className="col-span-12 md:col-span-8 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-5">Language Pair</div>
                     <div className="col-span-12 md:col-span-3 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Translation</div>
                     <div className="col-span-12 md:col-span-1"></div>
                   </div>
@@ -461,7 +462,7 @@ export const InterpreterApplicationPage = () => {
                   <div className="space-y-3">
                     {formData.languageProficiencies.map((prof, idx) => (
                       <div key={idx} className={`grid grid-cols-1 md:grid-cols-12 gap-4 p-5 rounded-[2rem] border-2 transition-all ${prof.language === 'English' ? 'bg-slate-50 border-slate-100' : 'bg-white border-slate-100 hover:border-blue-100'}`}>
-                        <div className="col-span-12 md:col-span-5">
+                        <div className="col-span-12 md:col-span-8">
                           <label className={labelClasses + " md:hidden"}>Language</label>
                           <select 
                             disabled={prof.language === 'English'}
@@ -477,16 +478,11 @@ export const InterpreterApplicationPage = () => {
                           </select>
                         </div>
                         
-                        <div className="col-span-6 md:col-span-3">
-                          <label className={labelClasses + " md:hidden text-center"}>L1 Priority</label>
-                          <input type="number" min="1" max="15" className={inputClasses + " text-center"} value={prof.l1} onChange={e => updateLanguageProficiency(idx, 'l1', parseInt(e.target.value))} />
-                        </div>
-
-                        <div className="col-span-6 md:col-span-3">
-                          <label className={labelClasses + " md:hidden text-center"}>Trans. Order</label>
+                        <div className="col-span-12 md:col-span-3">
+                          <label className={labelClasses + " md:hidden text-center"}>Written Translation?</label>
                           <select className={inputClasses} value={prof.translateOrder} onChange={e => updateLanguageProficiency(idx, 'translateOrder', e.target.value)}>
-                            <option value="no">None</option>
-                            {['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'].map(t => <option key={t} value={t}>{t}</option>)}
+                            <option value="no">Interpreting Only</option>
+                            <option value="T1">Yes (Translating Too)</option>
                           </select>
                         </div>
 
