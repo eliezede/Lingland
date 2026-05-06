@@ -29,17 +29,27 @@ export const ActivateAccount = () => {
     }
 
     setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
+    
     try {
-      // 1. Verify user exists in Firestore as IMPORTED
-      const userQuery = query(collection(db, 'users'), where('email', '==', email.toLowerCase()), where('status', '==', 'IMPORTED'));
+      // 1. Verify user exists in Firestore
+      const userQuery = query(collection(db, 'users'), where('email', '==', cleanEmail));
       const userSnap = await getDocs(userQuery);
 
       if (userSnap.empty) {
-        throw new Error('This account is not eligible for activation or already active.');
+        throw new Error(`Account not found for ${cleanEmail}. Please check the email or contact support.`);
       }
 
       const userDoc = userSnap.docs[0];
       const userData = userDoc.data();
+
+      if (userData.status === 'ACTIVE') {
+        throw new Error('This account is already active. Please go to the login page.');
+      }
+
+      if (userData.status !== 'IMPORTED') {
+        throw new Error(`Account status is ${userData.status}. Only imported accounts can be activated.`);
+      }
 
       // 2. Create Auth User
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
