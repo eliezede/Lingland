@@ -5,6 +5,8 @@ import { AirtableService } from './airtableService';
 import { Interpreter, User, UserRole } from '../types';
 import { InterpreterService } from './interpreterService';
 
+import { EmailService } from './emailService';
+
 export const MigrationService = {
   /**
    * Performs the actual migration from Airtable to Firestore
@@ -92,20 +94,23 @@ export const MigrationService = {
           }
         }
 
-        const activationLink = `${window.location.origin}/#/activate?email=${encodeURIComponent(userData.email)}`;
+        // Resolve Portal URL (Base URL for links)
+        let baseUrl = window.location.origin;
+        try {
+          const { SystemService } = await import('./systemService');
+          const settings = await SystemService.getSettings();
+          if (settings?.general?.portalUrl) {
+            baseUrl = settings.general.portalUrl;
+          } else if (baseUrl.includes('localhost')) {
+            baseUrl = 'https://lingland-2e52f.web.app';
+          }
+        } catch (e) {}
+
+        const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+        const activationLink = `${cleanBaseUrl}/#/activate?email=${encodeURIComponent(userData.email)}`;
         
-        // Queue email via 'mail' collection (Firebase Extension)
-        await addDoc(collection(db, 'mail'), {
-          to: [userData.email],
-          template: {
-            name: 'ACCOUNT_ACTIVATION',
-            data: {
-              interpreterName: userData.displayName,
-              activationLink: activationLink
-            }
-          },
-          createdAt: new Date().toISOString()
-        });
+        // Queue email via EmailService (which handles pre-rendering and 'message' field)
+        await EmailService.sendActivationEmail(userData.email, userData.displayName, activationLink);
 
         // Mark as sent on interpreter profile
         if (userData.profileId) {

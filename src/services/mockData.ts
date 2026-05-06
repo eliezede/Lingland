@@ -142,7 +142,8 @@ const DEFAULT_SETTINGS: SystemSettings = {
     companyName: 'Lingland Ltd',
     supportEmail: 'support@lingland.com',
     businessAddress: '123 Business Park, London, UK',
-    websiteUrl: 'https://lingland.com'
+    websiteUrl: 'https://lingland.com',
+    portalUrl: 'https://lingland-2e52f.web.app'
   },
   finance: {
     currency: 'GBP',

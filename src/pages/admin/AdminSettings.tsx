@@ -127,6 +127,19 @@ export const AdminSettings = () => {
                       />
                     </div>
                     <div>
+                      <label className="block text-xs font-bold text-blue-600 dark:text-blue-500 uppercase mb-1.5 tracking-wider flex items-center gap-1.5">
+                        Portal URL (Activation Links)
+                      </label>
+                      <input 
+                        type="url" 
+                        className="w-full p-3 border border-blue-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white dark:bg-slate-950 text-gray-900 dark:text-white"
+                        value={formData.general.portalUrl || ''}
+                        onChange={e => setFormData({...formData, general: {...formData.general, portalUrl: e.target.value}})}
+                        placeholder="https://portal.lingland.com"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1 italic">Used for password resets and account activation invites.</p>
+                    </div>
+                    <div>
                       <label className="block text-xs font-bold text-gray-400 dark:text-slate-500 uppercase mb-1.5 tracking-wider">Platform Logo URL</label>
                       <input 
                         type="text" 

@@ -505,6 +505,7 @@ export interface SystemSettings {
     supportEmail: string;
     businessAddress: string;
     websiteUrl: string;
+    portalUrl: string; // Added to handle system-generated links (activation, etc.)
     logoUrl?: string;
   };
   finance: {

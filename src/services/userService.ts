@@ -5,6 +5,8 @@ import { StorageService } from './storageService';
 import { MOCK_USERS, saveMockData } from './mockData';
 import { convertDoc, safeFetch } from './utils';
 
+import { EmailService } from './emailService';
+
 export const UserService = {
   getUserById: async (id: string): Promise<User | undefined> => {
     try {
@@ -86,20 +88,27 @@ export const UserService = {
   },
 
   sendActivationInvite: async (email: string, displayName: string) => {
-    const activationLink = `${window.location.origin}/#/activate?email=${encodeURIComponent(email)}`;
+    // Resolve Portal URL (Base URL for links)
+    // Priority: 1. System Settings, 2. Production Fallback (if on localhost), 3. Current Origin
+    let baseUrl = window.location.origin;
+    try {
+      const { SystemService } = await import('./systemService');
+      const settings = await SystemService.getSettings();
+      if (settings?.general?.portalUrl) {
+        baseUrl = settings.general.portalUrl;
+      } else if (baseUrl.includes('localhost')) {
+        baseUrl = 'https://lingland-2e52f.web.app'; // Fallback for local testing
+      }
+    } catch (e) {
+      console.warn("Could not fetch portal URL from settings, using origin.");
+    }
+
+    // Ensure baseUrl doesn't end with slash to avoid double slashes
+    const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    const activationLink = `${cleanBaseUrl}/#/activate?email=${encodeURIComponent(email)}`;
     
-    // Queue email via 'mail' collection (Firebase Extension)
-    await addDoc(collection(db, 'mail'), {
-      to: [email],
-      template: {
-        name: 'ACCOUNT_ACTIVATION',
-        data: {
-          interpreterName: displayName,
-          activationLink: activationLink
-        }
-      },
-      createdAt: new Date().toISOString()
-    });
+    // Queue email via EmailService (which handles pre-rendering and 'message' field)
+    await EmailService.sendActivationEmail(email, displayName, activationLink);
   },
 
   uploadProfilePhoto: async (userId: string, file: File | string, role: string): Promise<string> => {

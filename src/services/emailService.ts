@@ -298,7 +298,8 @@ export const EmailService = {
             if (extraData.cancelReason) dictionary['{{cancelReason}}'] = extraData.cancelReason;
         } else {
             const app = entity as InterpreterApplication;
-            dictionary['{{applicantName}}'] = app.name || '';
+            dictionary['{{applicantName}}'] = app.name || extraData.interpreterName || '';
+            dictionary['{{interpreterName}}'] = extraData.interpreterName || app.name || '';
             dictionary['{{applicantEmail}}'] = app.email || '';
             dictionary['{{applicantPhone}}'] = app.phone || '';
             dictionary['{{languages}}'] = (app.languageProficiencies || []).map(l => l.language).join(', ') || app.languages?.join(', ') || '';
@@ -310,6 +311,7 @@ export const EmailService = {
             if (extraData.jobTitle) dictionary['{{jobTitle}}'] = extraData.jobTitle;
             if (extraData.role) dictionary['{{role}}'] = extraData.role;
             if (extraData.inviteLink) dictionary['{{inviteLink}}'] = extraData.inviteLink;
+            if (extraData.activationLink) dictionary['{{activationLink}}'] = extraData.activationLink;
             if (extraData.gradeLevel) dictionary['{{gradeLevel}}'] = extraData.gradeLevel;
         }
 
@@ -441,6 +443,42 @@ export const EmailService = {
             }
         } catch (e) {
             console.error("[EmailService] Failed to process application email trigger", e);
+        }
+    },
+
+    // New: Explicit trigger for Activation Emails (Migrated Interpreters)
+    sendActivationEmail: async (email: string, displayName: string, activationLink: string) => {
+        console.log(`[EmailService] Sending Activation Email to: ${email}`);
+        try {
+            const templates = await EmailService.getTemplates();
+            const template = templates.find(t => t.id === 'ACCOUNT_ACTIVATION');
+            
+            if (!template || !template.isActive) {
+                console.error("[EmailService] ACCOUNT_ACTIVATION template not found or inactive");
+                return;
+            }
+
+            const extraData = {
+                interpreterName: displayName,
+                activationLink: activationLink
+            };
+
+            // We pass a dummy entity because parseTemplate needs it, but we'll rely on extraData
+            const subject = EmailService.parseTemplate(template.subject, {}, extraData);
+            const body = EmailService.parseTemplate(template.body, {}, extraData);
+
+            await addDoc(collection(db, 'mail'), {
+                to: [email],
+                message: {
+                    subject,
+                    html: body
+                },
+                createdAt: new Date().toISOString(),
+                statusTrigger: 'IMPORTED'
+            });
+            console.log(`[EmailService] ✅ Activation Email queued for ${email}`);
+        } catch (e) {
+            console.error("[EmailService] Failed to send activation email", e);
         }
     },
 

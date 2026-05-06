@@ -22,12 +22,24 @@ service cloud.firestore {
 
     match /users/{userId} {
       // Users can read/write their own profile OR Admins can do anything
-      allow read, write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      // Added public read for 'IMPORTED' status to allow account activation flow
+      allow read: if isAdmin() || 
+                   (isAuthenticated() && request.auth.uid == userId) || 
+                   (resource.data.status == 'IMPORTED');
+      
+      // Allow write if Admin, if ID matches, OR if the authenticated user's email matches the document email
+      // (Essential for migrating imported users who don't yet have their UID as document ID)
+      allow write: if isAdmin() || 
+                    (isAuthenticated() && request.auth.uid == userId) ||
+                    (isAuthenticated() && request.auth.token.email == resource.data.email);
     }
 
     match /interpreters/{interpreterId} {
       // Admins read/write anything. Interpreters only read/write their own profile
-      allow read: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId);
+      // Added read access for IMPORTED/ONBOARDING status to allow activation profile lookups
+      allow read: if isAdmin() || 
+                   (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId) ||
+                   (resource.data.status in ['IMPORTED', 'ONBOARDING']);
       allow write: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId);
     }
 
