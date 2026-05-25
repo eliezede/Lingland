@@ -78,7 +78,7 @@ export const StatusBadge: React.FC<{ status: BookingStatus | JobStatus | string 
   const displayLabel = DISPLAY_LABELS[normalizedStatus] || normalizedStatus.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   return (
-    <span className={`px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold border ${getStyles()} uppercase tracking-wider whitespace-nowrap`}>
+    <span className={`inline-block max-w-full truncate px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold border ${getStyles()} uppercase tracking-wider whitespace-nowrap`}>
       {displayLabel}
     </span>
   );

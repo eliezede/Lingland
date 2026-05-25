@@ -84,6 +84,7 @@ import { ClientBookingDetails } from './pages/client/bookings/ClientBookingDetai
 import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
 import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
 import { ClientProfile } from './pages/client/ClientProfile';
+import { ClientMessages } from './pages/client/ClientMessages';
 
 const RootRoute = () => {
   const { user, isLoading } = useAuth();
@@ -137,6 +138,10 @@ const App = () => {
                               <Route path="timesheets" element={<InterpreterTimesheets />} />
                               <Route path="timesheets/new/:bookingId" element={<InterpreterTimesheetForm />} />
                               <Route path="billing" element={<InterpreterPayments />} />
+                              <Route path="earnings" element={<Navigate to="/interpreter/billing" replace />} />
+                              <Route path="invoices" element={<Navigate to="/interpreter/billing" replace />} />
+                              <Route path="settings" element={<Navigate to="/interpreter/profile" replace />} />
+                              <Route path="billing/invoice/:id" element={<Navigate to="/interpreter/billing" replace />} />
                               <Route path="profile" element={<InterpreterProfile />} />
                               <Route path="onboarding" element={<InterpreterOnboarding />} />
                               <Route path="messages" element={<InterpreterMessages />} />
@@ -158,7 +163,9 @@ const App = () => {
                               <Route path="new-booking" element={<ClientNewBooking />} />
                               <Route path="invoices" element={<ClientInvoicesList />} />
                               <Route path="invoices/:id" element={<ClientInvoiceDetails />} />
+                              <Route path="messages" element={<ClientMessages />} />
                               <Route path="profile" element={<ClientProfile />} />
+                              <Route path="settings" element={<Navigate to="/client/profile" replace />} />
                               <Route path="*" element={<NotFound />} />
                             </Routes>
                           </ClientLayout>

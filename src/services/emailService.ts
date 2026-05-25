@@ -88,6 +88,76 @@ export const DEFAULT_TEMPLATES: EmailTemplate[] = [
         isActive: true
     },
     {
+        id: 'TIMESHEET_SUBMITTED_ADMIN',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'INVOICING',
+        triggerStatus: BookingStatus.TIMESHEET_SUBMITTED,
+        recipientType: 'ADMIN',
+        name: 'Timesheet Submitted - Admin Review',
+        subject: 'Timesheet submitted for {{bookingRef}}',
+        body: `Admin Alert,<br><br>A timesheet has been submitted and is waiting for verification.<br><br><strong>Job:</strong> {{bookingRef}}<br><strong>Client:</strong> {{clientName}}<br><strong>Interpreter:</strong> {{interpreterName}}<br><strong>Session:</strong> {{date}} at {{time}}<br><br>Please review the timesheet in the admin billing workflow and approve it when it is ready for invoicing.`,
+        allowedVariables: [...EMAIL_VARIABLES.ADMIN, '{{date}}', '{{time}}'],
+        isActive: true
+    },
+    {
+        id: 'TIMESHEET_SUBMITTED_INTERPRETER',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'INVOICING',
+        triggerStatus: BookingStatus.TIMESHEET_SUBMITTED,
+        recipientType: 'INTERPRETER',
+        name: 'Timesheet Received',
+        subject: 'Timesheet received: {{bookingRef}}',
+        body: `Dear {{interpreterName}},<br><br>Thank you. We have received your timesheet for job {{bookingRef}}.<br><br>Our operations team will verify the details before it moves to invoicing and payment processing.<br><br>Kind regards,<br>The Lingland Finance Team`,
+        allowedVariables: EMAIL_VARIABLES.INTERPRETER,
+        isActive: true
+    },
+    {
+        id: 'READY_FOR_INVOICE_ADMIN',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'INVOICING',
+        triggerStatus: BookingStatus.READY_FOR_INVOICE,
+        recipientType: 'ADMIN',
+        name: 'Ready for Invoice - Finance Review',
+        subject: 'Ready for invoicing: {{bookingRef}}',
+        body: `Finance Alert,<br><br>Job {{bookingRef}} has been verified and is now ready for invoicing.<br><br><strong>Client:</strong> {{clientName}}<br><strong>Interpreter:</strong> {{interpreterName}}<br><strong>Session:</strong> {{date}} at {{time}}<br><br>Please create or include this job in the next client and interpreter invoice run.`,
+        allowedVariables: [...EMAIL_VARIABLES.ADMIN, '{{date}}', '{{time}}'],
+        isActive: true
+    },
+    {
+        id: 'READY_FOR_INVOICE_CLIENT',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'INVOICING',
+        triggerStatus: BookingStatus.READY_FOR_INVOICE,
+        recipientType: 'CLIENT',
+        name: 'Service Completed - Invoice Preparation',
+        subject: 'Service completed: {{bookingRef}}',
+        body: `Dear {{clientName}},<br><br>The service for booking {{bookingRef}} has been completed and verified by our team.<br><br>Our finance team will prepare the invoice according to your billing arrangement.<br><br>Kind regards,<br>The Lingland Team`,
+        allowedVariables: EMAIL_VARIABLES.CLIENT,
+        isActive: true
+    },
+    {
+        id: 'READY_FOR_INVOICE_INTERPRETER',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'INVOICING',
+        triggerStatus: BookingStatus.READY_FOR_INVOICE,
+        recipientType: 'INTERPRETER',
+        name: 'Timesheet Approved - Payment Processing',
+        subject: 'Timesheet approved: {{bookingRef}}',
+        body: `Dear {{interpreterName}},<br><br>Your timesheet for job {{bookingRef}} has been reviewed and approved.<br><br>The job is now with finance for invoice and payment processing. You can follow the status in your Lingland app.<br><br>Kind regards,<br>The Lingland Finance Team`,
+        allowedVariables: EMAIL_VARIABLES.INTERPRETER,
+        isActive: true
+    },
+    {
         id: 'APP_RECEIVED_APPLICANT',
         organizationId: 'SYSTEM',
         createdAt: new Date().toISOString(),
@@ -112,7 +182,7 @@ export const DEFAULT_TEMPLATES: EmailTemplate[] = [
         name: 'Account Activation (Migrated)',
         subject: 'Activate your Lingland Account',
         body: `Dear {{interpreterName}},<br><br>Welcome to the new Lingland platform! We have successfully migrated your profile from our legacy system.<br><br>To get started, please click the link below to set your password and activate your account:<br><br><div style="text-align: center; margin: 30px 0;"><a href="{{activationLink}}" style="background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Activate My Account</a></div><br><br>If the button above does not work, copy and paste this link into your browser:<br><br>{{activationLink}}<br><br>Welcome aboard!<br><br>Kind regards,<br>The Lingland Team`,
-        allowedVariables: ['interpreterName', 'activationLink'],
+        allowedVariables: ['{{interpreterName}}', '{{activationLink}}'],
         isActive: true
     },
     {
@@ -317,7 +387,7 @@ export const EmailService = {
 
         // Replace all instances
         for (const [key, value] of Object.entries(dictionary)) {
-            output = output.replace(new RegExp(key, 'g'), value);
+            output = output.split(key).join(String(value ?? ''));
         }
 
         return output;
@@ -328,7 +398,7 @@ export const EmailService = {
     sendStatusEmail: async (
         booking: Booking,
         newStatus: BookingStatus,
-        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; cancelReason?: string } = {}
+        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; adminEmail?: string; cancelReason?: string } = {}
     ) => {
         console.log(`[EmailService] Triggered for status: ${newStatus}, bookingId: ${booking.id}`);
         try {
@@ -364,6 +434,17 @@ export const EmailService = {
                         }
                     }
                     console.log(`[EmailService] Interpreter recipient: ${recipientEmail}`);
+                } else if (template.recipientType === 'ADMIN') {
+                    recipientEmail = extraData.adminEmail || '';
+                    if (!recipientEmail) {
+                        try {
+                            const settingsDoc = await getDoc(doc(db, 'systemSettings', 'main'));
+                            recipientEmail = settingsDoc.data()?.finance?.invoiceEmail || 'admin@lingland.com';
+                        } catch {
+                            recipientEmail = 'admin@lingland.com';
+                        }
+                    }
+                    console.log(`[EmailService] Admin recipient: ${recipientEmail}`);
                 }
 
                 if (!recipientEmail) {

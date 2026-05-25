@@ -102,22 +102,16 @@ export const AdminClients = () => {
     if (!user) return;
 
     try {
-      const names = {
-        [user.id]: user.displayName || 'Admin',
-        [clientId]: clientName
-      };
-
-      const photos = {
-        [user.id]: user.photoUrl || '',
-        [clientId]: clientPhoto || selectedClient?.photoUrl || ''
-      };
-
-      const threadId = await ChatService.getOrCreateThread(
-        [user.id, clientId],
-        names,
-        photos
+      const clientRecord = selectedClient?.id === clientId ? selectedClient : clients.find(c => c.id === clientId);
+      const clientUser = await ChatService.resolveUserByProfileId(clientId) || await ChatService.resolveUserByEmail(clientRecord?.email || '');
+      if (!clientUser) {
+        showToast('No active user account found for this client', 'error');
+        return;
+      }
+      const threadId = await ChatService.getOrCreateDirectThreadWithUser(
+        user,
+        { ...clientUser, displayName: clientName || clientUser.displayName, photoUrl: clientPhoto || clientUser.photoUrl }
       );
-
       openThread(threadId);
 
     } catch (error) {
@@ -275,6 +269,7 @@ export const AdminClients = () => {
           />
 
           <BulkActionBar
+            selectedIds={selectedIds}
             selectedCount={selectedIds.length}
             totalCount={filteredClients.length}
             onClearSelection={() => setSelectedIds([])}

@@ -29,6 +29,8 @@ export const submitTimesheet = async (
         status: 'SUBMITTED' as const,
         readyForClientInvoice: false,
         readyForInterpreterInvoice: false,
+        clientInvoiceId: null,
+        interpreterInvoiceId: null,
         unitsBillableToClient: 0,
         unitsPayableToInterpreter: 0,
         clientAmountCalculated: 0,

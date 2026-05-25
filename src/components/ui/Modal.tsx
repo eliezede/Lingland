@@ -92,9 +92,9 @@ export const Modal: React.FC<ModalProps> = ({
   const UnsavedWarning = () => (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="absolute inset-0 bg-slate-950/60" />
-      <div className="relative bg-white dark:bg-slate-900 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-150">
+      <div className="relative mx-4 w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900 animate-in zoom-in-95 duration-150">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-amber-50 rounded-lg">
+          <div className="rounded-md bg-amber-50 p-2 dark:bg-amber-500/10">
             <AlertTriangle size={20} className="text-amber-600" />
           </div>
           <h4 className="text-base font-bold text-slate-900 dark:text-white">Unsaved Changes</h4>
@@ -105,13 +105,13 @@ export const Modal: React.FC<ModalProps> = ({
         <div className="flex justify-end gap-3">
           <button
             onClick={() => setShowUnsavedWarning(false)}
-            className="px-4 py-2 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+            className="rounded-md px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             Keep Editing
           </button>
           <button
             onClick={confirmClose}
-            className="px-4 py-2 text-sm font-bold bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
           >
             Discard Changes
           </button>
@@ -126,31 +126,30 @@ export const Modal: React.FC<ModalProps> = ({
         {showUnsavedWarning && <UnsavedWarning />}
         <div className="fixed inset-0 z-50 pointer-events-none">
           <div
-            className="absolute inset-0 bg-slate-950/20 backdrop-blur-[2px] pointer-events-auto"
+            className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px] pointer-events-auto"
             onClick={handleClose}
           />
           <div
-            className="absolute right-0 top-0 h-full bg-white dark:bg-slate-900 shadow-2xl border-l border-slate-200 dark:border-slate-800 transition-transform duration-300 pointer-events-auto flex flex-col"
-            style={{ width: '35vw', minWidth: '420px', maxWidth: '720px' }}
+            className="pointer-events-auto absolute right-0 top-0 flex h-full w-full flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 dark:border-slate-800 dark:bg-slate-900 sm:w-[520px] xl:w-[680px]"
           >
             {/* Drawer Header */}
-            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-900 sticky top-0 z-10">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5">
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white uppercase tracking-tight">{title}</h3>
+                <h3 className="text-base font-semibold tracking-normal text-slate-950 dark:text-white">{title}</h3>
               </div>
-              <button onClick={handleClose} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors">
+              <button onClick={handleClose} className="rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100" aria-label="Close">
                 <X size={20} />
               </button>
             </div>
 
             {/* Drawer Content */}
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
               {children}
             </div>
 
             {/* Drawer Footer */}
             {footer && (
-              <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+              <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/60 sm:px-5">
                 {footer}
               </div>
             )}
@@ -165,18 +164,18 @@ export const Modal: React.FC<ModalProps> = ({
       <>
         {showUnsavedWarning && <UnsavedWarning />}
         <div className="fixed inset-0 z-50 flex items-center justify-center p-0">
-          <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={handleClose} />
+          <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={handleClose} />
           <div className="relative w-full h-full bg-slate-50 dark:bg-slate-950 flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Wizard Header */}
-            <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-8 py-4 flex justify-between items-center sticky top-0 z-10">
-              <div className="flex items-center space-x-6">
-                <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">{title}</h3>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-8 sm:py-4">
+              <div className="flex min-w-0 items-center space-x-4 sm:space-x-6">
+                <h3 className="truncate text-lg font-semibold text-slate-950 dark:text-white sm:text-xl">{title}</h3>
                 {steps && (
-                  <div className="flex items-center space-x-2">
+                  <div className="hidden items-center space-x-2 md:flex">
                     {steps.map((step, i) => (
                       <React.Fragment key={i}>
                         <div className={`flex items-center space-x-2 ${step.active ? 'opacity-100' : 'opacity-40'}`}>
-                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${step.active ? 'bg-blue-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-500'}`}>
+                          <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${step.active ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-800'}`}>
                             {i + 1}
                           </span>
                           <span className="text-xs font-bold uppercase tracking-wider hidden sm:inline">{step.title}</span>
@@ -187,20 +186,20 @@ export const Modal: React.FC<ModalProps> = ({
                   </div>
                 )}
               </div>
-              <button onClick={handleClose} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400">
+              <button onClick={handleClose} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100" aria-label="Close">
                 <X size={24} />
               </button>
             </div>
 
             {/* Wizard Content */}
-            <div className="flex-1 overflow-y-auto p-8 flex justify-center">
+            <div className="flex flex-1 justify-center overflow-y-auto p-4 sm:p-8">
               <div className="w-full max-w-4xl animate-fade-in">
                 {children}
               </div>
             </div>
 
             {/* Wizard Footer */}
-            <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-8 py-4 flex justify-between items-center sticky bottom-0 z-10">
+            <div className="sticky bottom-0 z-10 flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-8 sm:py-4">
               <button
                 onClick={onBack}
                 disabled={!onBack || isLoading}
@@ -219,7 +218,7 @@ export const Modal: React.FC<ModalProps> = ({
                 <button
                   onClick={onNext}
                   disabled={!onNext || isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl font-bold flex items-center shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
+                  className="flex items-center rounded-md bg-blue-600 px-5 py-2.5 font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50 sm:px-8"
                 >
                   {isLoading ? 'Processing...' : nextLabel}
                   {!isLoading && <ChevronRight size={18} className="ml-2" />}
@@ -236,35 +235,35 @@ export const Modal: React.FC<ModalProps> = ({
     <>
       {showUnsavedWarning && <UnsavedWarning />}
       <div className="fixed inset-0 z-50 overflow-y-auto">
-        <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+        <div className="flex min-h-dvh items-end justify-center px-3 pb-0 pt-6 text-center sm:items-center sm:p-6">
           <div
             className="fixed inset-0 transition-opacity bg-slate-950/60 backdrop-blur-sm"
             onClick={handleClose}
             aria-hidden="true"
           />
-          <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
           <div
-            className={`inline-block align-bottom bg-white dark:bg-slate-900 rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle w-full border border-slate-200 dark:border-slate-800 ${maxWidthClasses[maxWidth]} animate-in zoom-in-95 duration-200`}
+            className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white text-left shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900 sm:rounded-lg ${maxWidthClasses[maxWidth]} animate-in zoom-in-95 duration-200`}
           >
-            <div className="px-6 pt-6 pb-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
+                <h3 className="min-w-0 truncate pr-4 text-lg font-semibold text-slate-950 dark:text-white">
                   {title}
                 </h3>
                 <button
                   onClick={handleClose}
-                  className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors"
+                  className="rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                  aria-label="Close"
                 >
                   <X size={20} />
                 </button>
-              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
               <div className="text-slate-600 dark:text-slate-300">
                 {children}
               </div>
             </div>
 
             {footer && (
-              <div className="bg-slate-50 dark:bg-slate-800/50 px-6 py-4 sm:flex sm:flex-row-reverse gap-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/60 sm:flex sm:flex-row-reverse sm:gap-3 sm:px-5">
                 {footer}
               </div>
             )}

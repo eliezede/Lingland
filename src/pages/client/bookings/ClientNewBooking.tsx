@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useCreateClientBooking } from '../../../hooks/useClientHooks';
+import { useClientProfile, useCreateClientBooking } from '../../../hooks/useClientHooks';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { ServiceType, BookingStatus } from '../../../types';
@@ -8,9 +8,9 @@ import {
   ChevronLeft, Phone, Mail, HelpCircle, Info, AlertTriangle, 
   CreditCard, Calendar, Clock, MessageSquare, MapPin, Video,
   CheckCircle2, ArrowRight, ShieldCheck, BadgeCheck, FileText,
-  User, Building2, Stethoscope, Loader2, Globe2
+  User, Building2, Stethoscope, Loader2, Globe2, X
 } from 'lucide-react';
-import { InterpreterService } from '../../../services/api';
+import { InterpreterService, StorageService } from '../../../services/api';
 import { InfoCard } from '../../../components/ui/InfoCard';
 import { Modal } from '../../../components/ui/Modal';
 
@@ -30,11 +30,13 @@ export const ClientNewBooking = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { createBooking } = useCreateClientBooking();
+  const { profile: clientProfile, loading: profileLoading } = useClientProfile(user?.profileId);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [loadingLangs, setLoadingLangs] = useState(true);
   const [helpModal, setHelpModal] = useState<{ isOpen: boolean; title: string; content: React.ReactNode } | null>(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   
   const [formData, setFormData] = useState({
     serviceType: ServiceType.FACE_TO_FACE,
@@ -58,7 +60,7 @@ export const ClientNewBooking = () => {
     translationFormat: 'Email (PDF)',
     translationFormatOther: '',
     quoteRequested: false,
-    sourceFiles: [] as string[],
+    sourceFiles: [] as { name: string; url: string }[],
     deliveryEmail: '',
     agreedToTerms: false,
     gdprConsent: false
@@ -83,11 +85,52 @@ export const ClientNewBooking = () => {
     fetchLangs();
   }, []);
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !user?.id) return;
+
+    setUploadingFiles(true);
+    const uploaded = [...formData.sourceFiles];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const path = `bookings/clients/${user.id}/${Date.now()}_${file.name}`;
+        const url = await StorageService.uploadFile(file, path);
+        uploaded.push({ name: file.name, url });
+      } catch (error) {
+        console.error('Failed to upload source file', error);
+        showToast(`Failed to upload ${file.name}`, 'error');
+      }
+    }
+    setFormData(prev => ({ ...prev, sourceFiles: uploaded }));
+    setUploadingFiles(false);
+    e.target.value = '';
+  };
+
+  const removeFile = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      sourceFiles: prev.sourceFiles.filter((_, i) => i !== index)
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.profileId) return;
+    if (clientProfile?.status === 'SUSPENDED') {
+      showToast('Your client account is suspended. Please contact Lingland before creating new bookings.', 'error');
+      return;
+    }
     if (!formData.languageTo) {
       showToast('Please select a target language', 'error');
+      return;
+    }
+    if (isTranslation && !formData.languageFrom) {
+      showToast('Please select a source language', 'error');
+      return;
+    }
+    if (isTranslation && formData.sourceFiles.length === 0) {
+      showToast('Please upload at least one document for translation', 'error');
       return;
     }
 
@@ -105,8 +148,10 @@ export const ClientNewBooking = () => {
         costCode: formData.requiresCostCode === 'YES' ? formData.costCode : 'NOT_APPLICABLE',
         expectedEndTime,
         clientId: user.profileId,
-        clientName: user.displayName,
+        clientName: clientProfile?.companyName || user.displayName,
         requestedByUserId: user.id,
+        organizationId: clientProfile?.organizationId || 'lingland-main',
+        deliveryEmail: formData.deliveryEmail || user.email,
         status: BookingStatus.INCOMING
       };
 
@@ -446,9 +491,22 @@ export const ClientNewBooking = () => {
                       <FileText className="mx-auto text-slate-300 group-hover:text-blue-400 mb-3 transition-colors" size={40} />
                       <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-1">Source Files</h4>
                       <p className="text-[10px] text-slate-400 font-bold mb-4">Please upload the documents for translation</p>
-                      <button type="button" className="px-6 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm">
-                        Select Documents
-                      </button>
+                      <input id="client-source-files" type="file" multiple className="hidden" onChange={handleFileChange} disabled={uploadingFiles} />
+                      <label htmlFor="client-source-files" className={`inline-flex px-6 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm cursor-pointer ${uploadingFiles ? 'opacity-50' : ''}`}>
+                        {uploadingFiles ? 'Uploading...' : 'Select Documents'}
+                      </label>
+                      {formData.sourceFiles.length > 0 && (
+                        <div className="mt-5 space-y-2 text-left">
+                          {formData.sourceFiles.map((file, idx) => (
+                            <div key={`${file.url}-${idx}`} className="flex items-center justify-between rounded-xl bg-white border border-slate-100 px-3 py-2 text-xs font-medium text-slate-700">
+                              <span className="truncate pr-3">{file.name}</span>
+                              <button type="button" onClick={() => removeFile(idx)} className="text-slate-400 hover:text-red-500">
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                    </div>
                 </div>
               </div>
@@ -593,7 +651,7 @@ export const ClientNewBooking = () => {
               </button>
               <button 
                 type="submit" 
-                disabled={isSubmitting || availableLanguages.length === 0}
+                disabled={isSubmitting || uploadingFiles || profileLoading || availableLanguages.length === 0 || clientProfile?.status === 'SUSPENDED'}
                 className="px-10 py-4 bg-slate-900 text-white font-bold text-lg rounded-xl shadow-xl shadow-slate-900/10 hover:bg-black hover:scale-[1.01] active:scale-95 transition-all flex items-center disabled:opacity-50"
               >
                 {isSubmitting ? (

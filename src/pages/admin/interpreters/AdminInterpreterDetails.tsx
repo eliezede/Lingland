@@ -4,7 +4,7 @@ import {
   InterpreterService, BookingService, BillingService, ChatService, NotificationService, EmailService, UserService
 } from '../../../services/api';
 import {
-  Interpreter, Booking, InterpreterInvoice, BookingStatus, NotificationType
+  Interpreter, Booking, InterpreterInvoice, BookingStatus, NotificationType, UserRole
 } from '../../../types';
 import { Spinner } from '../../../components/ui/Spinner';
 import { Card } from '../../../components/ui/Card';
@@ -98,18 +98,14 @@ export const AdminInterpreterDetails = () => {
     if (!interpreter || !user) return;
     setProcessingChat(true);
     try {
-      const names = {
-        [user.id]: user.displayName || 'Admin',
-        [interpreter.id]: interpreter.name
-      };
-      const photos = {
-        [user.id]: user.photoUrl || '',
-        [interpreter.id]: interpreter.photoUrl || ''
-      };
-      const threadId = await ChatService.getOrCreateThread(
-        [user.id, interpreter.id],
-        names,
-        photos
+      const interpreterUser = await ChatService.resolveUserByProfileId(interpreter.id) || await ChatService.resolveUserByEmail(interpreter.email);
+      if (!interpreterUser) {
+        showToast('No active user account found for this interpreter', 'error');
+        return;
+      }
+      const threadId = await ChatService.getOrCreateDirectThreadWithUser(
+        user,
+        { ...interpreterUser, displayName: interpreter.name, photoUrl: interpreter.photoUrl || interpreterUser.photoUrl }
       );
       openThread(threadId);
     } finally {
@@ -122,6 +118,18 @@ export const AdminInterpreterDetails = () => {
     setSendingInvite(true);
     try {
       const now = new Date().toISOString();
+      const existingUser = await UserService.getByEmail(interpreter.email);
+      if (!existingUser) {
+        await UserService.create({
+          displayName: interpreter.name,
+          email: interpreter.email.toLowerCase(),
+          role: UserRole.INTERPRETER,
+          status: 'IMPORTED',
+          profileId: interpreter.id,
+          createdAt: now,
+          updatedAt: now
+        });
+      }
       await UserService.sendActivationInvite(interpreter.email, interpreter.name);
       await InterpreterService.updateProfile(interpreter.id, { activationEmailSentAt: now });
       
@@ -215,7 +223,10 @@ export const AdminInterpreterDetails = () => {
     }
 
     try {
-      await InterpreterService.updateProfile(id, { onboarding: updatedOnboarding });
+      await InterpreterService.updateProfile(id, {
+        onboarding: updatedOnboarding,
+        ...(allVerified ? { status: 'ACTIVE' as const, isAvailable: true } : {})
+      });
       showToast(`${docKey.toUpperCase()} verified`, 'success');
       
       await NotificationService.notify(
@@ -253,7 +264,11 @@ export const AdminInterpreterDetails = () => {
     updatedOnboarding.overallStatus = 'DOCUMENTS_PENDING';
 
     try {
-      await InterpreterService.updateProfile(id, { onboarding: updatedOnboarding });
+      await InterpreterService.updateProfile(id, {
+        onboarding: updatedOnboarding,
+        status: 'ONBOARDING',
+        isAvailable: false
+      });
       showToast(`${docKey.toUpperCase()} rejected`, 'info');
       
       await NotificationService.notify(

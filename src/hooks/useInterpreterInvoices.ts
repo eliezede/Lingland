@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BillingService } from '../services/api';
 import { Timesheet, InterpreterInvoice } from '../types';
+import { getTimesheetInterpreterAmount } from '../utils/interpreterFlow';
 
 export const useInterpreterInvoices = (interpreterId: string | undefined) => {
   const [readyToInvoice, setReadyToInvoice] = useState<Timesheet[]>([]);
@@ -28,14 +29,14 @@ export const useInterpreterInvoices = (interpreterId: string | undefined) => {
     }
   };
 
-  const createInvoice = async (timesheetIds: string[], ref: string) => {
+  const createInvoice = async (timesheetIds: string[], ref: string, uploadedPdfUrl?: string) => {
     if (!interpreterId) return;
     
     const amount = readyToInvoice
       .filter(t => timesheetIds.includes(t.id))
-      .reduce((sum, t) => sum + (t.totalInterpreterAmount || 0), 0);
+      .reduce((sum, t) => sum + getTimesheetInterpreterAmount(t), 0);
 
-    await BillingService.createInterpreterInvoiceUpload(interpreterId, timesheetIds, ref, amount);
+    await BillingService.createInterpreterInvoiceUpload(interpreterId, timesheetIds, ref, amount, uploadedPdfUrl);
     await loadData();
   };
 

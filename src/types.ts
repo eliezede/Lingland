@@ -173,7 +173,7 @@ export interface Booking {
   translationFormat?: string;
   translationFormatOther?: string;
   quoteRequested?: boolean;
-  sourceFiles?: string[];
+  sourceFiles?: Array<string | { name?: string; url?: string }>;
   deliveryEmail?: string;
   gdprConsent?: boolean;
   agreedToTerms?: boolean;
@@ -382,8 +382,11 @@ export interface Timesheet extends TenantScopedEntity {
   readyForInterpreterInvoice: boolean;
   unitsBillableToClient: number;
   unitsPayableToInterpreter: number;
-  clientInvoiceId?: string;
-  interpreterInvoiceId?: string;
+  clientInvoiceId?: string | null;
+  interpreterInvoiceId?: string | null;
+  nonExecutionReason?: string;
+  billableCancellation?: boolean;
+  exceptionType?: 'CANCELLATION' | 'NO_SHOW' | 'DID_NOT_ATTEND';
   supportingDocumentUrl?: string;
   clientSignatureUrl?: string;
   clientNameSigned?: string;
@@ -431,6 +434,9 @@ export interface ClientInvoice extends TenantScopedEntity {
   dueDate: string;
   periodStart: string;
   periodEnd: string;
+  subtotal?: number;
+  vatRate?: number;
+  vatAmount?: number;
   totalAmount: number;
   currency: string;
   items: ClientInvoiceItem[];

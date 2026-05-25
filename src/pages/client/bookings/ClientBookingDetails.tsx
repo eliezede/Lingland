@@ -12,6 +12,16 @@ export const ClientBookingDetails = () => {
   const { user } = useAuth();
   const { booking, loading } = useClientBookingById(user?.profileId, id);
   const isTranslation = booking?.serviceType === ServiceType.TRANSLATION;
+  const formatCreatedAt = (value: any) => {
+    if (!value) return 'Unknown';
+    const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleDateString();
+  };
+  const getSourceFile = (file: string | { name?: string; url?: string }) => {
+    const url = typeof file === 'string' ? file : file.url || '';
+    const name = typeof file === 'string' ? file.split('/').pop() || 'Source file' : file.name || url.split('/').pop() || 'Source file';
+    return { url, name };
+  };
 
   if (loading) return <div className="p-8">Loading details...</div>;
   if (!booking) return <div className="p-8 text-red-500">Booking not found.</div>;
@@ -25,8 +35,8 @@ export const ClientBookingDetails = () => {
             <ChevronLeft size={24} className="text-gray-600" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Booking #{booking.id.substring(0, 6).toUpperCase()}</h1>
-            <p className="text-gray-500 text-sm">Created on {new Date(booking.createdAt || Date.now()).toLocaleDateString()}</p>
+            <h1 className="text-2xl font-bold text-gray-900">Booking {booking.bookingRef || `#${booking.id.substring(0, 6).toUpperCase()}`}</h1>
+            <p className="text-gray-500 text-sm">Created on {formatCreatedAt(booking.createdAt)}</p>
           </div>
         </div>
         <StatusBadge status={booking.status} />
@@ -134,17 +144,22 @@ export const ClientBookingDetails = () => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-bold text-gray-900 mb-4 border-b pb-2">Source Files</h3>
               <div className="space-y-3">
-                {booking.sourceFiles.map((file: string, idx: number) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 group hover:border-blue-200 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-white rounded-lg shadow-sm group-hover:bg-blue-50 transition-colors">
-                        <FileText size={18} className="text-blue-600" />
+                {booking.sourceFiles.map((file: any, idx: number) => {
+                  const sourceFile = getSourceFile(file);
+                  return (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 group hover:border-blue-200 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="p-2 bg-white rounded-lg shadow-sm group-hover:bg-blue-50 transition-colors">
+                          <FileText size={18} className="text-blue-600" />
+                        </div>
+                        <span className="text-sm font-medium text-slate-700 truncate">{sourceFile.name}</span>
                       </div>
-                      <span className="text-sm font-medium text-slate-700">{file.split('/').pop()}</span>
+                      {sourceFile.url && (
+                        <a href={sourceFile.url} target="_blank" rel="noreferrer" className="text-xs font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors">Download</a>
+                      )}
                     </div>
-                    <a href={file} target="_blank" rel="noreferrer" className="text-xs font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors">Download</a>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

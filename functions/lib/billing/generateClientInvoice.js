@@ -56,11 +56,11 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
     const timesheetsSnapshot = await db.collection('timesheets')
         .where('clientId', '==', clientId)
         .where('readyForClientInvoice', '==', true)
-        .where('clientInvoiceId', '==', null)
         .where('actualStart', '>=', periodStart)
         .where('actualStart', '<=', periodEnd)
         .get();
-    if (timesheetsSnapshot.empty) {
+    const eligibleTimesheets = timesheetsSnapshot.docs.filter(doc => !doc.data().clientInvoiceId);
+    if (eligibleTimesheets.length === 0) {
         return { success: false, message: 'No eligible timesheets found for this period.' };
     }
     // 2. Get Client Details
@@ -89,7 +89,7 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
     let subtotal = 0;
     const lineItems = [];
     const batch = db.batch();
-    timesheetsSnapshot.docs.forEach(tsDoc => {
+    eligibleTimesheets.forEach(tsDoc => {
         const ts = tsDoc.data();
         const lineTotal = ts.clientAmountCalculated || 0;
         subtotal += lineTotal;
@@ -103,11 +103,17 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
             description: `Interpreting/Translation Service — Job: ${ts.bookingId.substring(0, 8).toUpperCase()} (${new Date(ts.actualStart).toLocaleDateString('en-GB')})`,
             units: ts.unitsBillableToClient || 0,
             rate: ts.unitsBillableToClient > 0 ? (ts.clientAmountCalculated / ts.unitsBillableToClient) : 0,
-            lineAmount: lineTotal
+            lineAmount: lineTotal,
+            total: lineTotal
         });
         // Link timesheet to this invoice
         batch.update(tsDoc.ref, {
             clientInvoiceId: invoiceRef.id,
+            readyForClientInvoice: false,
+            status: 'INVOICED',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        batch.update(db.collection('bookings').doc(ts.bookingId), {
             status: 'INVOICED',
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
@@ -160,7 +166,7 @@ Kind regards,<br>The Lingland Finance Team`
         success: true,
         invoiceId: invoiceRef.id,
         invoiceNumber,
-        count: timesheetsSnapshot.size,
+        count: eligibleTimesheets.length,
         subtotal: Number(subtotal.toFixed(2)),
         vatAmount,
         total: totalWithVat

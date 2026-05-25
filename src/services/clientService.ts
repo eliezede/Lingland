@@ -67,16 +67,17 @@ export const ClientService = {
   },
 
   createClientFromGuest: async (guest: GuestContact): Promise<Client> => {
+    const cleanEmail = guest.email.trim().toLowerCase();
     const newClient: Client = {
       id: `c-${Date.now()}`,
       companyName: guest.organisation || guest.name,
       contactPerson: guest.name,
-      email: guest.email,
+      email: cleanEmail,
       status: 'GUEST',
       billingAddress: 'Address Pending Update',
       paymentTermsDays: 30,
       defaultCostCodeType: 'PO',
-      organizationId: 'org1', // Default system org
+      organizationId: 'lingland-main',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

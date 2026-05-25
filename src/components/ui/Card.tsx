@@ -19,9 +19,9 @@ export const Card: React.FC<CardProps> = ({ children, className = '', padding = 
     <div 
       className={`
         bg-white dark:bg-slate-900 
-        rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 
-        transition-all duration-300
-        ${onClick ? 'cursor-pointer hover:shadow-md hover:border-blue-300 dark:hover:border-blue-800 active:scale-[0.99]' : ''}
+        rounded-lg shadow-sm border border-slate-200/80 dark:border-slate-800
+        transition-colors duration-150
+        ${onClick ? 'cursor-pointer hover:border-blue-300 hover:bg-slate-50/60 dark:hover:border-blue-800 dark:hover:bg-slate-800/40' : ''}
         ${paddingClasses[padding]} 
         ${className}
       `}

@@ -4,8 +4,9 @@ import { db } from './firebaseConfig';
 import { AirtableService } from './airtableService';
 import { Interpreter, User, UserRole } from '../types';
 import { InterpreterService } from './interpreterService';
+import { ensureInterpreterOnboarding } from '../utils/interpreterFlow';
 
-import { EmailService } from './emailService';
+import { UserService } from './userService';
 
 export const MigrationService = {
   /**
@@ -35,12 +36,22 @@ export const MigrationService = {
         if (!userSnap.empty && userSnap.docs[0].data().profileId) {
           // Already has a profile, maybe update?
           console.log(`User ${data.email} already exists with profile, updating...`);
-          await InterpreterService.updateProfile(userSnap.docs[0].data().profileId, data as any);
-          interpreterProfile = { id: userSnap.docs[0].data().profileId };
+          const existingUser = userSnap.docs[0].data();
+          await InterpreterService.updateProfile(existingUser.profileId, {
+            ...(data as any),
+            status: existingUser.status === 'ACTIVE' ? ((data as any).status || 'ACTIVE') : 'IMPORTED',
+            onboarding: ensureInterpreterOnboarding(data as any),
+          });
+          interpreterProfile = { id: existingUser.profileId };
           skipped++;
         } else {
           console.log(`Creating new profile for ${data.email}...`);
-          interpreterProfile = await InterpreterService.create(data as any);
+          interpreterProfile = await InterpreterService.create({
+            ...(data as any),
+            status: 'IMPORTED',
+            isAvailable: false,
+            onboarding: ensureInterpreterOnboarding(data as any),
+          });
           
           // 3. Create/Update User Document
           const userDocData: Omit<User, 'id'> = {
@@ -94,23 +105,7 @@ export const MigrationService = {
           }
         }
 
-        // Resolve Portal URL (Base URL for links)
-        let baseUrl = window.location.origin;
-        try {
-          const { SystemService } = await import('./systemService');
-          const settings = await SystemService.getSettings();
-          if (settings?.general?.portalUrl) {
-            baseUrl = settings.general.portalUrl;
-          } else if (baseUrl.includes('localhost')) {
-            baseUrl = 'https://lingland-2e52f.web.app';
-          }
-        } catch (e) {}
-
-        const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-        const activationLink = `${cleanBaseUrl}/#/activate?email=${encodeURIComponent(userData.email)}`;
-        
-        // Queue email via EmailService (which handles pre-rendering and 'message' field)
-        await EmailService.sendActivationEmail(userData.email, userData.displayName, activationLink);
+        await UserService.sendActivationInvite(userData.email, userData.displayName);
 
         // Mark as sent on interpreter profile
         if (userData.profileId) {

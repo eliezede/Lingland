@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, MoreHorizontal, Check, Settings2 } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, Check } from 'lucide-react';
 import { ContextMenu } from './ContextMenu';
 
 interface Column<T> {
@@ -82,7 +82,7 @@ export function Table<T extends { [key: string]: any }>({
 
     if (isLoading) {
         return (
-            <div className="w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="w-full overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                 <div className="animate-pulse">
                     <div className="h-12 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800" />
                     {[1, 2, 3, 4, 5].map(i => (
@@ -94,16 +94,16 @@ export function Table<T extends { [key: string]: any }>({
     }
 
     return (
-        <div className="w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
+        <div className="flex w-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                    <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                <table className="w-full min-w-[760px] border-collapse text-left">
+                    <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-slate-200 bg-slate-50/95 dark:border-slate-800 dark:bg-slate-900/95">
                             {selectable && (
-                                <th className="w-12 px-6 py-4">
+                                <th className="w-12 px-4 py-3">
                                     <div
                                         onClick={toggleSelectAll}
-                                        className={`w-5 h-5 rounded border flex items-center justify-center cursor-pointer transition-colors
+                                        className={`flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-colors
                       ${selectedIds.length === flatData.length && flatData.length > 0
                                                 ? 'bg-blue-600 border-blue-600'
                                                 : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700'
@@ -116,18 +116,18 @@ export function Table<T extends { [key: string]: any }>({
                             {columns.map((col, i) => (
                                 <th
                                     key={i}
-                                    className={`px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] whitespace-nowrap ${col.className || ''}`}
+                                    className={`whitespace-nowrap px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 ${col.className || ''}`}
                                 >
                                     {col.header}
                                 </th>
                             ))}
-                            <th className="w-12 px-6 py-4" />
+                            <th className="w-12 px-4 py-3" />
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {(groups ? groups.length === 0 : data.length === 0) ? (
                             <tr>
-                                <td colSpan={columns.length + (selectable ? 2 : 1)} className="px-6 py-12 text-center text-slate-500 dark:text-slate-400 text-sm italic">
+                                <td colSpan={columns.length + (selectable ? 2 : 1)} className="px-6 py-14 text-center text-sm text-slate-500 dark:text-slate-400">
                                     {emptyMessage}
                                 </td>
                             </tr>
@@ -136,10 +136,10 @@ export function Table<T extends { [key: string]: any }>({
                                 groups.map(group => (
                                     <React.Fragment key={group.key}>
                                         <tr 
-                                            className="bg-slate-100/80 dark:bg-slate-800/80 border-y border-slate-200 dark:border-slate-800 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors"
+                                            className="cursor-pointer border-y border-slate-200 bg-slate-100/80 transition-colors hover:bg-slate-200/60 dark:border-slate-800 dark:bg-slate-800/80 dark:hover:bg-slate-700/50"
                                             onClick={() => toggleGroup(group.key)}
                                         >
-                                            <td colSpan={columns.length + (selectable ? 2 : 1)} className="px-6 py-2.5">
+                                            <td colSpan={columns.length + (selectable ? 2 : 1)} className="px-4 py-2.5">
                                                 <div className="flex items-center gap-3">
                                                     <ChevronDown size={14} className={`text-slate-400 transition-transform ${collapsedGroups.has(group.key) ? '-rotate-90' : ''}`} />
                                                     <span className="font-black text-[11px] uppercase tracking-widest text-slate-700 dark:text-slate-300">
@@ -162,22 +162,6 @@ export function Table<T extends { [key: string]: any }>({
                 </table>
             </div>
 
-            {/* Bulk Action Bar */}
-            {selectable && selectedIds.length > 0 && (
-                <div className="bg-blue-600 px-6 py-3 flex justify-between items-center animate-in slide-in-from-bottom-2 duration-300">
-                    <div className="flex items-center space-x-4">
-                        <span className="text-white text-sm font-bold">{selectedIds.length} records selected</span>
-                        <div className="h-4 w-px bg-blue-500" />
-                        <button className="text-white/80 hover:text-white text-sm font-bold transition-colors">Apply bulk action</button>
-                    </div>
-                    <button
-                        onClick={() => onSelectionChange?.([])}
-                        className="text-white/60 hover:text-white transition-colors"
-                    >
-                        Clear selection
-                    </button>
-                </div>
-            )}
         </div>
     );
 
@@ -192,13 +176,13 @@ export function Table<T extends { [key: string]: any }>({
                 onMouseLeave={() => setHoveredRow(null)}
                 onClick={() => onRowClick?.(item)}
                 onDoubleClick={() => onRowDoubleClick?.(item)}
-                className={`group transition-all duration-200 cursor-pointer
+                className={`group transition-colors duration-150 ${onRowClick || onRowDoubleClick ? 'cursor-pointer' : ''}
                     ${isSelected ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'}
                     ${isHovered ? 'relative z-10' : ''}
                 `}
             >
                 {selectable && (
-                    <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                         <div
                             onClick={() => toggleSelectItem(id)}
                             className={`w-5 h-5 rounded border flex items-center justify-center cursor-pointer transition-colors
@@ -212,7 +196,7 @@ export function Table<T extends { [key: string]: any }>({
                     </td>
                 )}
                 {columns.map((col, i) => (
-                    <td key={i} className={`px-6 py-4 text-sm text-slate-700 dark:text-slate-300 ${col.className || ''}`}>
+                    <td key={i} className={`px-4 py-3.5 text-sm text-slate-700 dark:text-slate-300 ${col.className || ''}`}>
                         {col.render ? col.render(item) : (
                             typeof col.accessor === 'function'
                                 ? col.accessor(item)
@@ -220,8 +204,8 @@ export function Table<T extends { [key: string]: any }>({
                         )}
                     </td>
                 ))}
-                <td className="px-6 py-4 text-right">
-                    <div className={`transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+                <td className="px-4 py-3.5 text-right">
+                    <div className={`opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 ${isHovered ? 'sm:opacity-100' : ''}`}>
                         <button 
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -238,7 +222,8 @@ export function Table<T extends { [key: string]: any }>({
                                     row.dispatchEvent(event);
                                 }
                             }}
-                            className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-500"
+                            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                            aria-label="Open row actions"
                         >
                             <MoreHorizontal size={18} />
                         </button>

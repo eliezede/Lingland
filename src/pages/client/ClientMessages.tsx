@@ -1,4 +1,4 @@
 import React from 'react';
 import { ChatWorkspace } from '../../components/chat/ChatWorkspace';
 
-export const InterpreterMessages = () => <ChatWorkspace mode="interpreter" />;
+export const ClientMessages = () => <ChatWorkspace mode="client" />;

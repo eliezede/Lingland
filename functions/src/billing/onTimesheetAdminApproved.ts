@@ -35,9 +35,20 @@ export const onTimesheetAdminApproved = functions.firestore
       let travelRate = 12; // Base fallback
       let mileageRate = 0.45;
 
-      if (interpreter.rates) {
+      const normalizeMode = (mode: string) => {
+        if (['F2F', 'Face-to-Face'].includes(mode)) return 'F2F';
+        if (['VIDEO', 'Videocall', 'Video', 'ONLINE'].includes(mode)) return 'VIDEO';
+        if (['PHONE', 'Over the Phone', 'Phone'].includes(mode)) return 'PHONE';
+        if (['CANCELLATION', 'cancellation fees'].includes(mode)) return 'CANCELLATION';
+        return 'F2F';
+      };
+
+      const mode = normalizeMode(newData.sessionMode || 'F2F');
+      const isTranslation = booking.serviceCategory === 'TRANSLATION' || booking.serviceType === 'TRANSLATION';
+      const isCancellation = mode === 'CANCELLATION' || !!newData.nonExecutionReason;
+
+      if (interpreter.rates && !isCancellation && !isTranslation) {
         const rates = interpreter.rates;
-        const mode = newData.sessionMode || 'F2F';
         const isOOH = booking.isOOH || false;
 
         if (isOOH) {
@@ -67,18 +78,34 @@ export const onTimesheetAdminApproved = functions.firestore
       }
       if (durationHours < 0) durationHours = 0;
 
-      // Apply minimums
-      const unitsClient = Math.max(durationHours, clientRate.minimumUnits || 1);
-      const unitsInterp = Math.max(durationHours, 1);
+      let unitsClient = Math.max(durationHours, clientRate.minimumUnits || 1);
+      let unitsInterp = Math.max(durationHours, 1);
 
       // 6. Calculate Totals for Interpreter
-      const sessionEarnings = unitsInterp * sessionRate;
-      const travelEarnings = ((newData.travelTimeMinutes || 0) / 60) * travelRate;
-      const mileageEarnings = (newData.mileage || 0) * mileageRate;
-      const extras = (newData.parking || 0) + (newData.transport || 0);
+      let travelEarnings = ((newData.travelTimeMinutes || 0) / 60) * travelRate;
+      let mileageEarnings = (newData.mileage || 0) * mileageRate;
+      let extras = (newData.parking || 0) + (newData.transport || 0);
+      let interpAmount = unitsInterp * sessionRate + travelEarnings + mileageEarnings + extras;
+      let clientAmount = unitsClient * clientRate.amountPerUnit; // Oversimplified for now
 
-      const interpAmount = sessionEarnings + travelEarnings + mileageEarnings + extras;
-      const clientAmount = unitsClient * clientRate.amountPerUnit; // Oversimplified for now
+      if (isTranslation) {
+        const quantity = Number(newData.wordCount || newData.unitsBillableToClient || newData.unitsPayableToInterpreter || 0);
+        const unitPrice = Number(newData.unitPrice || 0);
+        unitsClient = quantity;
+        unitsInterp = quantity;
+        travelEarnings = 0;
+        mileageEarnings = 0;
+        extras = 0;
+        interpAmount = Number((newData.interpreterAmountCalculated || (quantity * unitPrice)).toFixed(2));
+        clientAmount = Number((newData.clientAmountCalculated || (quantity * unitPrice)).toFixed(2));
+      }
+
+      if (isCancellation) {
+        unitsClient = Number(newData.unitsBillableToClient || 0);
+        unitsInterp = Number(newData.unitsPayableToInterpreter || 0);
+        interpAmount = Number(newData.interpreterAmountCalculated || newData.totalToPay || 0);
+        clientAmount = Number(newData.clientAmountCalculated || 0);
+      }
 
       // 5. Update Timesheet
       return change.after.ref.update({
@@ -87,7 +114,7 @@ export const onTimesheetAdminApproved = functions.firestore
         clientAmountCalculated: Number(clientAmount.toFixed(2)),
         interpreterAmountCalculated: Number(interpAmount.toFixed(2)),
         readyForClientInvoice: true,
-        readyForInterpreterInvoice: true,
+        readyForInterpreterInvoice: Boolean(newData.interpreterId && newData.interpreterId !== 'unassigned' && interpAmount > 0),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
     }

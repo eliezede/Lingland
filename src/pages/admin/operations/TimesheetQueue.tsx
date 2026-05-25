@@ -49,6 +49,7 @@ export const TimesheetQueue = () => {
             await BillingService.approveTimesheetByBookingId(job.id);
             setIsAuditModalOpen(false);
             refresh();
+            showToast("Timesheet authorized for billing", "success");
         } catch (e) {
             showToast("Failed to verify timesheet", "error");
         }
@@ -66,6 +67,7 @@ export const TimesheetQueue = () => {
         setSelectedIds([]);
         setIsBulkLoading(false);
         refresh();
+        showToast(`${done} claim${done !== 1 ? 's' : ''} authorized for billing`, 'success');
     };
 
     const columns = [
@@ -75,6 +77,9 @@ export const TimesheetQueue = () => {
                 <div className="flex flex-col">
                     <span className="font-bold text-slate-900 dark:text-white">{job.bookingRef || 'TBD'}</span>
                     <span className="text-[10px] text-slate-500 uppercase">{job.clientName}</span>
+                    {job.adminNotes?.includes('Not executed:') && (
+                        <span className="mt-1 inline-flex w-fit rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-700 border border-amber-100">Exception</span>
+                    )}
                 </div>
             )
         },
@@ -137,11 +142,13 @@ export const TimesheetQueue = () => {
                         selectedIds={selectedIds}
                         onSelectionChange={setSelectedIds}
                         onRowClick={openAuditHub}
+                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`)}
                         isLoading={loading}
                         emptyMessage="No pending timesheets for review."
                     />
 
                     <BulkActionBar
+                        selectedIds={selectedIds}
                         selectedCount={selectedIds.length}
                         totalCount={pendingTimesheets.length}
                         entityLabel="claim"
@@ -222,8 +229,13 @@ export const TimesheetQueue = () => {
                                 <div className="space-y-4">
                                     <div>
                                         <p className="text-[10px] text-blue-500 uppercase font-bold">Actual Attendance</p>
-                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-200">{selectedJob.date}</p>
-                                        <p className="text-lg font-black text-blue-700 dark:text-blue-100">{selectedJob.startTime}</p>
+                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-200">
+                                            {selectedTimesheet?.actualStart ? new Date(selectedTimesheet.actualStart).toLocaleDateString() : selectedJob.date}
+                                        </p>
+                                        <p className="text-lg font-black text-blue-700 dark:text-blue-100">
+                                            {selectedTimesheet?.actualStart ? new Date(selectedTimesheet.actualStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : selectedJob.startTime}
+                                            {selectedTimesheet?.actualEnd ? ` - ${new Date(selectedTimesheet.actualEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                        </p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-blue-500 uppercase font-bold">
@@ -259,7 +271,9 @@ export const TimesheetQueue = () => {
                                         <p className="text-[10px] text-green-600 uppercase font-black mb-1">Comparison Result</p>
                                         <div className="flex items-center space-x-2">
                                             <CheckCircle2 size={14} className="text-green-500" />
-                                            <p className="text-xs font-bold text-slate-900 dark:text-white uppercase">Matched (100% Correlation)</p>
+                                            <p className="text-xs font-bold text-slate-900 dark:text-white uppercase">
+                                                {selectedTimesheet?.nonExecutionReason ? `Exception: ${selectedTimesheet.nonExecutionReason}` : 'Ready for Verification'}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>

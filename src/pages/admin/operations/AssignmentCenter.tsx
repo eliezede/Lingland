@@ -13,7 +13,7 @@ import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { BookingService } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
-import { assignInterpreterAction, createDependencies } from '../../../ui/actions';
+import { createDependencies, updateJobStatusAction } from '../../../ui/actions';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
 import { InterpreterAllocationDrawer } from '../../../components/operations/InterpreterAllocationDrawer';
 
@@ -38,10 +38,18 @@ export const AssignmentCenter = () => {
     };
 
 
-    const handleBulkBlast = (ids: string[]) => {
-        showToast(`Offering ${ids.length} jobs to top-ranked interpreters...`, 'info');
-        // Logic for mass offering
+    const handleBulkOpenForOffers = async (ids: string[]) => {
+        if (ids.length === 0) return;
+        let done = 0;
+        await Promise.allSettled(ids.map(async id => {
+            try {
+                await updateJobStatusAction(id, BookingStatus.OPENED, actionsDeps);
+                done++;
+            } catch { /* silent */ }
+        }));
+        showToast(`${done} job${done !== 1 ? 's' : ''} opened for interpreter offers`, 'success');
         setSelectedIds([]);
+        refresh();
     };
 
     const handleBulkCancel = async (ids: string[]) => {
@@ -52,8 +60,16 @@ export const AssignmentCenter = () => {
             variant: 'danger'
         });
         if (ok) {
-            showToast(`${ids.length} jobs cancelled`, 'success');
+            let done = 0;
+            await Promise.allSettled(ids.map(async id => {
+                try {
+                    await updateJobStatusAction(id, BookingStatus.CANCELLED, actionsDeps);
+                    done++;
+                } catch { /* silent */ }
+            }));
+            showToast(`${done} job${done !== 1 ? 's' : ''} cancelled`, 'success');
             setSelectedIds([]);
+            refresh();
         }
     };
 
@@ -126,20 +142,22 @@ export const AssignmentCenter = () => {
                         selectedIds={selectedIds}
                         onSelectionChange={setSelectedIds}
                         onRowClick={openAssignmentHub}
+                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`)}
                         isLoading={loading}
                         emptyMessage="All jobs are currently assigned. Great work!"
                     />
 
                     <BulkActionBar
+                        selectedIds={selectedIds}
                         selectedCount={selectedIds.length}
                         totalCount={unassignedJobs.length}
                         onClearSelection={() => setSelectedIds([])}
                         entityLabel="job"
                         actions={[
                             {
-                                label: 'Blast Offer',
+                                label: 'Open for Offers',
                                 icon: Zap,
-                                onClick: handleBulkBlast,
+                                onClick: handleBulkOpenForOffers,
                                 variant: 'success'
                             },
                             {

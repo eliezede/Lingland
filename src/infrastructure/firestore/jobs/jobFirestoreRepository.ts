@@ -49,6 +49,31 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
     },
 
     async updateStatus(id, newStatus): Promise<void> {
+        if (newStatus === JobStatus.CANCELLED) {
+            const job = await this.getById(id);
+            if (!job) throw new Error('Job not found or unauthorized');
+
+            try {
+                const batch = writeBatch(db);
+                batch.update(doc(db, 'bookings', id), { status: newStatus as any, updatedAt: serverTimestamp() });
+                const q = query(collection(db, 'assignments'),
+                    where('bookingId', '==', id),
+                    where('status', '==', AssignmentStatus.OFFERED));
+                const snap = await getDocs(q);
+                snap.docs.forEach(d => batch.update(d.ref, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() }));
+                await batch.commit();
+                return;
+            } catch {
+                MOCK_ASSIGNMENTS.forEach(a => {
+                    if (a.bookingId === id && a.status === AssignmentStatus.OFFERED) a.status = AssignmentStatus.DECLINED;
+                });
+                const b = MOCK_BOOKINGS.find(b => b.id === id);
+                if (b) b.status = newStatus as any;
+                saveMockData();
+                return;
+            }
+        }
+
         await this.update(id, { status: newStatus as any });
     }
 });

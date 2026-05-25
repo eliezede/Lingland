@@ -32,7 +32,7 @@ export const assignInterpreter = async (
 
     // 3. Update Job state
     await jobRepo.update(jobId, {
-        status: 'PENDING_ASSIGNMENT' as JobStatus,
+        status: JobStatus.OPENED,
         interpreterId: interpreterId,
         interpreterName: intName,
     });
@@ -53,7 +53,7 @@ export const assignInterpreter = async (
     }
 
     // 6. Email Trigger
-    await EmailService.sendStatusEmail(jobData as any, 'PENDING_ASSIGNMENT' as any, {
+    await EmailService.sendStatusEmail(jobData as any, JobStatus.OPENED as any, {
         interpreterId: interpreterId,
         interpreterName: intName,
         interpreterEmail: intEmail || interpreterUser?.email

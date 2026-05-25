@@ -44,7 +44,7 @@ export const ApplicationService = {
         'New Interpreter Application',
         `A new application was submitted by ${createdApp.name} (${createdApp.languages?.join(', ')}).`,
         NotificationType.INFO,
-        `/admin/applications/${createdApp.id}`
+        '/admin/applications?tab=PENDING'
       );
     });
 

@@ -27,12 +27,13 @@ export const generateInterpreterInvoices = functions.https.onCall(async (data, c
   const timesheetsSnapshot = await db.collection('timesheets')
     .where('interpreterId', '==', interpreterId)
     .where('readyForInterpreterInvoice', '==', true)
-    .where('interpreterInvoiceId', '==', null)
     .where('actualStart', '>=', periodStart)
     .where('actualStart', '<=', periodEnd)
     .get();
 
-  if (timesheetsSnapshot.empty) {
+  const eligibleTimesheets = timesheetsSnapshot.docs.filter(doc => !doc.data().interpreterInvoiceId);
+
+  if (eligibleTimesheets.length === 0) {
     return { success: false, message: 'No eligible timesheets found for this period.' };
   }
 
@@ -64,7 +65,7 @@ export const generateInterpreterInvoices = functions.https.onCall(async (data, c
   let subtotal = 0;
   const batch = db.batch();
 
-  timesheetsSnapshot.docs.forEach(tsDoc => {
+  eligibleTimesheets.forEach(tsDoc => {
     const ts = tsDoc.data();
     const lineTotal = ts.interpreterAmountCalculated || 0;
     subtotal += lineTotal;
@@ -73,18 +74,21 @@ export const generateInterpreterInvoices = functions.https.onCall(async (data, c
     const lineRef = db.collection('interpreterInvoiceLines').doc();
     batch.set(lineRef, {
       invoiceId: invoiceRef.id,
+      interpreterInvoiceId: invoiceRef.id,
       timesheetId: tsDoc.id,
       bookingId: ts.bookingId,
       clientId: ts.clientId,
       description: `Interpreting Service Remuneration — Job: ${ts.bookingId.substring(0, 8).toUpperCase()} (${new Date(ts.actualStart).toLocaleDateString('en-GB')})`,
       units: ts.unitsPayableToInterpreter || 0,
       rate: ts.unitsPayableToInterpreter > 0 ? (lineTotal / ts.unitsPayableToInterpreter) : 0,
-      lineAmount: lineTotal
+      lineAmount: lineTotal,
+      total: lineTotal
     });
 
     // Link timesheet to this invoice
     batch.update(tsDoc.ref, {
       interpreterInvoiceId: invoiceRef.id,
+      readyForInterpreterInvoice: false,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
   });
@@ -105,7 +109,7 @@ export const generateInterpreterInvoices = functions.https.onCall(async (data, c
     totalAmount,
     status: 'GENERATED',
     paymentStatus: 'UNPAID',
-    timesheetCount: timesheetsSnapshot.size,
+    timesheetCount: eligibleTimesheets.length,
     createdBy: context.auth.uid
   };
 
@@ -118,6 +122,6 @@ export const generateInterpreterInvoices = functions.https.onCall(async (data, c
     success: true,
     invoiceId: invoiceRef.id,
     invoiceNumber,
-    message: `Generated self-billing invoice for ${timesheetsSnapshot.size} timesheets.`
+    message: `Generated self-billing invoice for ${eligibleTimesheets.length} timesheets.`
   };
 });

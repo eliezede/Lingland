@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ServiceType } from '../../types';
 import { useNavigate } from 'react-router-dom';
+import { useClientProfile } from '../../hooks/useClientHooks';
 import { 
   FileText, User, Calendar, Clock, MapPin, Video, 
   Phone, Mail, Loader2, ArrowRight, X, Info, ShieldCheck,
@@ -27,6 +28,7 @@ export const ClientNewBooking = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { profile: clientProfile, loading: profileLoading } = useClientProfile(user?.profileId);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [loadingLangs, setLoadingLangs] = useState(true);
@@ -113,6 +115,16 @@ export const ClientNewBooking = () => {
     e.preventDefault();
     if (!user?.profileId) return;
 
+    if (clientProfile?.status === 'SUSPENDED') {
+      showToast('Your client account is suspended. Please contact Lingland before creating new bookings.', 'error');
+      return;
+    }
+
+    if (!formData.languageTo || (isTranslation && !formData.languageFrom)) {
+      showToast('Please select the required languages', 'error');
+      return;
+    }
+
     if (isTranslation && uploadedFiles.length === 0) {
       showToast('Please upload at least one document for translation', 'error');
       return;
@@ -122,8 +134,9 @@ export const ClientNewBooking = () => {
     try {
       const baseData = {
         clientId: user.profileId,
-        clientName: user.displayName,
+        clientName: clientProfile?.companyName || user.displayName,
         requestedByUserId: user.id,
+        organizationId: clientProfile?.organizationId || 'lingland-main',
         languageFrom: formData.languageFrom,
         languageTo: formData.languageTo,
         date: formData.date,
@@ -404,7 +417,7 @@ export const ClientNewBooking = () => {
           </div>
           <button 
             type="submit" 
-            disabled={isSubmitting || loadingLangs}
+            disabled={isSubmitting || loadingLangs || uploading || profileLoading || clientProfile?.status === 'SUSPENDED'}
             className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-black hover:scale-[1.02] active:scale-95 transition-all flex items-center disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 className="animate-spin mr-2" size={18} /> : <ArrowRight className="mr-2" size={18} />}

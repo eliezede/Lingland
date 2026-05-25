@@ -3,12 +3,15 @@ import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, CalendarDays, PlusCircle, User,
   LogOut, Globe2, Menu, CreditCard, X, ChevronRight, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
+  MessageSquare,
   HelpCircle, Bell, User as UserIcon, Settings, ChevronDown
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { NotificationCenter } from '../components/notifications/NotificationCenter';
 import { UserAvatar } from '../components/ui/UserAvatar';
+import { ChatService } from '../services/chatService';
+import { ChatSystem } from '../components/chat/ChatSystem';
 
 interface NavItemProps {
   to: string;
@@ -51,6 +54,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
   const [isPrimaryExpanded, setIsPrimaryExpanded] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   const [activeCategory, setActiveCategory] = useState<string>('CORE');
 
@@ -58,6 +62,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
     { id: 'CORE', label: 'Dashboard', icon: LayoutDashboard, rootPath: '/client/dashboard' },
     { id: 'REQUESTS', label: 'Bookings', icon: CalendarDays, rootPath: '/client/bookings' },
     { id: 'FIN', label: 'Billing', icon: CreditCard, rootPath: '/client/invoices' },
+    { id: 'COMMS', label: 'Messages', icon: MessageSquare, rootPath: '/client/messages' },
     { id: 'ACCOUNT', label: 'Account', icon: Settings, rootPath: '/client/profile' },
   ];
 
@@ -99,8 +104,8 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
       '/client/bookings': 'REQUESTS',
       '/client/new-booking': 'REQUESTS',
       '/client/invoices': 'FIN',
-      '/client/profile': 'ACCOUNT',
-      '/client/settings': 'ACCOUNT'
+      '/client/messages': 'COMMS',
+      '/client/profile': 'ACCOUNT'
     };
     const currentPath = location.pathname;
     const categoryId = Object.entries(pathMap).find(([path]) => currentPath.startsWith(path))?.[1];
@@ -108,6 +113,15 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
   }, [location.pathname]);
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribeChat = ChatService.subscribeToThreads(user.id, (threads) => {
+      const count = threads.reduce((acc, thread) => acc + (thread.unreadCount[user.id] || 0), 0);
+      setUnreadMessages(count);
+    });
+    return () => unsubscribeChat();
+  }, [user]);
 
   const handleLogout = async () => {
     await logout();
@@ -121,15 +135,16 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden font-sans text-slate-900 dark:text-slate-100">
+    <div className="flex h-dvh overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <ChatSystem />
       {isSidebarOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
       <aside className={`fixed lg:static inset-y-0 left-0 z-50 flex transform transition-all duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 lg:w-20'} bg-slate-900 flex flex-col items-center py-6 border-r border-slate-800 shrink-0 transition-all duration-300`}>
+        <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 lg:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
           <div className={`flex items-center ${isPrimaryExpanded ? 'px-4 space-x-3 justify-start' : 'justify-center'} w-full mb-8`}>
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shrink-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
               <Globe2 size={24} />
             </div>
             {isPrimaryExpanded && <span className="text-white font-black tracking-tighter text-xl capitalize">Lingland</span>}
@@ -143,7 +158,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
                   setActiveCategory(cat.id);
                   if (cat.rootPath) navigate(cat.rootPath);
                 }}
-                className={`w-full rounded-xl flex items-center transition-all duration-200 group relative ${isPrimaryExpanded ? 'px-4 py-2.5 space-x-3' : 'h-12 justify-center'} ${activeCategory === cat.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                className={`group relative flex w-full items-center rounded-lg transition-colors duration-150 ${isPrimaryExpanded ? 'space-x-3 px-4 py-2.5' : 'h-11 justify-center'} ${activeCategory === cat.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
               >
                 <cat.icon size={22} className="shrink-0" />
                 {isPrimaryExpanded && <span className="text-sm font-semibold truncate">{cat.label}</span>}
@@ -151,13 +166,13 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
             ))}
           </div>
 
-          <button onClick={() => setIsPrimaryExpanded(!isPrimaryExpanded)} className="w-10 h-10 mb-4 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-all">
+          <button onClick={() => setIsPrimaryExpanded(!isPrimaryExpanded)} className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-800 hover:text-white">
             {isPrimaryExpanded ? <ChevronLeft size={20} /> : <ChevronRightIcon size={20} />}
           </button>
         </div>
 
         {!isWorkstation && (
-          <div className={`${isSecondarySlim ? 'w-16 lg:w-20' : 'w-64'} bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-all duration-300`}>
+          <div className={`${isSecondarySlim ? 'w-16 lg:w-20' : 'w-64'} flex flex-col border-r border-slate-200 bg-white transition-all duration-300 dark:border-slate-800 dark:bg-slate-900`}>
             <div className={`h-16 flex items-center ${isSecondarySlim ? 'justify-center' : 'px-6 justify-between'} border-b border-slate-100 dark:border-slate-800`}>
               {!isSecondarySlim ? <h2 className="text-xs font-black text-slate-500 tracking-widest uppercase truncate">{categories.find(c => c.id === activeCategory)?.label}</h2> : <div className="w-8 h-1 bg-slate-200 dark:bg-slate-800 rounded-full" />}
             </div>
@@ -173,10 +188,14 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
                   <NavItem to="/client/invoices" icon={CreditCard} label="Invoices" active={isActive('/client/invoices')} isCollapsed={isSecondarySlim} />
                 </div>
               )}
+              {activeCategory === 'COMMS' && (
+                <div className="space-y-1">
+                  <NavItem to="/client/messages" icon={MessageSquare} label="Messages" badge={unreadMessages} active={isActive('/client/messages')} isCollapsed={isSecondarySlim} />
+                </div>
+              )}
               {activeCategory === 'ACCOUNT' && (
                 <div className="space-y-1">
                   <NavItem to="/client/profile" icon={User} label="My Profile" active={isActive('/client/profile')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/client/settings" icon={Settings} label="Preferences" active={isActive('/client/settings')} isCollapsed={isSecondarySlim} />
                 </div>
               )}
             </nav>
@@ -191,12 +210,12 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
       </aside>
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="h-16 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 sticky top-0 z-30">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:h-16 sm:px-6">
           <div className="flex items-center">
-            <button className="lg:hidden p-2 -ml-2 mr-3 text-slate-600 dark:text-slate-300" onClick={() => setIsSidebarOpen(true)}><Menu size={24} /></button>
+            <button className="-ml-2 mr-3 rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden" onClick={() => setIsSidebarOpen(true)}><Menu size={24} /></button>
           </div>
 
-          <div className="flex items-center space-x-6">
+          <div className="flex items-center gap-2 sm:gap-6">
             <div className="hidden md:flex items-center space-x-3 text-slate-500">
                <span className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500">{today}</span>
                <div className="group relative">
@@ -208,7 +227,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
                </div>
             </div>
 
-            <div className="flex items-center space-x-2 border-l border-slate-100 dark:border-slate-800 pl-6">
+            <div className="flex items-center space-x-2 border-l border-slate-100 pl-2 dark:border-slate-800 sm:pl-6">
               <ThemeToggle className="!p-2 text-slate-500" />
               <NotificationCenter />
             </div>
@@ -216,7 +235,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
             <div className="relative" ref={userMenuRef}>
               <button 
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center space-x-3 p-1.5 pr-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                className="flex items-center space-x-3 rounded-lg border border-transparent p-1.5 pr-2 transition-colors hover:border-slate-200 hover:bg-slate-100 dark:hover:border-slate-700 dark:hover:bg-slate-800 sm:pr-3"
               >
                 <UserAvatar 
                   name={user?.displayName || 'User'} 
@@ -232,7 +251,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
               </button>
 
               {isUserMenuOpen && (
-                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 py-2 origin-top-right">
+                <div className="absolute right-0 mt-2 w-64 origin-top-right rounded-lg border border-slate-200 bg-white py-2 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
                   <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center space-x-3 mb-1">
                     <UserAvatar 
                       name={user?.displayName || 'User'} 
@@ -255,7 +274,7 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 lg:p-6 bg-slate-50 dark:bg-slate-950">
+        <main className="flex-1 overflow-auto bg-slate-100 p-3 dark:bg-slate-950 sm:p-5 lg:p-6">
           <div className="max-w-[1600px] mx-auto">
             {children}
           </div>

@@ -33,5 +33,5 @@ export const approveTimesheet = async (
     await timesheetRepo.update(id, updates);
 
     // Sync Job Status
-    await jobRepo.updateStatus(tsData.jobId, 'VERIFIED' as JobStatus);
+    await jobRepo.updateStatus(tsData.jobId, JobStatus.READY_FOR_INVOICE);
 };

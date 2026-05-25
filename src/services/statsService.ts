@@ -51,7 +51,10 @@ export const StatsService = {
   getOnboardingStats: async () => {
     return safeFetch(async () => {
       const appsSnap = await getDocs(query(collection(db, 'applications'), where('status', '==', 'PENDING')));
-      const onboardingInterpsSnap = await getDocs(query(collection(db, 'interpreters'), where('status', '==', 'ONBOARDING')));
+      const onboardingInterpsSnap = await getDocs(query(
+        collection(db, 'interpreters'),
+        where('status', 'in', ['ONBOARDING', 'IMPORTED', 'APPLICANT'])
+      ));
       
       let pendingDocs = 0;
       onboardingInterpsSnap.forEach(doc => {
@@ -108,7 +111,7 @@ export const StatsService = {
       const bookings = snap.docs.map(d => d.data());
 
       const offersSnap = await getDocs(query(
-        collection(db, 'bookingAssignments'),
+        collection(db, 'assignments'),
         where('interpreterId', '==', interpreterId),
         where('status', '==', 'OFFERED')
       ));

@@ -1,41 +1,126 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  ChevronLeft, Clock, MapPin, Globe, Phone, Mail, Building, 
-  User, CreditCard, Receipt, FileText, AlertCircle, CheckCircle2,
-  Calendar, Info, ArrowUpRight, ShieldCheck, History, MoreVertical,
-  Edit2, Trash2, Send, Download, MessageSquare, Briefcase, Languages
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  AlertCircle,
+  ArrowUpRight,
+  Building2,
+  CalendarDays,
+  ChevronLeft,
+  Clock,
+  CreditCard,
+  Download,
+  Edit2,
+  FileText,
+  Globe2,
+  History,
+  Mail,
+  MapPin,
+  MessageSquare,
+  MoreVertical,
+  Phone,
+  Receipt,
+  ShieldCheck,
+  Trash2,
+  User,
+  UserCheck,
+  UserPlus,
+  Video,
 } from 'lucide-react';
 import { BookingService } from '../../../services/bookingService';
-import { Booking } from '../../../types';
 import { BillingService } from '../../../services/billingService';
-import { UserAvatar } from '../../../components/ui/UserAvatar';
-import { ApplicationService } from '../../../services/applicationService';
-import { PdfService } from '../../../services/pdfService';
 import { ChatService } from '../../../services/chatService';
+import { Booking, BookingStatus } from '../../../types';
+import { UserAvatar } from '../../../components/ui/UserAvatar';
+import { PdfService } from '../../../services/pdfService';
 import { Button } from '../../../components/ui/Button';
-import { Badge } from '../../../components/ui/Badge';
 import { Spinner } from '../../../components/ui/Spinner';
-import { Modal } from '../../../components/ui/Modal';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
-import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
+import { useAuth } from '../../../context/AuthContext';
 import { useClients } from '../../../context/ClientContext';
 import { ActivityTimeline } from '../../../components/operations/ActivityTimeline';
 import { InterpreterAllocationDrawer } from '../../../components/operations/InterpreterAllocationDrawer';
 import { InterpreterPreviewDrawer } from '../../../components/operations/InterpreterPreviewDrawer';
 import { LocationMap } from '../../../components/ui/LocationMap';
 
+const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string => {
+  if (!value) return 'N/A';
+  try {
+    const date = value?.toDate ? value.toDate() : new Date(value);
+    if (Number.isNaN(date.getTime())) return 'N/A';
+    return date.toLocaleDateString('en-GB', options || { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch {
+    return 'N/A';
+  }
+};
+
+const formatMoney = (amount?: number) => `GBP ${(amount || 0).toFixed(2)}`;
+
+const getNextAction = (booking: Booking) => {
+  if (booking.status === BookingStatus.INCOMING) return 'Assign interpreter';
+  if (booking.status === BookingStatus.OPENED && !booking.interpreterId) return 'Assign interpreter';
+  if (booking.status === BookingStatus.BOOKED) return 'Monitor delivery';
+  if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
+  if (booking.status === BookingStatus.READY_FOR_INVOICE) return 'Send to invoicing';
+  if (booking.status === BookingStatus.INVOICED) return 'Await payment';
+  if (booking.status === BookingStatus.PAID) return 'Completed';
+  if (booking.status === BookingStatus.CANCELLED) return 'Cancelled';
+  return 'Review booking';
+};
+
+const InfoItem = ({ label, value, icon: Icon }: { label: string; value: React.ReactNode; icon?: React.ElementType }) => (
+  <div className="rounded-md border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      {Icon && <Icon size={13} />}
+      {label}
+    </div>
+    <div className="text-sm font-semibold leading-6 text-slate-950 dark:text-white">{value}</div>
+  </div>
+);
+
+const Section = ({ title, icon: Icon, children, action }: { title: string; icon: React.ElementType; children: React.ReactNode; action?: React.ReactNode }) => (
+  <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div className="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          <Icon size={15} />
+        </div>
+        <h2 className="truncate text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
+      </div>
+      {action}
+    </div>
+    <div className="p-3">{children}</div>
+  </section>
+);
+
+const MetricCell = ({ icon: Icon, label, value, tone = 'default' }: { icon: React.ElementType; label: string; value: string; tone?: 'default' | 'warning' | 'success' }) => {
+  const toneClass = tone === 'warning'
+    ? 'text-amber-700 dark:text-amber-300'
+    : tone === 'success'
+      ? 'text-emerald-700 dark:text-emerald-300'
+      : 'text-slate-950 dark:text-white';
+
+  return (
+    <div className="min-w-0 border-b border-slate-200 p-3 dark:border-slate-800 sm:border-b-0 sm:border-r last:sm:border-r-0">
+      <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <Icon size={13} />
+        <span>{label}</span>
+      </div>
+      <p className={`mt-1 truncate text-sm font-semibold ${toneClass}`}>{value || '-'}</p>
+    </div>
+  );
+};
+
 export const AdminBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
-  const { user } = useAuth();
   const { openThread } = useChat();
-  const { clientsMap, getClientCompany } = useClients();
+  const { user } = useAuth();
+  const { getClientCompany } = useClients();
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +133,18 @@ export const AdminBookingDetails = () => {
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  const loadBooking = async () => {
+    try {
+      if (!id) return;
+      const data = await BookingService.getById(id);
+      setBooking(data);
+    } catch {
+      showToast('Failed to load booking details', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (id) {
       loadBooking();
@@ -55,7 +152,6 @@ export const AdminBookingDetails = () => {
     }
   }, [id]);
 
-  // Close actions menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
@@ -66,49 +162,60 @@ export const AdminBookingDetails = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Safe date formatter for Firestore Timestamps and ISO strings
-  const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string => {
-    if (!value) return 'N/A';
-    try {
-      const date = value?.toDate ? value.toDate() : new Date(value);
-      if (isNaN(date.getTime())) return 'N/A';
-      return date.toLocaleDateString('en-GB', options || { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return 'N/A';
-    }
-  };
-
-  const loadBooking = async () => {
-    try {
-      if (!id) return;
-      const data = await BookingService.getById(id);
-      setBooking(data);
-    } catch (error) {
-      showToast('Failed to load booking details', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = async (newStatus: BookingStatus) => {
     if (!booking || !id) return;
-    
+
     const ok = await confirm({
       title: 'Change Booking Status',
-      message: `Are you sure you want to change the status from ${booking.status} to ${newStatus}?`,
+      message: `Change this booking from ${booking.status} to ${newStatus}?`,
       confirmLabel: 'Update Status',
-      variant: 'primary'
+      variant: 'primary',
     });
-
     if (!ok) return;
 
     setIsActionLoading(true);
     try {
-      await BookingService.update(id, { status: newStatus as any });
+      await BookingService.updateStatus(id, newStatus);
       showToast(`Booking status updated to ${newStatus}`, 'success');
       loadBooking();
-    } catch (error) {
+    } catch {
       showToast('Failed to update status', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleVerifyTimesheet = async () => {
+    if (!booking || !id) return;
+    setIsActionLoading(true);
+    try {
+      await BillingService.approveTimesheetByBookingId(id);
+      showToast('Timesheet verified and moved to invoicing', 'success');
+      loadBooking();
+    } catch {
+      showToast('Failed to verify timesheet', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleMarkNotExecuted = async () => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: 'Mark Job Not Executed',
+      message: 'This creates an exception claim for finance review instead of bypassing timesheet approval. It can still be billed if it falls inside the cancellation window.',
+      confirmLabel: 'Create Exception',
+      variant: 'warning',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BillingService.createNonExecutedJobClaim(id, 'Marked as not executed from booking details');
+      showToast('Exception claim created for review', 'success');
+      loadBooking();
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to create exception claim', 'error');
     } finally {
       setIsActionLoading(false);
     }
@@ -120,24 +227,40 @@ export const AdminBookingDetails = () => {
     try {
       PdfService.generateBookingSummary(booking);
       showToast('Booking summary exported successfully', 'success');
-    } catch (error) {
+    } catch {
       showToast('Failed to export PDF', 'error');
     } finally {
       setIsExporting(false);
     }
   };
 
-  const handleOpenChat = () => {
-    if (booking?.interpreterId) {
-      openThread(booking.interpreterId);
-    } else {
+  const handleOpenChat = async () => {
+    if (!booking?.interpreterId || !user) {
       showToast('No interpreter assigned to chat with', 'info');
+      return;
+    }
+
+    try {
+      const interpreterUser = await ChatService.resolveUserByProfileId(booking.interpreterId);
+      if (!interpreterUser) {
+        showToast('No active user account found for this interpreter', 'error');
+        return;
+      }
+      const threadId = await ChatService.getOrCreateBookingThread(
+        booking.id,
+        user,
+        { ...interpreterUser, displayName: booking.interpreterName || interpreterUser.displayName },
+        { name: booking.bookingRef || booking.id }
+      );
+      openThread(threadId);
+    } catch {
+      showToast('Failed to open booking chat', 'error');
     }
   };
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="flex min-h-[60vh] items-center justify-center bg-slate-100 dark:bg-slate-950">
         <Spinner size="lg" />
       </div>
     );
@@ -145,94 +268,96 @@ export const AdminBookingDetails = () => {
 
   if (!booking) {
     return (
-      <div className="flex-1 p-8 bg-slate-50 dark:bg-slate-950">
-        <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 rounded-3xl p-12 text-center border border-slate-200 dark:border-slate-800 shadow-xl transition-colors">
-          <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-3xl flex items-center justify-center mx-auto mb-6">
-            <AlertCircle size={40} className="text-slate-400 dark:text-slate-500" />
-          </div>
-          <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-2 uppercase tracking-tighter">Booking Not Found</h2>
-          <p className="text-slate-500 dark:text-slate-400 mb-8 font-medium">The booking you are looking for doesn't exist or has been removed.</p>
-          <Button onClick={() => navigate('/admin/bookings')} icon={ChevronLeft} variant="secondary">
-            Go Back
-          </Button>
+      <div className="bg-slate-100 p-6 dark:bg-slate-950">
+        <div className="mx-auto max-w-2xl rounded-lg border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <AlertCircle size={34} className="mx-auto mb-4 text-slate-400" />
+          <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Booking not found</h2>
+          <p className="mt-2 text-sm text-slate-500">The booking may have been removed or the URL is invalid.</p>
+          <Button onClick={() => navigate('/admin/bookings')} icon={ChevronLeft} variant="secondary" className="mt-6">Back to Jobs Board</Button>
         </div>
       </div>
     );
   }
 
+  const reference = booking.bookingRef || booking.id;
+  const companyName = getClientCompany(booking.clientId, booking.guestContact?.organisation || booking.clientName);
+  const contactName = booking.guestContact?.name || (booking as any).contactName || 'No contact';
+  const contactEmail = booking.guestContact?.email || (booking as any).contactEmail;
+  const contactPhone = booking.guestContact?.phone || (booking as any).contactPhone;
+  const isOnline = booking.locationType === 'ONLINE';
+  const addressLine = isOnline
+    ? (booking.onlineLink || 'No online link provided')
+    : [booking.address || booking.location, booking.postcode].filter(Boolean).join(', ') || 'No address provided';
+  const invoiceEstimate = booking.totalAmount || 0;
+  const sessionLabel = booking.date
+    ? `${booking.date}${booking.startTime ? `, ${booking.startTime}` : ''}`
+    : 'No date';
+  const languageLabel = `${booking.languageFrom || 'English'} to ${booking.languageTo || 'N/A'}`;
+  const assignmentLabel = booking.interpreterName || (booking.interpreterId ? 'Interpreter assigned' : 'No interpreter');
+  const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
+
+  const primaryAction = () => {
+    if (booking.status === BookingStatus.INCOMING) {
+      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
+    }
+    if (booking.status === BookingStatus.OPENED && !booking.interpreterId) {
+      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
+    }
+    if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) {
+      return <Button variant="secondary" onClick={handleVerifyTimesheet} isLoading={isActionLoading} icon={FileText}>Verify timesheet</Button>;
+    }
+    if (booking.status === BookingStatus.READY_FOR_INVOICE) {
+      return <Button variant="secondary" onClick={() => navigate('/admin/operations/timesheets')} icon={Receipt}>Invoice review</Button>;
+    }
+    return null;
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
-      {/* Premium Header Bar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 lg:p-6 transition-colors">
-        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-          <div className="flex items-center gap-4">
-            <button 
+    <div className="-m-3 min-h-full bg-slate-100 pb-10 dark:bg-slate-950 sm:-m-5 lg:-m-6">
+      <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-5 lg:px-6">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
               onClick={() => navigate('/admin/bookings')}
-              className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl transition-all group"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+              aria-label="Back to jobs board"
             >
-              <ChevronLeft size={24} className="text-slate-400 dark:text-slate-500 group-hover:text-slate-900 dark:group-hover:text-white" />
+              <ChevronLeft size={18} />
             </button>
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tighter uppercase">
-                  {booking.reference || 'Booking Detail'}
-                </h1>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">Booking record</h1>
                 <StatusBadge status={booking.status} />
+                <span className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
+                  {reference}
+                </span>
               </div>
-              <div className="flex items-center gap-4 mt-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter">
-                  <Clock size={14} />
-                  Created {formatDate(booking.createdAt)}
-                </div>
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter border-l border-slate-200 dark:border-slate-800 pl-4 transition-colors">
-                  <ShieldCheck size={14} />
-                  Admin Managed
-                </div>
-              </div>
+              <p className="truncate text-xs text-slate-500">{companyName}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 w-full lg:w-auto">
-            <Button 
-              variant="ghost" 
-              icon={Download} 
-              onClick={handleExportPdf}
-              isLoading={isExporting}
-              className="flex-1 lg:flex-none h-11 border-slate-200 dark:border-slate-800 dark:text-slate-400"
-            >
-              Export PDF
-            </Button>
-            <Button 
-              variant="secondary" 
-              icon={Edit2}
-              onClick={() => navigate(`/admin/bookings/edit/${id}`)}
-              className="flex-1 lg:flex-none h-11 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-none"
-            >
-              Edit Booking
-            </Button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            <Button onClick={() => navigate(`/admin/bookings/edit/${id}`)} icon={Edit2}>Edit</Button>
+            {primaryAction()}
+            <Button variant="secondary" icon={Download} onClick={handleExportPdf} isLoading={isExporting}>Export</Button>
+            <Button variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Message</Button>
             <div className="relative" ref={actionsRef}>
-              <Button 
-                variant="primary" 
-                icon={MoreVertical}
-                className="h-11 shadow-lg shadow-blue-500/20"
-                onClick={() => setIsActionsOpen(!isActionsOpen)}
-              />
+              <Button variant="ghost" icon={MoreVertical} onClick={() => setIsActionsOpen(!isActionsOpen)} className="w-full sm:w-auto" />
               {isActionsOpen && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                  <button 
-                    onClick={() => { handleStatusChange('CANCELLED'); setIsActionsOpen(false); }}
-                    className="w-full px-4 py-3 text-left text-xs font-bold text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors flex items-center gap-2"
+                <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                  {booking.status === BookingStatus.BOOKED && (
+                    <button
+                      onClick={() => { handleMarkNotExecuted(); setIsActionsOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                    >
+                      <AlertCircle size={15} /> Mark not executed
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { handleStatusChange(BookingStatus.CANCELLED); setIsActionsOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
                   >
-                    <Trash2 size={14} />
-                    Cancel Booking
-                  </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-800" />
-                  <button 
-                    onClick={() => { handleStatusChange('TIMESHEET_SUBMITTED'); setIsActionsOpen(false); }}
-                    className="w-full px-4 py-3 text-left text-xs font-bold text-emerald-600 dark:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors flex items-center gap-2"
-                  >
-                    <CheckCircle2 size={14} />
-                    Mark as Done
+                    <Trash2 size={15} /> Cancel booking
                   </button>
                 </div>
               )}
@@ -241,346 +366,132 @@ export const AdminBookingDetails = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 lg:p-8 scrollbar-hide">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-            
-            {/* Left Column: Main Info */}
-            <div className="xl:col-span-8 space-y-8">
-              
-              {/* Session & Location Dashboard */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl transition-colors">
-                      <Clock size={20} />
-                    </div>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">Session & Location</h2>
-                  </div>
-                </div>
-                <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-12">
-                   <div className="space-y-6">
-                      <div className="group">
-                        <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 group-hover:text-blue-600 transition-colors">Date & Schedule</p>
-                        <div className="flex items-start gap-3">
-                          <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded-xl flex items-center justify-center text-slate-400 dark:text-slate-500 border border-slate-100 dark:border-slate-800 shrink-0 transition-colors">
-                            <Calendar size={20} />
-                          </div>
-                          <div>
-                            <p className="text-lg font-black text-slate-900 dark:text-white leading-none">
-                              {formatDate(booking.date, { day: 'numeric', month: 'long', year: 'numeric' })}
-                            </p>
-                            <p className="text-sm font-bold text-blue-600 dark:text-blue-400 mt-1 uppercase">
-                              {booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}
-                              <span className="text-slate-400 dark:text-slate-500 ml-2 font-black italic">({booking.durationMinutes || '—'} Mins)</span>
-                            </p>
-                          </div>
-                        </div>
-                      </div>
+      <main className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5">
+            <MetricCell icon={Building2} label="Requester" value={companyName} />
+            <MetricCell icon={Globe2} label="Language" value={languageLabel} />
+            <MetricCell icon={CalendarDays} label="Schedule" value={sessionLabel} tone={booking.date && booking.startTime ? 'default' : 'warning'} />
+            <MetricCell icon={MapPin} label="Location" value={addressLine} tone={addressLine ? 'default' : 'warning'} />
+            <MetricCell icon={UserCheck} label="Assignment" value={assignmentLabel} tone={booking.interpreterId ? 'success' : 'warning'} />
+          </div>
+        </div>
 
-                      <div className="group">
-                        <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 group-hover:text-amber-600 transition-colors">Linguistic Requirements</p>
-                        <div className="flex items-start gap-3">
-                          <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded-xl flex items-center justify-center text-slate-400 dark:text-slate-500 border border-slate-100 dark:border-slate-800 shrink-0 transition-colors">
-                            <Languages size={20} />
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-xs">
-                             <div className="px-3 py-1.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg font-black border border-blue-200 dark:border-blue-800/50 uppercase transition-colors">
-                               {booking.languageFrom || 'English'}
-                             </div>
-                             <div className="w-6 flex items-center justify-center font-black text-slate-300 dark:text-slate-700">TO</div>
-                             <div className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 rounded-lg font-black border border-emerald-200 dark:border-emerald-800/50 uppercase transition-colors">
-                               {booking.languageTo}
-                             </div>
-                          </div>
-                        </div>
-                        {booking.serviceType && (
-                          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-black uppercase transition-colors">
-                             <Briefcase size={12} /> {booking.serviceType}
-                          </div>
-                        )}
-                      </div>
-                   </div>
-
-                   <div className="group">
-                      <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 group-hover:text-emerald-600 transition-colors">Deployment Venue</p>
-                      <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded-xl flex items-center justify-center text-slate-400 dark:text-slate-500 border border-slate-100 dark:border-slate-800 shrink-0 transition-colors">
-                          <MapPin size={20} />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-bold text-slate-900 dark:text-white leading-relaxed">
-                            {[booking.address, booking.postcode].filter(Boolean).join(', ') || 'No address provided'}
-                          </p>
-                          <div className="mt-3 flex items-center gap-2">
-                             {(booking.lat && booking.lng) ? (
-                               <button 
-                                 onClick={() => window.open(`https://www.google.com/maps?q=${booking.lat},${booking.lng}`, '_blank')}
-                                 className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter hover:underline flex items-center gap-1"
-                               >
-                                 View on Map <ArrowUpRight size={12} />
-                               </button>
-                             ) : booking.postcode ? (
-                               <button 
-                                 onClick={() => window.open(`https://www.google.com/maps?q=${encodeURIComponent(booking.postcode)}`, '_blank')}
-                                 className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter hover:underline flex items-center gap-1"
-                               >
-                                 View on Map <ArrowUpRight size={12} />
-                               </button>
-                             ) : null}
-                             {booking.location?.meetingLink && (
-                               <a href={booking.location.meetingLink} target="_blank" rel="noreferrer" className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-tighter hover:underline flex items-center gap-1 pl-3 border-l border-slate-200 dark:border-slate-800 transition-colors">
-                                 Join Meeting <Globe size={12} />
-                               </a>
-                             )}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {booking.lat && booking.lng && (
-                        <div className="mt-6">
-                           <LocationMap 
-                             center={{ lat: booking.lat, lng: booking.lng }} 
-                             zoom={12}
-                             height="250px"
-                             markers={[
-                               { lat: booking.lat!, lng: booking.lng!, label: 'Job Location', color: '#ef4444' }
-                             ]}
-                           />
-                        </div>
-                      )}
-                      
-                      {booking.notes && (
-                         <div className="mt-8 p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border-l-4 border-blue-500 shadow-sm transition-colors">
-                            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Instructional Notes</p>
-                            <p className="text-xs font-bold text-slate-600 dark:text-slate-400 italic leading-relaxed">"{booking.notes}"</p>
-                         </div>
-                      )}
-                   </div>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+          <div className="space-y-4">
+            <Section title="Requester" icon={Building2}>
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                  <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{companyName}</p>
+                  <p className="truncate text-xs text-slate-500">{contactName}</p>
                 </div>
+                <InfoItem icon={CreditCard} label="PO / cost code" value={booking.costCode || 'N/A'} />
+                <InfoItem icon={Mail} label="Email" value={contactEmail || 'N/A'} />
+                <InfoItem icon={Phone} label="Phone" value={contactPhone || 'N/A'} />
+              </div>
+            </Section>
+
+            <Section title="Service and schedule" icon={Globe2}>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <InfoItem icon={Globe2} label="Service" value={booking.serviceType || booking.serviceCategory || 'N/A'} />
+                <InfoItem icon={Globe2} label="Languages" value={languageLabel} />
+                <InfoItem icon={CalendarDays} label="Date" value={formatDate(booking.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} />
+                <InfoItem icon={Clock} label="Time and duration" value={<>{booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}<br /><span className="text-slate-500">{durationLabel}</span></>} />
+              </div>
+            </Section>
+
+            <Section title="Session and location" icon={isOnline ? Video : MapPin}>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <InfoItem icon={isOnline ? Video : MapPin} label={isOnline ? 'Connection' : 'Venue'} value={addressLine} />
+                <InfoItem icon={ShieldCheck} label="Operational flags" value={<>{booking.priority || 'Normal'} priority<br /><span className="text-slate-500">{booking.isOOH ? 'Out of hours' : 'Standard hours'}</span></>} />
               </div>
 
-              {/* Contact & Organisation Matrix */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-xl transition-colors">
-                      <Building size={20} />
-                    </div>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">Contact & Organisation</h2>
-                  </div>
+              {!isOnline && booking.lat && booking.lng && (
+                <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+                  <LocationMap
+                    center={{ lat: booking.lat, lng: booking.lng }}
+                    zoom={12}
+                    height="260px"
+                    markers={[{ lat: booking.lat, lng: booking.lng, label: 'Job Location', color: '#ef4444' }]}
+                  />
                 </div>
-                <div className="p-8 grid grid-cols-2 md:grid-cols-3 gap-8">
-                  <div className="group">
-                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 transition-colors group-hover:text-blue-600">Primary Contact</p>
-                    <p className="text-sm font-black text-slate-900 dark:text-white">{booking.contactName || 'N/A'}</p>
-                    <div className="mt-2 space-y-1">
-                      <p className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                        <Mail size={12} className="text-slate-400 dark:text-slate-500" /> {booking.contactEmail || 'N/A'}
-                      </p>
-                      <p className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                        <Phone size={12} className="text-slate-400 dark:text-slate-500" /> {booking.contactPhone || 'N/A'}
-                      </p>
-                    </div>
-                  </div>
+              )}
 
-                  <div className="group">
-                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 transition-colors group-hover:text-blue-600">Reporting Client</p>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-slate-900 dark:bg-white dark:text-slate-950 text-white rounded-xl flex items-center justify-center text-xs font-black transition-colors">
-                        {booking.clientName?.substring(0,2).toUpperCase() || 'LL'}
-                      </div>
-                      <div>
-                        <p className="text-sm font-black text-slate-900 dark:text-white">{booking.clientName || 'Private Client'}</p>
-                        <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase leading-none mt-1">LID: {booking.clientId?.substring(0,8) || 'MAIN'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="group">
-                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 transition-colors group-hover:text-amber-600">Liaison Account</p>
-                    <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center text-xs font-black transition-colors">
-                         <User size={18} />
-                       </div>
-                       <div>
-                         <p className="text-xs font-black text-slate-900 dark:text-white">Admin Desk 01</p>
-                         <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500">System Generated</p>
-                       </div>
-                    </div>
-                  </div>
+              {(booking.notes || booking.adminNotes) && (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/30">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Notes</p>
+                  <p className="text-sm leading-6 text-blue-950 dark:text-blue-100">{booking.adminNotes || booking.notes}</p>
                 </div>
-              </div>
+              )}
+            </Section>
+          </div>
 
-              {/* Assignment Deep Dive */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl transition-colors">
-                      <ShieldCheck size={20} />
-                    </div>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">Assignment Logic</h2>
+          <aside className="space-y-4 xl:sticky xl:top-16 xl:self-start">
+            <Section title="Interpreter assignment" icon={User}>
+              <div className="space-y-3">
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Interpreter</p>
+                    {!booking.interpreterId && (
+                      <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setIsAllocationDrawerOpen(true)}>Assign</Button>
+                    )}
                   </div>
-                  {!booking.interpreterId && (
-                    <Button 
-                      size="sm" 
-                      variant="primary" 
-                      onClick={() => setIsAllocationDrawerOpen(true)}
-                      icon={ArrowUpRight}
-                      className="h-9 px-4 rounded-xl text-[10px]"
-                    >
-                      Allocate Resource
-                    </Button>
-                  )}
-                </div>
-                
-                <div className="p-8">
                   {booking.interpreterId ? (
-                    <div className="flex flex-col md:flex-row items-center justify-between p-6 bg-slate-50 dark:bg-slate-950 rounded-3xl border border-slate-100 dark:border-slate-800 transition-colors gap-6">
-                      <div className="flex items-center gap-4">
-                        <UserAvatar 
-                          name={booking.interpreterName || ''} 
-                          src={booking.interpreterPhotoUrl} 
-                          size="xl" 
-                          className="rounded-2xl shadow-lg shadow-blue-500/20"
-                        />
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <UserAvatar name={booking.interpreterName || 'Interpreter'} src={booking.interpreterPhotoUrl} size="md" />
                         <div>
-                           <div className="flex items-center gap-2">
-                             <h4 className="text-lg font-black text-slate-900 dark:text-white leading-tight uppercase hover:text-blue-600 cursor-pointer transition-colors" onClick={() => {
-                               setSelectedInterpreterId(booking.interpreterId);
-                               setIsInterpreterPreviewOpen(true);
-                             }}>
-                               {booking.interpreterName}
-                             </h4>
-                             <Badge variant="success" className="h-5 px-2 text-[8px] font-black uppercase shadow-none border-none">Active</Badge>
-                           </div>
-                           <p className="text-xs font-bold text-slate-400 dark:text-slate-500 mt-1">Allocated ID: <span className="text-slate-900 dark:text-slate-300">INT-{booking.interpreterId.substring(0, 8)}</span></p>
-                           <div className="flex items-center gap-3 mt-3">
-                             <button 
-                               onClick={() => openThread(booking.interpreterId)}
-                               className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/40 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-800/50 transition-all"
-                             >
-                               <MessageSquare size={12} /> Live Chat
-                             </button>
-                             <button 
-                               onClick={() => {
-                                 setSelectedInterpreterId(booking.interpreterId);
-                                 setIsInterpreterPreviewOpen(true);
-                               }}
-                               className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-                             >
-                               <User size={12} /> Profile Matrix
-                             </button>
-                           </div>
+                          <p className="font-semibold text-slate-950 dark:text-white">{booking.interpreterName || 'Interpreter'}</p>
+                          <p className="text-xs text-slate-500">INT-{booking.interpreterId.slice(0, 8)}</p>
                         </div>
                       </div>
-                      
-                      <div className="flex flex-col items-center md:items-end gap-3 w-full md:w-auto pt-6 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800 transition-colors">
-                         <div className="text-center md:text-right">
-                           <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none">Resource Rate</p>
-                           <p className="text-xl font-black text-slate-900 dark:text-white mt-1">£{booking.interpreterRate || '45.00'}<span className="text-xs text-slate-400 dark:text-slate-500 font-bold">/hr</span></p>
-                         </div>
-                         <Button 
-                           size="sm" 
-                           variant="ghost" 
-                           onClick={() => {
-                             setSelectedInterpreterId(null);
-                             setIsAllocationDrawerOpen(true);
-                           }}
-                           className="text-[9px] h-8 text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-500 border-none px-4"
-                         >
-                           Change Allocation
-                         </Button>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Chat</Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon={ArrowUpRight}
+                          onClick={() => {
+                            setSelectedInterpreterId(booking.interpreterId || null);
+                            setIsInterpreterPreviewOpen(true);
+                          }}
+                        >
+                          Profile
+                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="p-12 text-center bg-slate-50 dark:bg-slate-950 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 transition-colors">
-                      <div className="w-16 h-16 bg-white dark:bg-slate-900 rounded-3xl flex items-center justify-center mx-auto mb-4 border border-slate-100 dark:border-slate-800 shadow-sm transition-colors text-slate-200 dark:text-slate-800">
-                        <User size={32} />
-                      </div>
-                      <h4 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">No Resource Allocated</h4>
-                      <p className="text-xs font-bold text-slate-400 dark:text-slate-500 mb-6 max-w-sm mx-auto">This booking is currently in limbo. You must allocate an interpreter to proceed with the fulfillment process.</p>
-                      <Button onClick={() => setIsAllocationDrawerOpen(true)} icon={ArrowUpRight} variant="primary" className="h-10 px-8 rounded-xl text-xs">
-                        Open Allocation Desk
-                      </Button>
-                    </div>
+                    <p className="text-sm text-slate-500">No professional assigned. This is the main blocker before delivery.</p>
                   )}
                 </div>
               </div>
-            </div>
+            </Section>
 
-            {/* Right Column: Cards & Meta */}
-            <div className="xl:col-span-4 space-y-8">
-              
-              {/* Financial Impact Analysis */}
-              <div className="bg-slate-900 dark:bg-slate-950 rounded-3xl text-white overflow-hidden shadow-2xl shadow-slate-900/20 border border-slate-800 transition-colors">
-                 <div className="p-8 bg-gradient-to-br from-slate-900 to-slate-800 dark:to-slate-950">
-                    <div className="flex items-center justify-between mb-8">
-                      <div className="p-2 bg-blue-500 rounded-xl">
-                        <CreditCard size={20} className="text-white" />
-                      </div>
-                      <StatusBadge status={booking.paymentStatus || 'UNPAID'} />
-                    </div>
-                    
-                    <div className="space-y-6">
-                       <div className="flex justify-between items-end border-b border-white/5 pb-4 transition-colors">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Base Payout</p>
-                          <p className="text-2xl font-black">£{(booking.totalAmount ?? 0).toFixed(2)}</p>
-                       </div>
-                       
-                       <div className="grid grid-cols-2 gap-4">
-                          <div className="p-4 bg-white/5 rounded-2xl border border-white/5 transition-colors">
-                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Tax Estimate (20%)</p>
-                            <p className="text-sm font-black text-slate-100">£{((booking.totalAmount ?? 0) * 0.2).toFixed(2)}</p>
-                          </div>
-                          <div className="p-4 bg-white/5 rounded-2xl border border-white/5 transition-colors">
-                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Margin (45%)</p>
-                            <p className="text-sm font-black text-emerald-400">+ £{((booking.totalAmount ?? 0) * 0.45).toFixed(2)}</p>
-                          </div>
-                       </div>
-                    </div>
-                 </div>
-                 
-                 <div className="p-4 bg-slate-950/50 flex items-center justify-center transition-colors">
-                   <button 
-                     onClick={() => navigate('/admin/billing')}
-                     className="text-[10px] font-black uppercase text-blue-400 hover:text-blue-300 transition-colors tracking-widest flex items-center gap-2 px-12 py-3 rounded-2xl hover:bg-white/5 transition-all"
-                   >
-                     Manage Invoices <ArrowUpRight size={14} />
-                   </button>
-                 </div>
-              </div>
-
-              {/* Operation Audit Trail */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
-                <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl transition-colors">
-                      <History size={20} />
-                    </div>
-                    <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">Audit Trail</h2>
-                  </div>
+            <Section title="Billing readiness" icon={Receipt} action={<StatusBadge status={(booking as any).paymentStatus || 'UNPAID'} />}>
+              <div className="space-y-3">
+                <div className="rounded-md bg-slate-950 p-4 text-white dark:bg-slate-950">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Client charge estimate</p>
+                  <p className="mt-2 text-2xl font-semibold">{formatMoney(invoiceEstimate)}</p>
                 </div>
-                <div className="p-6">
-                   <ActivityTimeline 
-                     events={auditEvents.length > 0 ? auditEvents : [
-                       { id: '1', type: 'BOOKING_CREATED', createdAt: booking.createdAt, description: 'Booking provisioned in the system.' },
-                       ...(booking.interpreterId ? [{ id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: `${booking.interpreterName || 'Interpreter'} assigned to this booking.` }] : []),
-                     ]}
-                   />
-                   
-                   <div className="mt-8">
-                     <button className="w-full py-3 text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 transition-colors tracking-widest flex items-center justify-center gap-2 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700 transition-all shadow-sm">
-                       View Extended Logs <ArrowUpRight size={14} />
-                     </button>
-                   </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <InfoItem label="VAT estimate" value={formatMoney(invoiceEstimate * 0.2)} />
+                  <InfoItem label="Cost code" value={booking.costCode || 'N/A'} />
                 </div>
+                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing')} className="w-full">Open billing hub</Button>
               </div>
+            </Section>
 
-            </div>
-          </div>
+            <Section title="Audit trail" icon={History}>
+              <ActivityTimeline
+                events={auditEvents.length > 0 ? auditEvents : [
+                  { id: '1', type: 'BOOKING_CREATED', createdAt: booking.createdAt, description: 'Booking created in the system.' },
+                  ...(booking.interpreterId ? [{ id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: `${booking.interpreterName || 'Interpreter'} assigned.` }] : []),
+                ]}
+              />
+            </Section>
+          </aside>
         </div>
-      </div>
+      </main>
 
       <InterpreterAllocationDrawer
         isOpen={isAllocationDrawerOpen}

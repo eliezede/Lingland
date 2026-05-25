@@ -272,6 +272,7 @@ export const AdminUsers = () => {
         />
 
         <BulkActionBar
+          selectedIds={selectedIds}
           selectedCount={selectedIds.length}
           totalCount={filteredUsers.length}
           onClearSelection={() => setSelectedIds([])}

@@ -14,47 +14,61 @@ export const InterpreterJobDetails = () => {
   const { showToast } = useToast();
   const { openThread } = useChat();
   const [job, setJob] = useState<Booking | null>(null);
+  const [assignmentId, setAssignmentId] = useState<string | null>(null);
+  const [isDirectOffer, setIsDirectOffer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      BookingService.getById(id).then(res => setJob(res || null)).finally(() => setLoading(false));
+    if (id && user?.profileId) {
+      Promise.all([
+        BookingService.getById(id),
+        BookingService.getInterpreterOffers(user.profileId)
+      ]).then(([res, offers]) => {
+        setJob(res || null);
+        setIsDirectOffer(!!res?.interpreterId && res.interpreterId === user.profileId && res.status === BookingStatus.OPENED);
+        const matchingOffer = offers.find(o => o.bookingId === id);
+        setAssignmentId(matchingOffer?.id || null);
+      }).finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
-  }, [id]);
+  }, [id, user?.profileId]);
 
   const handleJobChat = async () => {
     if (!user || !job) return;
 
-    const names = {
-      [user.id]: user.displayName || 'Interpreter',
-      'u1': 'Sarah Admin' // Admin fallback
-    };
+    try {
+      const adminUser = await ChatService.getAdminSupportUser();
+      if (!adminUser) {
+        showToast('No operations user is available for chat', 'error');
+        return;
+      }
 
-    const photos = {
-      [user.id]: user.photoUrl || '',
-      'u1': '' // Admin photo
-    };
+      const threadId = await ChatService.getOrCreateBookingThread(
+        job.id,
+        user,
+        adminUser,
+        { name: job.bookingRef || job.id }
+      );
 
-    const threadId = await ChatService.getOrCreateThread(
-      [user.id, 'u1'],
-      names,
-      photos,
-      job.id
-    );
-
-    openThread(threadId);
+      openThread(threadId);
+    } catch {
+      showToast('Failed to open job chat', 'error');
+    }
   };
 
   const handleAccept = async () => {
     if (!job) return;
     setProcessing(true);
     try {
-      if (job.status === 'PENDING_ASSIGNMENT' as any) {
+      if (isDirectOffer || job.status === 'PENDING_ASSIGNMENT' as any) {
         await BookingService.updateStatus(job.id, BookingStatus.BOOKED);
-      } else {
+      } else if (assignmentId) {
         // Fallback for broadcast offers if they ever route here
-        await BookingService.acceptOffer(job.id);
+        await BookingService.acceptOffer(assignmentId);
+      } else {
+        throw new Error('This job is not currently available to accept.');
       }
       showToast('Job accepted successfully!', 'success');
       navigate('/interpreter/dashboard');
@@ -69,10 +83,12 @@ export const InterpreterJobDetails = () => {
     if (!job) return;
     setProcessing(true);
     try {
-      if (job.status === 'PENDING_ASSIGNMENT' as any) {
+      if (isDirectOffer || job.status === 'PENDING_ASSIGNMENT' as any) {
         await BookingService.unassignInterpreterFromBooking(job.id);
+      } else if (assignmentId) {
+        await BookingService.declineOffer(assignmentId);
       } else {
-        await BookingService.declineOffer(job.id);
+        throw new Error('This job is not currently available to decline.');
       }
       showToast('Job declined.', 'info');
       navigate('/interpreter/dashboard');
@@ -87,6 +103,7 @@ export const InterpreterJobDetails = () => {
   if (!job) return <div className="p-8 text-center text-red-500">Job not found.</div>;
 
   const isOnline = job.locationType === 'ONLINE';
+  const canRespondToOffer = isDirectOffer || !!assignmentId || job.status === ('PENDING_ASSIGNMENT' as any);
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
@@ -254,7 +271,7 @@ export const InterpreterJobDetails = () => {
       {/* Action Bar */}
       <div className="fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.05)] z-30 pb-safe md:pl-64 lg:pl-[inherit] transition-all">
         <div className="w-full max-w-[1000px] mx-auto p-4 flex justify-end">
-          {(job.status === 'PENDING_ASSIGNMENT' as any || job.status === BookingStatus.OPENED) ? (
+          {canRespondToOffer ? (
             <div className="flex gap-3 w-full sm:w-auto">
               <button
                 onClick={handleDecline}

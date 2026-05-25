@@ -1,94 +1,60 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 
+const STAFF_ROLES = ['SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'STAFF'];
+const ACTIVATION_ROLES = ['INTERPRETER', 'CLIENT'];
+
 export const onUserCreated = functions.runWith({
     secrets: ['BREVO_API_KEY'],
     timeoutSeconds: 60,
-    memory: '256MB'
+    memory: '256MB',
 }).firestore
     .document('users/{userId}')
     .onCreate(async (snap, context) => {
         const userData = snap.data();
         if (!userData) return null;
 
-        const { email, displayName, role, status } = userData;
+        const email = String(userData.email || '').trim().toLowerCase();
+        const displayName = String(userData.displayName || email.split('@')[0] || 'User');
+        const role = String(userData.role || '');
+        const status = String(userData.status || '');
+
         if (!email) {
             console.warn(`[onUserCreated] No email for user ${context.params.userId}`);
             return null;
         }
 
-        // Only process PENDING users (invites). Already ACTIVE users don't need provisioning.
+        if (userData.provisionedAt) {
+            console.log(`[onUserCreated] User ${email} already provisioned, skipping.`);
+            return null;
+        }
+
         if (status && status !== 'PENDING') {
             console.log(`[onUserCreated] User ${email} status is ${status}, skipping provisioning.`);
             return null;
         }
 
         try {
-            // 1. Check if user already exists in Firebase Auth
-            let userRecord;
-            try {
-                userRecord = await admin.auth().getUserByEmail(email);
-                console.log(`[onUserCreated] User ${email} already exists in Auth.`);
-            } catch (authErr: any) {
-                if (authErr.code === 'auth/user-not-found') {
-                    // 2. Create the user in Firebase Auth with a random temporary password
-                    console.log(`[onUserCreated] Creating Auth user for ${email}...`);
-                    userRecord = await admin.auth().createUser({
-                        email,
-                        displayName: displayName || email.split('@')[0],
-                        password: Math.random().toString(36).slice(-12) + 'A1!',
-                    });
-                } else {
-                    throw authErr;
-                }
-            }
+            const authUser = await ensureAuthUser(email, displayName);
+            const staffProfileId = STAFF_ROLES.includes(role)
+                ? await ensureStaffProfile(authUser.uid, userData)
+                : userData.staffProfileId || '';
 
-            const authUid = userRecord.uid;
-            
-            // 3. ID ALIGNMENT: Migrate Firestore doc to match Auth UID
-            if (authUid !== context.params.userId) {
-                console.log(`[onUserCreated] ID Mismatch. Migrating ${context.params.userId} → ${authUid} atomically...`);
-                
-                const departmentId = userData._prov_departmentId || '';
-                const jobTitleId = userData._prov_jobTitleId || '';
+            await alignUserDocumentToAuthUid(snap, authUser.uid, {
+                authUid: authUser.uid,
+                displayName,
+                staffProfileId: staffProfileId || undefined,
+                provisionedAt: new Date().toISOString(),
+            });
 
-                const batch = admin.firestore().batch();
-
-                const profileRef = admin.firestore().collection('staff_profiles').doc();
-                batch.set(profileRef, {
-                    id: profileRef.id,
-                    userId: authUid,
-                    departmentId,
-                    jobTitleId,
-                    onboardingCompleted: false,
-                    preferences: { theme: 'system', language: 'en', notifications: true },
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
-
-                const { _prov_departmentId, _prov_jobTitleId, ...cleanUserData } = userData;
-                const newUserRef = admin.firestore().collection('users').doc(authUid);
-                batch.set(newUserRef, {
-                    ...cleanUserData,
-                    id: authUid,
-                    staffProfileId: profileRef.id
-                }, { merge: true });
-                
-                const oldUserRef = admin.firestore().collection('users').doc(context.params.userId);
-                batch.delete(oldUserRef);
-
-                await batch.commit();
-                console.log(`[onUserCreated] Atomic ID Alignment & profile creation complete for ${email}.`);
-            }
-
-            await sendInvitationEmail(authUid, email, displayName, role);
-
+            await sendInvitationEmail(authUser.uid, email, displayName, role);
             return true;
         } catch (error: any) {
-            console.error(`[onUserCreated] ❌ Error provisioning user ${email}:`, error);
-            await admin.firestore().collection('users').doc(context.params.userId).update({
-                error: error?.message || 'Unknown error provisioning user'
-            });
+            console.error(`[onUserCreated] Error provisioning user ${email}:`, error);
+            await admin.firestore().collection('users').doc(context.params.userId).set({
+                error: error?.message || 'Unknown error provisioning user',
+                updatedAt: new Date().toISOString(),
+            }, { merge: true });
             return null;
         }
     });
@@ -101,7 +67,7 @@ export const resendStaffInvite = functions.runWith({ secrets: ['BREVO_API_KEY'] 
         throw new functions.https.HttpsError('permission-denied', 'Only SUPER_ADMIN can resend invites');
     }
 
-    const { userId } = data;
+    const userId = String(data?.userId || '');
     if (!userId) throw new functions.https.HttpsError('invalid-argument', 'userId is required');
 
     const userRef = await admin.firestore().collection('users').doc(userId).get();
@@ -110,99 +76,226 @@ export const resendStaffInvite = functions.runWith({ secrets: ['BREVO_API_KEY'] 
     const userData = userRef.data()!;
     if (userData.status !== 'PENDING') throw new functions.https.HttpsError('failed-precondition', 'User is not pending');
 
-    await sendInvitationEmail(userData.id, userData.email, userData.displayName, userData.role);
+    await sendInvitationEmail(userRef.id, userData.email, userData.displayName, userData.role);
     return { success: true };
 });
 
-async function sendInvitationEmail(authUid: string, email: string, displayName: string, role: string) {
-    const productionUrl = 'https://lingland-2e52f.web.app';
-    console.log(`[sendInvitationEmail] Generating password reset link for ${email}...`);
-    
-    const resetLink = await admin.auth().generatePasswordResetLink(email, {
-        url: `${productionUrl}/#/setup?token=${authUid}`,
+export const sendAccountActivationInvite = functions.https.onCall(async (data) => {
+    const email = String(data?.email || '').trim().toLowerCase();
+    const requestedDisplayName = String(data?.displayName || '').trim();
+
+    if (!email) throw new functions.https.HttpsError('invalid-argument', 'email is required');
+
+    const userSnap = await admin.firestore()
+        .collection('users')
+        .where('email', '==', email)
+        .limit(1)
+        .get();
+
+    if (userSnap.empty) {
+        throw new functions.https.HttpsError('not-found', 'No platform user exists for this email');
+    }
+
+    const sourceDoc = userSnap.docs[0];
+    const userData = sourceDoc.data();
+    const role = String(userData.role || '');
+    const status = String(userData.status || '');
+
+    if (!ACTIVATION_ROLES.includes(role)) {
+        throw new functions.https.HttpsError('failed-precondition', 'Activation links are only available for client and interpreter accounts');
+    }
+
+    if (!['IMPORTED', 'PENDING'].includes(status)) {
+        throw new functions.https.HttpsError('failed-precondition', `Account status is ${status || 'UNKNOWN'} and cannot be activated`);
+    }
+
+    const displayName = requestedDisplayName || userData.displayName || email.split('@')[0];
+    const authUser = await ensureAuthUser(email, displayName);
+
+    await alignUserDocumentToAuthUid(sourceDoc, authUser.uid, {
+        authUid: authUser.uid,
+        displayName,
+        activationEmailSentAt: new Date().toISOString(),
     });
 
-    // Extract oobCode from the Firebase reset link
+    const portalUrl = await getPortalUrl();
+    const activationLink = await buildPasswordSetupLink(email, `${portalUrl}/#/activate?token=${authUser.uid}`);
+
+    await queueTemplateEmail('ACCOUNT_ACTIVATION', email, {
+        '{{interpreterName}}': displayName,
+        '{{activationLink}}': activationLink,
+    }, {
+        statusTrigger: 'IMPORTED',
+        userId: authUser.uid,
+    }, 'Activate your Lingland Account', `
+        <p>Dear {{interpreterName}},</p>
+        <p>Welcome to Lingland. Please use the secure link below to set your password and activate your account.</p>
+        <p><a href="{{activationLink}}">Activate My Account</a></p>
+        <p>{{activationLink}}</p>
+    `);
+
+    return { success: true, userId: authUser.uid };
+});
+
+async function sendInvitationEmail(authUid: string, email: string, displayName: string, role: string) {
+    const portalUrl = await getPortalUrl();
+    console.log(`[sendInvitationEmail] Generating password reset link for ${email}...`);
+
+    const setupLink = await buildPasswordSetupLink(email, `${portalUrl}/#/setup?token=${authUid}`);
+    const roleLabel = getRoleLabel(role);
+
+    await queueTemplateEmail('STAFF_INVITATION', email, {
+        '{{applicantName}}': displayName || 'there',
+        '{{departmentName}}': 'your',
+        '{{jobTitle}}': roleLabel,
+        '{{role}}': roleLabel,
+        '{{inviteLink}}': setupLink,
+    }, {
+        statusTrigger: 'STAFF_INVITED',
+        userId: authUid,
+    }, 'Welcome to Lingland - Complete Your Account Setup', `
+        <p>Hello <strong>{{applicantName}}</strong>,</p>
+        <p>You have been invited to join Lingland as a <strong>{{role}}</strong>.</p>
+        <p><a href="{{inviteLink}}">Set My Password &amp; Join Team</a></p>
+        <p>{{inviteLink}}</p>
+    `);
+
+    console.log(`[sendInvitationEmail] Invitation email queued for ${email}`);
+}
+
+async function ensureAuthUser(email: string, displayName: string): Promise<admin.auth.UserRecord> {
+    try {
+        const userRecord = await admin.auth().getUserByEmail(email);
+        if (displayName && userRecord.displayName !== displayName) {
+            await admin.auth().updateUser(userRecord.uid, { displayName });
+            return admin.auth().getUser(userRecord.uid);
+        }
+        return userRecord;
+    } catch (authErr: any) {
+        if (authErr.code !== 'auth/user-not-found') throw authErr;
+        return admin.auth().createUser({
+            email,
+            displayName,
+            password: Math.random().toString(36).slice(-12) + 'A1!',
+        });
+    }
+}
+
+async function ensureStaffProfile(userId: string, userData: FirebaseFirestore.DocumentData): Promise<string> {
+    if (userData.staffProfileId) return String(userData.staffProfileId);
+
+    const existing = await admin.firestore()
+        .collection('staff_profiles')
+        .where('userId', '==', userId)
+        .limit(1)
+        .get();
+
+    if (!existing.empty) return existing.docs[0].id;
+
+    const profileRef = admin.firestore().collection('staff_profiles').doc();
+    await profileRef.set({
+        id: profileRef.id,
+        userId,
+        departmentId: userData._prov_departmentId || '',
+        jobTitleId: userData._prov_jobTitleId || '',
+        onboardingCompleted: false,
+        preferences: { theme: 'system', language: 'en', notifications: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+    });
+    return profileRef.id;
+}
+
+async function alignUserDocumentToAuthUid(
+    sourceDoc: FirebaseFirestore.DocumentSnapshot<FirebaseFirestore.DocumentData>,
+    authUid: string,
+    extraData: Record<string, unknown> = {}
+) {
+    const userData = sourceDoc.data() || {};
+    const { _prov_departmentId, _prov_jobTitleId, ...cleanUserData } = userData;
+    const batch = admin.firestore().batch();
+    const targetRef = admin.firestore().collection('users').doc(authUid);
+
+    batch.set(targetRef, {
+        ...cleanUserData,
+        ...extraData,
+        id: authUid,
+        updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    if (sourceDoc.id !== authUid && sourceDoc.ref) {
+        batch.delete(sourceDoc.ref);
+    }
+
+    await batch.commit();
+}
+
+async function getPortalUrl(): Promise<string> {
+    try {
+        const snap = await admin.firestore().collection('system').doc('settings').get();
+        const configuredUrl = snap.data()?.general?.portalUrl;
+        if (configuredUrl && typeof configuredUrl === 'string') {
+            return trimTrailingSlash(configuredUrl);
+        }
+    } catch (error) {
+        console.warn('[getPortalUrl] Failed to load portal URL from settings', error);
+    }
+    return 'https://lingland-2e52f.web.app';
+}
+
+async function buildPasswordSetupLink(email: string, continueUrl: string): Promise<string> {
+    const resetLink = await admin.auth().generatePasswordResetLink(email, { url: continueUrl });
     const url = new URL(resetLink);
     const oobCode = url.searchParams.get('oobCode') || '';
-    
-    // Build our custom setup link with both token (authUid) and oobCode
-    const setupLink = `${productionUrl}/#/setup?token=${authUid}&oobCode=${oobCode}`;
-    console.log(`[sendInvitationEmail] Custom setup link generated for ${email}`);
+    const separator = continueUrl.includes('?') ? '&' : '?';
+    return `${continueUrl}${separator}oobCode=${encodeURIComponent(oobCode)}`;
+}
 
-    // Determine role label for email
-    const roleLabels: Record<string, string> = {
-        'SUPER_ADMIN': 'Super Administrator',
-        'ADMIN': 'Administrator',
-        'INTERPRETER': 'Interpreter',
-        'CLIENT': 'Client'
-    };
-    const roleLabel = roleLabels[role] || role || 'Team Member';
+async function queueTemplateEmail(
+    templateId: string,
+    email: string,
+    variables: Record<string, string>,
+    metadata: Record<string, unknown>,
+    fallbackSubject: string,
+    fallbackBody: string
+) {
+    const templateSnap = await admin.firestore().collection('emailTemplates').doc(templateId).get();
+    const template = templateSnap.exists ? templateSnap.data() : null;
 
-    console.log(`[sendInvitationEmail] Queueing branded invitation email for ${email}`);
+    if (template && template.isActive === false) {
+        throw new functions.https.HttpsError('failed-precondition', `${templateId} template is inactive`);
+    }
+
+    const subject = renderTemplate(String(template?.subject || fallbackSubject), variables);
+    const html = renderTemplate(String(template?.body || fallbackBody), variables);
+
     await admin.firestore().collection('mail').add({
         to: [email],
-        message: {
-            subject: 'Welcome to Lingland – Complete Your Account Setup',
-            html: `
-                <div style="font-family: 'Inter', -apple-system, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
-                    <div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 40px 32px; border-radius: 16px 16px 0 0;">
-                        <div style="width: 48px; height: 48px; background: #2563eb; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 24px;">
-                            <span style="color: white; font-size: 24px; font-weight: 900;">L</span>
-                        </div>
-                        <h1 style="color: #ffffff; font-size: 28px; font-weight: 900; margin: 0 0 8px 0; letter-spacing: -0.5px;">
-                            Welcome to Lingland
-                        </h1>
-                        <p style="color: #94a3b8; font-size: 15px; margin: 0; line-height: 1.6;">
-                            Your professional account has been created and is ready for activation.
-                        </p>
-                    </div>
-
-                    <div style="padding: 32px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 16px 16px;">
-                        <p style="color: #1e293b; font-size: 15px; line-height: 1.7; margin: 0 0 8px 0;">
-                            Hello <strong>${displayName || 'there'}</strong>,
-                        </p>
-                        <p style="color: #475569; font-size: 15px; line-height: 1.7; margin: 0 0 24px 0;">
-                            You have been invited to join the Lingland platform as a <strong>${roleLabel}</strong>.
-                            To get started, click the button below to set your password and complete your onboarding.
-                        </p>
-
-                        <div style="text-align: center; margin: 32px 0;">
-                            <a href="${setupLink}" 
-                               style="display: inline-block; background: #2563eb; color: #ffffff; padding: 14px 32px; 
-                                      text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 15px;
-                                      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);">
-                                Set My Password &amp; Join Team →
-                            </a>
-                        </div>
-
-                        <div style="background: #f8fafc; border-radius: 12px; padding: 20px; margin: 24px 0 0 0; border: 1px solid #e2e8f0;">
-                            <p style="color: #64748b; font-size: 12px; margin: 0 0 4px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
-                                Account Details
-                            </p>
-                            <p style="color: #1e293b; font-size: 14px; margin: 4px 0;">
-                                <strong>Email:</strong> ${email}
-                            </p>
-                            <p style="color: #1e293b; font-size: 14px; margin: 4px 0;">
-                                <strong>Role:</strong> ${roleLabel}
-                            </p>
-                        </div>
-
-                        <p style="color: #94a3b8; font-size: 12px; margin: 24px 0 0 0; line-height: 1.6;">
-                            This link is valid for a limited time. If it expires, please contact your administrator for a new invitation.
-                        </p>
-
-                        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-
-                        <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">
-                            Lingland Platform · Professional Language Services
-                        </p>
-                    </div>
-                </div>
-            `,
-        },
-        createdAt: new Date().toISOString()
+        message: { subject, html },
+        ...metadata,
+        createdAt: new Date().toISOString(),
     });
+}
 
-    console.log(`[sendInvitationEmail] ✅ Invitation email queued for ${email}`);
+function renderTemplate(template: string, variables: Record<string, string>): string {
+    return Object.entries(variables).reduce(
+        (output, [key, value]) => output.split(key).join(value || ''),
+        template
+    );
+}
+
+function getRoleLabel(role: string): string {
+    const roleLabels: Record<string, string> = {
+        SUPER_ADMIN: 'Super Administrator',
+        ADMIN: 'Administrator',
+        COORDINATOR: 'Coordinator',
+        STAFF: 'Staff Member',
+        INTERPRETER: 'Interpreter',
+        CLIENT: 'Client',
+    };
+    return roleLabels[role] || role || 'Team Member';
+}
+
+function trimTrailingSlash(value: string): string {
+    return value.endsWith('/') ? value.slice(0, -1) : value;
 }

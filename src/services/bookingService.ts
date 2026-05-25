@@ -133,7 +133,7 @@ export const BookingService = {
 
     // 1. Handle Client Association
     let clientId = '';
-    const email = input.guestContact?.email;
+    const email = input.guestContact?.email?.trim().toLowerCase();
     if (email) {
       const existingClient = await ClientService.getByEmail(email);
       if (existingClient) {
@@ -146,6 +146,7 @@ export const BookingService = {
 
     const newBooking = {
       ...input,
+      guestContact: input.guestContact ? { ...input.guestContact, email } : input.guestContact,
       clientId, // Linked to the new or existing GUEST client
       bookingRef,
       status: BookingStatus.INCOMING,
@@ -175,7 +176,16 @@ export const BookingService = {
 
   updateStatus: async (id: string, status: BookingStatus): Promise<void> => {
     try {
-      await updateDoc(doc(db, COLLECTION_NAME, id), { status, updatedAt: serverTimestamp() });
+      if (status === BookingStatus.CANCELLED) {
+        const batch = writeBatch(db);
+        batch.update(doc(db, COLLECTION_NAME, id), { status, updatedAt: serverTimestamp() });
+        const assignmentsQuery = query(collection(db, ASSIGNMENTS_COLLECTION), where('bookingId', '==', id), where('status', '==', AssignmentStatus.OFFERED));
+        const assignmentsSnap = await getDocs(assignmentsQuery);
+        assignmentsSnap.docs.forEach(d => batch.update(d.ref, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() }));
+        await batch.commit();
+      } else {
+        await updateDoc(doc(db, COLLECTION_NAME, id), { status, updatedAt: serverTimestamp() });
+      }
 
       const booking = await BookingService.getById(id);
       if (booking) {
@@ -542,7 +552,12 @@ export const BookingService = {
 
   linkClientToBooking: async (bookingId: string, clientId: string): Promise<void> => {
     try {
-      await updateDoc(doc(db, COLLECTION_NAME, bookingId), { clientId, updatedAt: serverTimestamp() });
+      const client = await ClientService.getById(clientId);
+      await updateDoc(doc(db, COLLECTION_NAME, bookingId), {
+        clientId,
+        ...(client?.companyName ? { clientName: client.companyName } : {}),
+        updatedAt: serverTimestamp()
+      });
     } catch (e) {
       console.error('Failed to link client to booking', e);
       throw e;
@@ -552,18 +567,25 @@ export const BookingService = {
   linkOrphanedBookings: async (email: string, clientId: string): Promise<number> => {
     let count = 0;
     try {
-      // Find all bookings where guestContact.email matches and clientId is missing
-      const q = query(
-        collection(db, COLLECTION_NAME),
-        where('guestContact.email', '==', email)
-      );
-      const snap = await getDocs(q);
+      const client = await ClientService.getById(clientId);
+      const originalEmail = email.trim();
+      const normalizedEmail = originalEmail.toLowerCase();
+      const queries = [normalizedEmail, originalEmail]
+        .filter((value, index, arr) => value && arr.indexOf(value) === index)
+        .map(value => query(collection(db, COLLECTION_NAME), where('guestContact.email', '==', value)));
+      const snapshots = await Promise.all(queries.map(getDocs));
+      const docsById = new Map<string, any>();
+      snapshots.forEach(snap => snap.docs.forEach(d => docsById.set(d.id, d)));
       const batch = writeBatch(db);
 
-      snap.docs.forEach(d => {
+      docsById.forEach(d => {
         const data = d.data();
-        if (!data.clientId) {
-          batch.update(d.ref, { clientId, updatedAt: serverTimestamp() });
+        if (data.clientId !== clientId) {
+          batch.update(d.ref, {
+            clientId,
+            clientName: client?.companyName || data.clientName || data.guestContact?.organisation || data.guestContact?.name || 'Client',
+            updatedAt: serverTimestamp()
+          });
           count++;
         }
       });

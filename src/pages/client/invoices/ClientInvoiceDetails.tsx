@@ -5,11 +5,13 @@ import { useClientInvoiceById } from '../../../hooks/useClientHooks';
 import { PdfService } from '../../../services/api';
 import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
 import { ChevronLeft, Download } from 'lucide-react';
+import { useAuth } from '../../../context/AuthContext';
 
 export const ClientInvoiceDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { invoice, loading } = useClientInvoiceById(id);
+  const { user } = useAuth();
+  const { invoice, loading } = useClientInvoiceById(user?.profileId, id);
 
   const handleDownload = () => {
     if (invoice) {
@@ -19,6 +21,9 @@ export const ClientInvoiceDetails = () => {
 
   if (loading) return <div className="p-8">Loading...</div>;
   if (!invoice) return <div className="p-8 text-red-500">Invoice not found.</div>;
+  const subtotal = invoice.subtotal ?? invoice.items?.reduce((sum: number, item: any) => sum + Number(item.total || 0), 0) ?? invoice.totalAmount;
+  const vatAmount = invoice.vatAmount ?? Math.max(invoice.totalAmount - subtotal, 0);
+  const totalDue = invoice.totalAmount;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -86,15 +91,15 @@ export const ClientInvoiceDetails = () => {
            <div className="w-64 space-y-2">
              <div className="flex justify-between text-sm text-gray-600">
                <span>Subtotal</span>
-               <span>£{invoice.totalAmount.toFixed(2)}</span>
+               <span>£{subtotal.toFixed(2)}</span>
              </div>
              <div className="flex justify-between text-sm text-gray-600">
-               <span>VAT (20%)</span>
-               <span>£{(invoice.totalAmount * 0.2).toFixed(2)}</span>
+               <span>VAT</span>
+               <span>£{vatAmount.toFixed(2)}</span>
              </div>
              <div className="flex justify-between text-lg font-bold text-gray-900 border-t pt-2">
                <span>Total</span>
-               <span>£{(invoice.totalAmount * 1.2).toFixed(2)}</span>
+               <span>£{totalDue.toFixed(2)}</span>
              </div>
            </div>
         </div>

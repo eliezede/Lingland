@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useClientBookings, useClientInvoices } from '../../hooks/useClientHooks';
 import { CalendarDays, PlusCircle, AlertCircle, Clock, CheckCircle2, History } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { BookingStatus } from '../../types';
+import { Booking, BookingStatus, InvoiceStatus } from '../../types';
 import { BookingService, BillingService } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 
@@ -23,6 +23,9 @@ export const ClientDashboard = () => {
   const { showToast } = useToast();
   const [isScanning, setIsScanning] = useState(false);
   const [estimatedCosts, setEstimatedCosts] = useState<Record<string, number>>({});
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const getBookingStart = (booking: Booking) => new Date(`${booking.date}T${booking.startTime || '00:00'}`);
 
   useEffect(() => {
     const scanHistory = async () => {
@@ -45,9 +48,9 @@ export const ClientDashboard = () => {
 
   useEffect(() => {
     if (!bookingsLoading && !invoicesLoading) {
-      const upcoming = bookings.filter(b => new Date(b.date) >= new Date() && b.status !== BookingStatus.CANCELLED).length;
+      const upcoming = bookings.filter(b => getBookingStart(b) >= todayStart && b.status !== BookingStatus.CANCELLED).length;
       const completed = bookings.filter(b => [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).length;
-      const unpaidInv = invoices.filter(i => i.status !== 'PAID');
+      const unpaidInv = invoices.filter(i => [InvoiceStatus.SENT, InvoiceStatus.APPROVED].includes(i.status));
 
       setStats({
         upcoming,
@@ -74,8 +77,8 @@ export const ClientDashboard = () => {
 
   // Get next 3 upcoming bookings
   const nextBookings = bookings
-    .filter(b => new Date(b.date) >= new Date() && b.status !== BookingStatus.CANCELLED)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .filter(b => getBookingStart(b) >= todayStart && b.status !== BookingStatus.CANCELLED)
+    .sort((a, b) => getBookingStart(a).getTime() - getBookingStart(b).getTime())
     .slice(0, 3);
 
   if (bookingsLoading) return <div className="p-8">Loading dashboard...</div>;

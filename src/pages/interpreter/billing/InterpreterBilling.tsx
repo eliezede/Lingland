@@ -5,6 +5,7 @@ import { Timesheet, InterpreterInvoice } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { PoundSterling, Upload, FileText } from 'lucide-react';
+import { getTimesheetInterpreterAmount } from '../../../utils/interpreterFlow';
 
 export const InterpreterBilling = () => {
   const { user } = useAuth();
@@ -15,8 +16,6 @@ export const InterpreterBilling = () => {
   
   // Upload Form State
   const [invRef, setInvRef] = useState('');
-  const [invTotal, setInvTotal] = useState(0);
-
   useEffect(() => {
     if (user?.profileId) {
       loadData(user.profileId);
@@ -28,9 +27,6 @@ export const InterpreterBilling = () => {
     const invoices = await BillingService.getInterpreterInvoices(id);
     setPendingJobs(jobs);
     setHistory(invoices);
-    
-    // Calculate expected total for validation
-    setInvTotal(jobs.reduce((sum, j) => sum + (j.totalInterpreterAmount || 0), 0));
   };
 
   const toggleJob = (id: string) => {
@@ -43,7 +39,7 @@ export const InterpreterBilling = () => {
     
     const amount = pendingJobs
       .filter(j => selectedJobs.includes(j.id))
-      .reduce((sum, j) => sum + (j.totalInterpreterAmount || 0), 0);
+      .reduce((sum, j) => sum + getTimesheetInterpreterAmount(j), 0);
 
     await BillingService.createInterpreterInvoiceUpload(user.profileId, selectedJobs, invRef, amount);
     
@@ -90,7 +86,7 @@ export const InterpreterBilling = () => {
                     </td>
                     <td className="px-4 py-2 text-sm text-gray-700">{new Date(job.actualStart).toLocaleDateString()}</td>
                     <td className="px-4 py-2 text-sm text-gray-500">{job.bookingId}</td>
-                    <td className="px-4 py-2 text-sm font-medium text-right">£{job.totalInterpreterAmount?.toFixed(2)}</td>
+                    <td className="px-4 py-2 text-sm font-medium text-right">£{getTimesheetInterpreterAmount(job).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -113,7 +109,7 @@ export const InterpreterBilling = () => {
                 <div>
                    <p className="text-xs text-gray-500 mb-1">Total Amount</p>
                    <p className="text-lg font-bold text-gray-900">
-                     £{pendingJobs.filter(j => selectedJobs.includes(j.id)).reduce((s,j) => s + (j.totalInterpreterAmount || 0), 0).toFixed(2)}
+                     £{pendingJobs.filter(j => selectedJobs.includes(j.id)).reduce((s,j) => s + getTimesheetInterpreterAmount(j), 0).toFixed(2)}
                    </p>
                 </div>
                 <button 

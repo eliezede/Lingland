@@ -30,6 +30,126 @@ import { MOCK_TIMESHEETS, MOCK_CLIENT_INVOICES, MOCK_INTERPRETER_INVOICES, saveM
 import { convertDoc, safeFetch } from './utils';
 import { NotificationService } from "./notificationService";
 import { InterpreterService } from "./interpreterService";
+import { getTimesheetInterpreterAmount } from "../utils/interpreterFlow";
+import { SystemService } from "./systemService";
+import { EmailService } from "./emailService";
+
+const getBookingForBillingComms = async (bookingId?: string, status?: BookingStatus): Promise<Booking | null> => {
+  if (!bookingId) return null;
+
+  try {
+    const bookingDoc = await getDoc(doc(db, 'bookings', bookingId));
+    if (bookingDoc.exists()) {
+      return {
+        id: bookingDoc.id,
+        ...bookingDoc.data(),
+        ...(status ? { status } : {})
+      } as Booking;
+    }
+  } catch (e) {
+    console.warn('[BillingService] Failed to fetch booking for billing communications', e);
+  }
+
+  const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+  return mockBooking ? { ...mockBooking, ...(status ? { status } : {}) } : null;
+};
+
+const getInterpreterEmailData = async (interpreterId?: string) => {
+  if (!interpreterId || interpreterId === 'unassigned') return {};
+
+  try {
+    const interpreter = await InterpreterService.getById(interpreterId);
+    if (interpreter) {
+      return {
+        interpreterId,
+        interpreterName: interpreter.name,
+        interpreterEmail: interpreter.email
+      };
+    }
+  } catch (e) {
+    console.warn('[BillingService] Failed to resolve interpreter email data', e);
+  }
+
+  return {
+    interpreterId,
+    interpreterName: MOCK_USERS.find(u => u.profileId === interpreterId)?.displayName,
+    interpreterEmail: MOCK_USERS.find(u => u.profileId === interpreterId)?.email
+  };
+};
+
+const notifyInterpreterUser = async (
+  interpreterId: string | undefined,
+  title: string,
+  message: string,
+  type: NotificationType,
+  link: string
+) => {
+  if (!interpreterId || interpreterId === 'unassigned') return;
+
+  try {
+    const q = query(collection(db, 'users'), where('profileId', '==', interpreterId));
+    const userSnap = await getDocs(q);
+    const userId = !userSnap.empty
+      ? userSnap.docs[0].id
+      : MOCK_USERS.find(u => u.profileId === interpreterId)?.id;
+
+    if (userId) await NotificationService.notify(userId, title, message, type, link);
+  } catch (e) {
+    console.warn('[BillingService] Failed to notify interpreter user', e);
+  }
+};
+
+const dispatchTimesheetSubmittedComms = async (booking: Booking, timesheet: Timesheet) => {
+  const ref = booking.bookingRef || booking.id.slice(0, 8);
+  const interpreterData = await getInterpreterEmailData(timesheet.interpreterId || booking.interpreterId);
+
+  await Promise.allSettled([
+    NotificationService.notifyAdmins(
+      'Timesheet submitted',
+      `Job ${ref} has a timesheet waiting for verification.`,
+      NotificationType.PAYMENT,
+      `/admin/bookings/${booking.id}`
+    ),
+    notifyInterpreterUser(
+      timesheet.interpreterId || booking.interpreterId,
+      'Timesheet received',
+      `Your timesheet for job ${ref} has been received and is waiting for verification.`,
+      NotificationType.SUCCESS,
+      '/interpreter/timesheets'
+    ),
+    EmailService.sendStatusEmail(
+      { ...booking, status: BookingStatus.TIMESHEET_SUBMITTED },
+      BookingStatus.TIMESHEET_SUBMITTED,
+      interpreterData
+    )
+  ]);
+};
+
+const dispatchReadyForInvoiceComms = async (booking: Booking, timesheet?: Timesheet | null) => {
+  const ref = booking.bookingRef || booking.id.slice(0, 8);
+  const interpreterData = await getInterpreterEmailData(timesheet?.interpreterId || booking.interpreterId);
+
+  await Promise.allSettled([
+    NotificationService.notifyAdmins(
+      'Ready for invoice',
+      `Job ${ref} has been verified and is ready for invoicing.`,
+      NotificationType.PAYMENT,
+      `/admin/bookings/${booking.id}`
+    ),
+    notifyInterpreterUser(
+      timesheet?.interpreterId || booking.interpreterId,
+      'Timesheet approved',
+      `Your timesheet for job ${ref} has been approved and moved to finance.`,
+      NotificationType.SUCCESS,
+      '/interpreter/timesheets'
+    ),
+    EmailService.sendStatusEmail(
+      { ...booking, status: BookingStatus.READY_FOR_INVOICE },
+      BookingStatus.READY_FOR_INVOICE,
+      interpreterData
+    )
+  ]);
+};
 
 export const BillingService = {
 
@@ -72,17 +192,25 @@ export const BillingService = {
   /**
    * Client Invoices
    */
-  getClientInvoices: async (statusFilter?: string) => {
+  getClientInvoices: async (statusOrClientId?: string) => {
+    const invoiceStatuses = Object.values(InvoiceStatus) as string[];
+    const statusFilter = statusOrClientId && invoiceStatuses.includes(statusOrClientId) ? statusOrClientId : undefined;
+    const clientIdFilter = statusOrClientId && !statusFilter && statusOrClientId !== 'ALL' ? statusOrClientId : undefined;
     try {
-      let q = query(collection(db, "clientInvoices"), orderBy("issueDate", "desc"));
+      const snap = await getDocs(query(collection(db, "clientInvoices"), orderBy("issueDate", "desc")));
+      let filteredDocs = snap.docs;
       if (statusFilter && statusFilter !== 'ALL') {
-        q = query(collection(db, "clientInvoices"), where("status", "==", statusFilter), orderBy("issueDate", "desc"));
+        filteredDocs = filteredDocs.filter(d => d.data().status === statusFilter);
       }
-      const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as ClientInvoice));
+      if (clientIdFilter) {
+        filteredDocs = filteredDocs.filter(d => d.data().clientId === clientIdFilter);
+      }
+      return filteredDocs.map(d => ({ id: d.id, ...d.data() } as ClientInvoice));
     } catch (e) {
       console.warn("Using Mock Client Invoices");
-      return [...MOCK_CLIENT_INVOICES];
+      return MOCK_CLIENT_INVOICES
+        .filter(inv => !statusFilter || statusFilter === 'ALL' || inv.status === statusFilter)
+        .filter(inv => !clientIdFilter || inv.clientId === clientIdFilter);
     }
   },
 
@@ -93,7 +221,15 @@ export const BillingService = {
 
       const linesQ = query(collection(db, "clientInvoiceLines"), where("invoiceId", "==", id));
       const linesSnap = await getDocs(linesQ);
-      const items = linesSnap.docs.map(l => ({ id: l.id, ...l.data() }));
+      const items = linesSnap.docs.map(l => {
+        const line = { id: l.id, ...l.data() } as any;
+        return {
+          ...line,
+          total: Number(line.total ?? line.lineAmount ?? line.amount ?? 0),
+          rate: Number(line.rate ?? 0),
+          units: Number(line.units ?? line.quantity ?? 0)
+        };
+      });
 
       return { id: d.id, ...d.data(), items } as any as ClientInvoice;
     } catch (e) {
@@ -103,7 +239,30 @@ export const BillingService = {
 
   updateClientInvoiceStatus: async (id: string, status: InvoiceStatus) => {
     try {
-      await updateDoc(doc(db, "clientInvoices", id), { status });
+      const batch = writeBatch(db);
+      batch.update(doc(db, "clientInvoices", id), { status, updatedAt: serverTimestamp() });
+
+      if (status === InvoiceStatus.PAID) {
+        const linesQ = query(collection(db, "clientInvoiceLines"), where("invoiceId", "==", id));
+        const linesSnap = await getDocs(linesQ);
+        linesSnap.docs.forEach(lineDoc => {
+          const line = lineDoc.data() as any;
+          if (line.timesheetId) {
+            batch.update(doc(db, 'timesheets', line.timesheetId), {
+              status: 'INVOICED',
+              updatedAt: serverTimestamp()
+            });
+          }
+          if (line.bookingId) {
+            batch.update(doc(db, 'bookings', line.bookingId), {
+              status: BookingStatus.PAID,
+              updatedAt: serverTimestamp()
+            });
+          }
+        });
+      }
+
+      await batch.commit();
     } catch (e) {
       const inv = MOCK_CLIENT_INVOICES.find(i => i.id === id);
       if (inv) { inv.status = status; saveMockData(); }
@@ -153,7 +312,10 @@ export const BillingService = {
     }
   },
 
-  getInterpreterInvoices: async (statusFilter?: string) => {
+  getInterpreterInvoices: async (statusOrInterpreterId?: string) => {
+    const invoiceStatuses = Object.values(InvoiceStatus) as string[];
+    const statusFilter = statusOrInterpreterId && invoiceStatuses.includes(statusOrInterpreterId) ? statusOrInterpreterId : undefined;
+    const interpreterIdFilter = statusOrInterpreterId && !statusFilter && statusOrInterpreterId !== 'ALL' ? statusOrInterpreterId : undefined;
     try {
       const [photoMap, snap] = await Promise.all([
         InterpreterService.getPhotoMap(),
@@ -163,6 +325,9 @@ export const BillingService = {
       let filteredDocs = snap.docs;
       if (statusFilter && statusFilter !== 'ALL') {
         filteredDocs = filteredDocs.filter(d => d.data().status === statusFilter);
+      }
+      if (interpreterIdFilter) {
+        filteredDocs = filteredDocs.filter(d => d.data().interpreterId === interpreterIdFilter);
       }
       
       return filteredDocs.map((docSnap: any) => {
@@ -175,7 +340,10 @@ export const BillingService = {
       });
     } catch (e) {
       const photoMap = await InterpreterService.getPhotoMap();
-      return MOCK_INTERPRETER_INVOICES.map(inv => ({
+      return MOCK_INTERPRETER_INVOICES
+        .filter(inv => !statusFilter || statusFilter === 'ALL' || inv.status === statusFilter)
+        .filter(inv => !interpreterIdFilter || inv.interpreterId === interpreterIdFilter)
+        .map(inv => ({
         ...inv,
         interpreterPhotoUrl: inv.interpreterPhotoUrl || photoMap[inv.interpreterId]
       }));
@@ -195,9 +363,21 @@ export const BillingService = {
         return null;
       }
 
-      const linesQ = query(collection(db, "interpreterInvoiceLines"), where("interpreterInvoiceId", "==", id));
-      const linesSnap = await getDocs(linesQ);
-      const items = linesSnap.docs.map(l => ({ id: l.id, ...l.data() }));
+      const [linesSnap, legacyLinesSnap] = await Promise.all([
+        getDocs(query(collection(db, "interpreterInvoiceLines"), where("interpreterInvoiceId", "==", id))),
+        getDocs(query(collection(db, "interpreterInvoiceLines"), where("invoiceId", "==", id)))
+      ]);
+      const linesById = new Map<string, any>();
+      [...linesSnap.docs, ...legacyLinesSnap.docs].forEach(l => linesById.set(l.id, l));
+      const items = Array.from(linesById.values()).map(l => {
+        const line = { id: l.id, ...l.data() } as any;
+        return {
+          ...line,
+          total: Number(line.total ?? line.lineAmount ?? line.amount ?? 0),
+          rate: Number(line.rate ?? 0),
+          units: Number(line.units ?? line.quantity ?? 0)
+        };
+      });
       const data = d.data() as InterpreterInvoice;
 
       return { 
@@ -223,27 +403,71 @@ export const BillingService = {
     }
   },
 
-  createInterpreterInvoiceUpload: async (interpreterId: string, timesheetIds: string[], ref: string, amount: number): Promise<InterpreterInvoice> => {
-    // Mock Implementation
-    const newInvoice: InterpreterInvoice = {
-      id: `inv-i-${Date.now()}`,
-      organizationId: 'org-123',
+  createInterpreterInvoiceUpload: async (interpreterId: string, timesheetIds: string[], ref: string, amount: number, uploadedPdfUrl?: string): Promise<InterpreterInvoice> => {
+    const interpreter = await InterpreterService.getById(interpreterId);
+    const invoicePayload = {
+      organizationId: interpreter?.organizationId || 'lingland-main',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       interpreterId,
-      interpreterName: 'Interpreter', // Mock
-      model: 'UPLOAD',
+      interpreterName: interpreter?.name || 'Interpreter',
+      model: 'UPLOAD' as const,
       status: InvoiceStatus.SUBMITTED,
       externalInvoiceReference: ref,
       totalAmount: amount,
       issueDate: new Date().toISOString(),
       items: [],
-      currency: 'GBP'
+      currency: 'GBP',
+      ...(uploadedPdfUrl ? { uploadedPdfUrl } : {})
+    };
+
+    try {
+      const selectedTimesheets = await Promise.all(timesheetIds.map(async tsId => {
+        const tsDoc = await getDoc(doc(db, 'timesheets', tsId));
+        return tsDoc.exists() ? { id: tsDoc.id, ...tsDoc.data() } as Timesheet : null;
+      }));
+
+      const invoiceRef = doc(collection(db, 'interpreterInvoices'));
+      const batch = writeBatch(db);
+      batch.set(invoiceRef, invoicePayload);
+
+      selectedTimesheets.filter(Boolean).forEach((timesheet) => {
+        const ts = timesheet as Timesheet;
+        const lineRef = doc(collection(db, 'interpreterInvoiceLines'));
+        batch.set(lineRef, {
+          interpreterInvoiceId: invoiceRef.id,
+          timesheetId: ts.id,
+          bookingId: ts.bookingId,
+          description: `Timesheet ${ts.bookingId}`,
+          units: ts.unitsPayableToInterpreter || ts.sessionDurationMinutes || ts.wordCount || 1,
+          rate: 0,
+          total: getTimesheetInterpreterAmount(ts),
+          createdAt: new Date().toISOString()
+        });
+        batch.update(doc(db, 'timesheets', ts.id), {
+          interpreterInvoiceId: invoiceRef.id,
+          readyForInterpreterInvoice: false,
+          updatedAt: serverTimestamp()
+        });
+      });
+
+      await batch.commit();
+      return { id: invoiceRef.id, ...invoicePayload } as InterpreterInvoice;
+    } catch (e) {
+      console.warn("Interpreter invoice upload fell back to mock data", e);
+    }
+
+    const newInvoice: InterpreterInvoice = {
+      id: `inv-i-${Date.now()}`,
+      ...invoicePayload
     };
 
     timesheetIds.forEach(tsId => {
       const ts = MOCK_TIMESHEETS.find(t => t.id === tsId);
-      if (ts) ts.interpreterInvoiceId = newInvoice.id;
+      if (ts) {
+        ts.interpreterInvoiceId = newInvoice.id;
+        ts.readyForInterpreterInvoice = false;
+      }
     });
 
     MOCK_INTERPRETER_INVOICES.push(newInvoice);
@@ -294,7 +518,10 @@ export const BillingService = {
       batch.update(tsDoc.ref, {
         adminApproved: true,
         adminApprovedAt: new Date().toISOString(),
-        status: 'INVOICING'
+        status: 'INVOICING',
+        readyForClientInvoice: true,
+        readyForInterpreterInvoice: true,
+        updatedAt: serverTimestamp()
       });
 
       if (ts.bookingId) {
@@ -306,45 +533,9 @@ export const BillingService = {
 
       await batch.commit();
 
-      // Notify Interpreter
-      if (ts.interpreterId) {
-        // Find user by profileId
-        const q = query(collection(db, 'users'), where('profileId', '==', ts.interpreterId));
-        const userSnap = await getDocs(q);
-        const userId = !userSnap.empty ? userSnap.docs[0].id : MOCK_USERS.find(u => u.profileId === ts.interpreterId)?.id;
+      const booking = await getBookingForBillingComms(ts.bookingId, BookingStatus.READY_FOR_INVOICE);
+      if (booking) await dispatchReadyForInvoiceComms(booking, { id, ...ts } as Timesheet);
 
-        if (userId) {
-          await NotificationService.notify(
-            userId,
-            '✅ Timesheet Approved',
-            `Your timesheet for job on ${ts.actualStart.split('T')[0]} has been verified and approved — payment is now being processed.`,
-            NotificationType.SUCCESS,
-            '/interpreter/timesheets'
-          );
-
-          // TS-03: Send confirmation email to interpreter
-          const interpSnap = await getDoc(doc(db, 'interpreters', ts.interpreterId));
-          const interpEmail = interpSnap.exists() ? (interpSnap.data() as any).email : '';
-          const interpName = interpSnap.exists() ? (interpSnap.data() as any).name : 'Interpreter';
-          if (interpEmail) {
-            await addDoc(collection(db, 'mail'), {
-              to: [interpEmail],
-              message: {
-                subject: `Timesheet Approved — Job on ${ts.actualStart.split('T')[0]}`,
-                html: `Dear ${interpName},<br><br>
-Great news! Your timesheet for the job on <strong>${ts.actualStart.split('T')[0]}</strong> has been reviewed and approved by our administrative team.<br><br>
-<strong>Approved Amount:</strong> £${(ts.interpreterAmountCalculated || ts.totalToPay || 0).toFixed(2)}<br><br>
-Payment will be processed and submitted in accordance with your payment schedule. You can view your payment history by logging into the Lingland app.<br><br>
-Thank you for your continued support.<br><br>
-Kind regards,<br>The Lingland Finance Team`
-              },
-              timesheetId: id,
-              source: 'timesheet_approved',
-              createdAt: new Date().toISOString()
-            });
-          }
-        }
-      }
     } catch (e) {
       console.error("Error approving timesheet:", e);
       const ts = MOCK_TIMESHEETS.find(t => t.id === id);
@@ -373,6 +564,8 @@ Kind regards,<br>The Lingland Finance Team`
           status: BookingStatus.READY_FOR_INVOICE,
           updatedAt: serverTimestamp()
         });
+        const booking = await getBookingForBillingComms(bookingId, BookingStatus.READY_FOR_INVOICE);
+        if (booking) await dispatchReadyForInvoiceComms(booking);
       }
     } catch (e) {
       // Mock fallback
@@ -401,7 +594,7 @@ Kind regards,<br>The Lingland Finance Team`
         where("adminApproved", "==", true)
       );
       const snap = await getDocs(q);
-      const total = snap.docs.reduce((acc, d) => acc + (d.data().totalInterpreterAmount || 0), 0);
+      const total = snap.docs.reduce((acc, d) => acc + getTimesheetInterpreterAmount(d.data() as Timesheet), 0);
       return total;
     } catch (e) {
       return 340.50; // Mock fallback
@@ -450,14 +643,25 @@ Kind regards,<br>The Lingland Finance Team`
       status: 'SUBMITTED' as const,
       readyForClientInvoice: false,
       readyForInterpreterInvoice: false,
-      unitsBillableToClient: 0,
-      unitsPayableToInterpreter: 0,
-      supportingDocumentUrl: data.supportingDocumentUrl
+      unitsBillableToClient: data.unitsBillableToClient || data.wordCount || data.sessionDurationMinutes || 0,
+      unitsPayableToInterpreter: data.unitsPayableToInterpreter || data.wordCount || data.sessionDurationMinutes || 0,
+      clientInvoiceId: null,
+      interpreterInvoiceId: null,
+      supportingDocumentUrl: data.supportingDocumentUrl,
+      clientSignatureUrl: data.clientSignatureUrl,
+      clientNameSigned: data.clientNameSigned
     };
     try {
+      const existingQ = query(collection(db, 'timesheets'), where('bookingId', '==', data.bookingId));
+      const existingSnap = await getDocs(existingQ);
+      if (!existingSnap.empty) {
+        throw new Error('A timesheet has already been submitted for this booking.');
+      }
+
       const batch = writeBatch(db);
       const tsRef = doc(collection(db, 'timesheets'));
-      batch.set(tsRef, newTs);
+      const cleanNewTs = Object.fromEntries(Object.entries(newTs).filter(([, value]) => value !== undefined));
+      batch.set(tsRef, cleanNewTs);
 
       if (data.bookingId) {
         batch.update(doc(db, 'bookings', data.bookingId), {
@@ -467,10 +671,107 @@ Kind regards,<br>The Lingland Finance Team`
       }
 
       await batch.commit();
-      return { id: tsRef.id, ...newTs } as Timesheet;
-    } catch {
+      const createdTimesheet = { id: tsRef.id, ...cleanNewTs } as Timesheet;
+      const booking = await getBookingForBillingComms(data.bookingId, BookingStatus.TIMESHEET_SUBMITTED);
+      if (booking) await dispatchTimesheetSubmittedComms(booking, createdTimesheet);
+      return createdTimesheet;
+    } catch (e: any) {
+      if (e?.message?.includes('already been submitted')) throw e;
       const mockTs = { id: `ts-${Date.now()}`, ...newTs } as Timesheet;
       MOCK_TIMESHEETS.push(mockTs);
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === data.bookingId);
+      if (mockBooking) mockBooking.status = BookingStatus.TIMESHEET_SUBMITTED;
+      saveMockData();
+      return mockTs;
+    }
+  },
+
+  createNonExecutedJobClaim: async (bookingId: string, reason: string = 'Job was not executed'): Promise<Timesheet> => {
+    const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
+    const booking = bookingSnap.exists()
+      ? ({ id: bookingSnap.id, ...bookingSnap.data() } as Booking)
+      : MOCK_BOOKINGS.find(b => b.id === bookingId);
+
+    if (!booking) throw new Error('Booking not found');
+    if (!booking.clientId) throw new Error('Booking has no client linked');
+
+    const settings = await SystemService.getSettings();
+    const windowHours = settings?.operations?.cancellationWindowHours ?? 24;
+    const scheduledStart = new Date(`${booking.date}T${booking.startTime || '00:00'}:00`);
+    const hoursUntilStart = (scheduledStart.getTime() - Date.now()) / 36e5;
+    const billableCancellation = hoursUntilStart <= windowHours;
+    const durationMinutes = booking.durationMinutes || 60;
+    const durationHours = Math.max(durationMinutes / 60, 1);
+    const clientAmount = billableCancellation ? Number((durationHours * 40).toFixed(2)) : 0;
+    const interpreterAmount = billableCancellation && booking.interpreterId ? Number((durationHours * 25).toFixed(2)) : 0;
+    const actualStart = `${booking.date}T${booking.startTime || '00:00'}:00`;
+    const actualEnd = new Date(new Date(actualStart).getTime() + durationMinutes * 60000).toISOString();
+
+    const newTs = {
+      bookingId: booking.id,
+      interpreterId: booking.interpreterId || 'unassigned',
+      clientId: booking.clientId,
+      submittedAt: new Date().toISOString(),
+      sessionMode: SessionMode.CANCELLATION,
+      actualStart,
+      actualEnd,
+      sessionDurationMinutes: durationMinutes,
+      sessionFees: interpreterAmount,
+      travelTimeMinutes: 0,
+      travelFees: 0,
+      mileage: 0,
+      mileageFees: 0,
+      parking: 0,
+      transport: 0,
+      totalToPay: interpreterAmount,
+      breakDurationMinutes: 0,
+      wordCount: 0,
+      unitPrice: 0,
+      units: 'hours' as const,
+      interpreterAmountCalculated: interpreterAmount,
+      clientAmountCalculated: clientAmount,
+      adminApproved: false,
+      status: 'SUBMITTED' as const,
+      readyForClientInvoice: false,
+      readyForInterpreterInvoice: false,
+      unitsBillableToClient: billableCancellation ? durationHours : 0,
+      unitsPayableToInterpreter: billableCancellation && booking.interpreterId ? durationHours : 0,
+      clientInvoiceId: null,
+      interpreterInvoiceId: null,
+      nonExecutionReason: reason,
+      billableCancellation,
+      exceptionType: 'CANCELLATION' as const
+    };
+
+    try {
+      const existingQ = query(collection(db, 'timesheets'), where('bookingId', '==', booking.id));
+      const existingSnap = await getDocs(existingQ);
+      if (!existingSnap.empty) throw new Error('A timesheet or exception claim already exists for this booking.');
+
+      const batch = writeBatch(db);
+      const tsRef = doc(collection(db, 'timesheets'));
+      batch.set(tsRef, newTs);
+      batch.update(doc(db, 'bookings', booking.id), {
+        status: BookingStatus.TIMESHEET_SUBMITTED,
+        adminNotes: `${booking.adminNotes ? `${booking.adminNotes}\n` : ''}Not executed: ${reason}`,
+        updatedAt: serverTimestamp()
+      });
+      await batch.commit();
+      const createdTimesheet = { id: tsRef.id, ...newTs } as Timesheet;
+      await dispatchTimesheetSubmittedComms(
+        { ...booking, status: BookingStatus.TIMESHEET_SUBMITTED },
+        createdTimesheet
+      );
+      return createdTimesheet;
+    } catch (e: any) {
+      if (e?.message?.includes('already exists')) throw e;
+      const mockTs = { id: `ts-ex-${Date.now()}`, ...newTs } as Timesheet;
+      MOCK_TIMESHEETS.push(mockTs);
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === booking.id);
+      if (mockBooking) {
+        mockBooking.status = BookingStatus.TIMESHEET_SUBMITTED;
+        mockBooking.adminNotes = `${mockBooking.adminNotes ? `${mockBooking.adminNotes}\n` : ''}Not executed: ${reason}`;
+      }
       saveMockData();
       return mockTs;
     }

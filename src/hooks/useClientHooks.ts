@@ -14,7 +14,7 @@ import { BillingService } from '../services/billingService';
 import { ClientService } from '../services/clientService';
 import { BookingService } from '../services/bookingService';
 import { InterpreterService } from '../services/interpreterService';
-import { Booking, ClientInvoice, Client } from '../types';
+import { Booking, ClientInvoice, Client, InvoiceStatus } from '../types';
 
 export const useClientBookings = (clientId: string | undefined) => {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -116,12 +116,10 @@ export const useClientInvoices = (clientId: string | undefined) => {
     }
     
     setLoading(true);
-    // Use the BillingService (Firebase implementation)
-    BillingService.getClientInvoices()
+    BillingService.getClientInvoices(clientId)
       .then(data => {
-        // Filter by client ID in case service returns all (admin view)
-        // In a real secured API, the service should accept clientId param
-        const clientInvoices = data.filter(inv => inv.clientId === clientId);
+        const visibleStatuses = [InvoiceStatus.SENT, InvoiceStatus.APPROVED, InvoiceStatus.PAID];
+        const clientInvoices = data.filter(inv => inv.clientId === clientId && visibleStatuses.includes(inv.status));
         setInvoices(clientInvoices);
       })
       .catch(err => console.error("Error fetching invoices:", err))
@@ -131,22 +129,25 @@ export const useClientInvoices = (clientId: string | undefined) => {
   return { invoices, loading };
 };
 
-export const useClientInvoiceById = (invoiceId: string | undefined) => {
+export const useClientInvoiceById = (clientId: string | undefined, invoiceId: string | undefined) => {
   const [invoice, setInvoice] = useState<ClientInvoice | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!invoiceId) {
+    if (!clientId || !invoiceId) {
       setLoading(false);
       return;
     }
     
     setLoading(true);
     BillingService.getClientInvoiceById(invoiceId)
-      .then(data => setInvoice(data))
+      .then(data => {
+        const visibleStatuses = [InvoiceStatus.SENT, InvoiceStatus.APPROVED, InvoiceStatus.PAID];
+        setInvoice(data?.clientId === clientId && visibleStatuses.includes(data.status) ? data : null);
+      })
       .catch(err => console.error("Error fetching invoice:", err))
       .finally(() => setLoading(false));
-  }, [invoiceId]);
+  }, [clientId, invoiceId]);
 
   return { invoice, loading };
 };

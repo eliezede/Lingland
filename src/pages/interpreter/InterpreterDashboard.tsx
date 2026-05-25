@@ -11,17 +11,16 @@ import {
   Video, Globe2, Briefcase, User
 } from 'lucide-react';
 import { JobDetailsModal } from '../../components/interpreter/JobDetailsModal';
-import { NotificationCenter } from '../../components/notifications/NotificationCenter';
 import { OnboardingWidget } from '../../components/interpreter/OnboardingWidget';
 import { useToast } from '../../context/ToastContext';
 import { useChat } from '../../context/ChatContext';
 import { UserAvatar } from '../../components/ui/UserAvatar';
-import {
-ChatService } from '../../services/chatService';
+import { ChatService } from '../../services/chatService';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { Interpreter } from '../../types';
+import { isInterpreterLocked, requiresInterpreterOnboarding } from '../../utils/interpreterFlow';
 
 // --- Sub-components matching Admin Dashboard ---
 
@@ -120,7 +119,7 @@ export const InterpreterDashboard = () => {
   const [upcomingJobs, setUpcomingJobs] = useState<any[]>([]);
   const [pendingTimesheets, setPendingTimesheets] = useState<Booking[]>([]);
   const [offers, setOffers] = useState<Booking[]>([]);
-  const [interpreterStatus, setInterpreterStatus] = useState<string>('ACTIVE');
+  const [interpreterStatus, setInterpreterStatus] = useState<string | null>(null);
   const [interpreter, setInterpreter] = useState<Interpreter | null>(null);
   const [stats, setStats] = useState({
     completedBookings: 0,
@@ -209,6 +208,8 @@ export const InterpreterDashboard = () => {
       if (profile) {
         setInterpreterStatus(profile.status);
         setInterpreter(profile as Interpreter);
+      } else {
+        setInterpreterStatus('ONBOARDING');
       }
     } catch (error) {
       console.error("Failed to load dashboard data", error);
@@ -255,18 +256,20 @@ export const InterpreterDashboard = () => {
   };
 
   const handleMessageAdmin = async (bookingId: string) => {
-    try {
-      const photos = {
-        [user!.id]: user!.photoUrl || '',
-        'admin': '' // Support icon/logo could go here
-      };
+    if (!user) return;
 
-      // Support chat or Booking chat
-      const threadId = await ChatService.getOrCreateThread(
-        [user!.id, 'admin'],
-        { [user!.id]: user!.displayName || 'Interpreter', 'admin': 'Lingland Support' },
-        photos,
-        bookingId
+    try {
+      const adminUser = await ChatService.getAdminSupportUser();
+      if (!adminUser) {
+        showToast('No operations user is available for chat', 'error');
+        return;
+      }
+
+      const threadId = await ChatService.getOrCreateBookingThread(
+        bookingId,
+        user,
+        adminUser,
+        { name: `Job ${bookingId}` }
       );
       openThread(threadId);
     } catch (e) {
@@ -280,8 +283,9 @@ export const InterpreterDashboard = () => {
         title="Agent Interface"
         subtitle={`Session active for ${user?.displayName?.split(' ')[0] || 'Agent'}`}
       >
-        <NotificationCenter />
-        <Button onClick={() => navigate('/interpreter/jobs')} variant="secondary" icon={Briefcase} size="sm">Browse Jobs</Button>
+        {!requiresInterpreterOnboarding(interpreterStatus) && (
+          <Button onClick={() => navigate('/interpreter/jobs')} variant="secondary" icon={Briefcase} size="sm">Browse Jobs</Button>
+        )}
       </PageHeader>
 
       {/* Welcome Block */}
@@ -300,7 +304,9 @@ export const InterpreterDashboard = () => {
           </div>
           <div className="flex flex-col sm:flex-row gap-3 relative z-10">
             <Button variant="secondary" onClick={() => navigate('/interpreter/profile')} icon={User}>My Profile</Button>
-            <Button onClick={() => navigate('/interpreter/timesheets')} icon={Calendar}>Timesheets</Button>
+            {!requiresInterpreterOnboarding(interpreterStatus) && (
+              <Button onClick={() => navigate('/interpreter/timesheets')} icon={Calendar}>Timesheets</Button>
+            )}
           </div>
           <div className="absolute bottom-0 right-0 translate-x-1/4 translate-y-1/4 w-48 h-48 bg-blue-500/10 dark:bg-blue-400/10 rounded-full blur-3xl group-hover:scale-110 transition-transform duration-700" />
         </div>
@@ -329,8 +335,22 @@ export const InterpreterDashboard = () => {
         </div>
       )}
 
+      {isInterpreterLocked(interpreterStatus) && interpreter && (
+        <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+          <div className="max-w-md w-full bg-white border border-red-100 rounded-[2rem] p-8 text-center shadow-xl shadow-red-100/50">
+            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <AlertCircle size={32} />
+            </div>
+            <h2 className="text-xl font-black text-slate-900 mb-2">Account Requires Admin Review</h2>
+            <p className="text-slate-500 text-sm leading-relaxed">
+              Your interpreter profile is currently {interpreterStatus?.toLowerCase()}. Jobs, timesheets, and billing are paused until the Lingland team reactivates access.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Case 2: Onboarding - Documents Review Hub */}
-      {interpreterStatus === 'ONBOARDING' && interpreter && (
+      {interpreterStatus !== 'APPLICANT' && !isInterpreterLocked(interpreterStatus) && requiresInterpreterOnboarding(interpreterStatus) && interpreter && (
         <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
            <OnboardingWidget 
              interpreter={interpreter} 
@@ -340,7 +360,7 @@ export const InterpreterDashboard = () => {
       )}
 
       {/* Primary Dashboard Content (Hidden if Onboarding) */}
-      {!(interpreterStatus === 'ONBOARDING' || interpreterStatus === 'APPLICANT') && (
+      {!requiresInterpreterOnboarding(interpreterStatus) && (
         <>
           {/* Metrics Ribbon */}
       <div className="bg-white border border-slate-200 rounded-3xl px-8 py-5 flex flex-wrap items-center gap-x-12 gap-y-4 mb-8 shadow-sm mx-4 sm:mx-0">

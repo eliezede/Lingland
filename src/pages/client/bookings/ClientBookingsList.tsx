@@ -12,11 +12,16 @@ export const ClientBookingsList = () => {
   const { bookings, loading } = useClientBookings(user?.profileId);
   const [filter, setFilter] = useState('');
 
-  const filteredBookings = bookings.filter(b => 
-    (b.languageTo.toLowerCase().includes(filter.toLowerCase()) ||
-     b.status.toLowerCase().includes(filter.toLowerCase()) ||
-     (b.costCode && b.costCode.toLowerCase().includes(filter.toLowerCase())))
-  );
+  const filteredBookings = bookings.filter(b => {
+    const search = filter.toLowerCase();
+    return (
+      (b.languageTo || '').toLowerCase().includes(search) ||
+      (b.languageFrom || '').toLowerCase().includes(search) ||
+      (b.status || '').toLowerCase().includes(search) ||
+      (b.bookingRef || '').toLowerCase().includes(search) ||
+      (b.costCode || '').toLowerCase().includes(search)
+    );
+  });
 
   return (
     <div className="space-y-6">
@@ -90,7 +95,8 @@ export const ClientBookingsList = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {booking.costCode || '-'}
+                      <div className="font-medium text-gray-900">{booking.bookingRef || booking.id.substring(0, 8).toUpperCase()}</div>
+                      <div className="text-xs text-gray-500">{booking.costCode || 'No cost code'}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <StatusBadge status={booking.status} />

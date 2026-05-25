@@ -74,22 +74,16 @@ export const AdminInterpreters = () => {
     if (!user || !interpreterId) return;
 
     try {
-      const names = {
-        [user.id]: user.displayName || 'Admin',
-        [interpreterId]: interpreterName || 'Interpreter'
-      };
-
-      const photos = {
-        [user.id]: user.photoUrl || '',
-        [interpreterId]: interpreterPhoto || selectedInterpreter?.photoUrl || ''
-      };
-
-      const threadId = await ChatService.getOrCreateThread(
-        [user.id, interpreterId],
-        names,
-        photos
+      const interpreterRecord = selectedInterpreter?.id === interpreterId ? selectedInterpreter : interpreters.find(i => i.id === interpreterId);
+      const interpreterUser = await ChatService.resolveUserByProfileId(interpreterId) || await ChatService.resolveUserByEmail(interpreterRecord?.email || '');
+      if (!interpreterUser) {
+        showToast('No active user account found for this interpreter', 'error');
+        return;
+      }
+      const threadId = await ChatService.getOrCreateDirectThreadWithUser(
+        user,
+        { ...interpreterUser, displayName: interpreterName || interpreterUser.displayName, photoUrl: interpreterPhoto || interpreterUser.photoUrl }
       );
-
       openThread(threadId);
     } catch (error) {
       console.error("Failed to start chat", error);
@@ -317,6 +311,7 @@ export const AdminInterpreters = () => {
           )}
 
           <BulkActionBar
+            selectedIds={selectedIds}
             selectedCount={selectedIds.length}
             totalCount={filteredInterpreters.length}
             onClearSelection={() => setSelectedIds([])}

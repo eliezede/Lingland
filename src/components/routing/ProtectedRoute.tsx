@@ -33,6 +33,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
           <p className="text-gray-600 mb-6">
             Please log in with the appropriate account type to view this page.
           </p>
+          <Link to="/login">
+            <Button variant="primary">Log in</Button>
+          </Link>
         </div>
       </div>
     );

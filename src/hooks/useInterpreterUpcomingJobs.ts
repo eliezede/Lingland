@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookingService } from '../services/api';
-import { Booking } from '../types';
+import { Booking, BookingStatus } from '../types';
 
 export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) => {
   const [jobs, setJobs] = useState<Booking[]>([]);
@@ -17,8 +17,12 @@ export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) =>
     setLoading(true);
     try {
       const data = await BookingService.getInterpreterSchedule(interpreterId);
-      // Filter for future jobs or today
-      const upcoming = data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const confirmedStatuses = [BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID];
+      const upcoming = data
+        .filter(job => confirmedStatuses.includes(job.status) && new Date(job.date) >= today)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       setJobs(upcoming);
     } catch (err) {
       console.error(err);

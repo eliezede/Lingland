@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { BookingService, ClientService, InterpreterService, StorageService } from '../../services/api';
-import { ServiceType, Booking, Client } from '../../types';
+import { BookingService, ClientService, InterpreterService, StorageService, UserService } from '../../services/api';
+import { ServiceType, Booking, Client, UserRole } from '../../types';
 import {
   Globe2, CheckCircle2, ArrowRight, FileText, ShieldCheck,
   BadgeCheck, Clock, CreditCard, MapPin, Video, Calendar, User,
@@ -209,10 +209,48 @@ export const GuestBookingRequest = () => {
     if (!createdBooking?.guestContact) return;
     setLoading(true);
     try {
-      const client = await ClientService.createClientFromGuest(createdBooking.guestContact);
+      const cleanEmail = createdBooking.guestContact.email.trim().toLowerCase();
+      const linkedClient = createdBooking.clientId ? await ClientService.getById(createdBooking.clientId) : undefined;
+      const client = linkedClient || await ClientService.createClientFromGuest({
+        ...createdBooking.guestContact,
+        email: cleanEmail
+      });
+
       await BookingService.linkClientToBooking(createdBooking.id, client.id);
+
+      const existingUser = await UserService.getByEmail(cleanEmail);
+      if (existingUser) {
+        if (existingUser.status === 'SUSPENDED') {
+          throw new Error('This email is linked to a suspended account.');
+        }
+
+        if (!existingUser.profileId || existingUser.profileId !== client.id) {
+          await UserService.update(existingUser.id, { profileId: client.id });
+        }
+
+        if (existingUser.status !== 'ACTIVE') {
+          await UserService.sendActivationInvite(cleanEmail, existingUser.displayName || client.contactPerson);
+          showToast('Account linked. Activation email sent.', 'success');
+        } else {
+          showToast('Booking linked to your existing account.', 'success');
+        }
+      } else {
+        await UserService.create({
+          displayName: client.contactPerson || createdBooking.guestContact.name,
+          email: cleanEmail,
+          role: UserRole.CLIENT,
+          status: 'IMPORTED',
+          profileId: client.id,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        await UserService.sendActivationInvite(cleanEmail, client.contactPerson || createdBooking.guestContact.name);
+        showToast('Account created. Activation email sent.', 'success');
+      }
+
       setCreatedClient(client);
     } catch (e) {
+      console.error(e);
       showToast('Failed to create profile', 'error');
     } finally {
       setLoading(false);
@@ -259,7 +297,7 @@ export const GuestBookingRequest = () => {
                 <BadgeCheck size={32} className="text-emerald-600 mx-auto mb-2" />
                 <h3 className="font-bold text-emerald-900">Account Created!</h3>
                 <p className="text-sm text-emerald-700 mt-1">
-                  Login with: <strong>{createdClient.email}</strong>
+                  We sent an activation email to <strong>{createdClient.email}</strong>
                 </p>
               </div>
             )}

@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { BookingService, BillingService } from '../services/api';
-import { Booking, Timesheet } from '../types';
+import { Booking, BookingStatus, Timesheet } from '../types';
 
 export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [pendingSubmission, setPendingSubmission] = useState<Booking[]>([]);
@@ -25,9 +25,9 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
       // In real app: check if booking status is COMPLETED and no timesheet exists
       const pending = schedule.filter(b => {
         const hasTimesheet = timesheets.some(t => t.bookingId === b.id);
-        // Simple logic: if date is in past and no timesheet
-        const isPast = new Date(b.date) < new Date(); 
-        return isPast && !hasTimesheet;
+        const scheduledEnd = new Date(`${b.date}T${b.endTime || b.expectedEndTime || b.startTime || '23:59'}`);
+        const isCompleted = scheduledEnd <= new Date();
+        return b.status === BookingStatus.BOOKED && isCompleted && !hasTimesheet;
       });
 
       setPendingSubmission(pending);

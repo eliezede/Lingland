@@ -1,11 +1,9 @@
-import { collection, doc, getDoc, getDocs, updateDoc, deleteDoc, setDoc, addDoc } from 'firebase/firestore';
-import { db, auth } from './firebaseConfig';
+import { collection, doc, getDoc, getDocs, updateDoc, deleteDoc, setDoc, addDoc, query, where } from 'firebase/firestore';
+import { db } from './firebaseConfig';
 import { User, Interpreter, StaffProfile, Client } from '../types';
 import { StorageService } from './storageService';
 import { MOCK_USERS, saveMockData } from './mockData';
 import { convertDoc, safeFetch } from './utils';
-
-import { EmailService } from './emailService';
 
 export const UserService = {
   getUserById: async (id: string): Promise<User | undefined> => {
@@ -23,6 +21,18 @@ export const UserService = {
       const snap = await getDocs(collection(db, 'users'));
       return snap.docs.map(d => convertDoc<User>(d));
     }, MOCK_USERS);
+  },
+
+  getByEmail: async (email: string): Promise<User | undefined> => {
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
+      const snap = await getDocs(q);
+      if (!snap.empty) return convertDoc<User>(snap.docs[0]);
+    } catch (e) {
+      // fall through to mock data
+    }
+    return MOCK_USERS.find(u => u.email.toLowerCase() === cleanEmail);
   },
 
   update: async (id: string, data: Partial<User>) => {
@@ -88,27 +98,11 @@ export const UserService = {
   },
 
   sendActivationInvite: async (email: string, displayName: string) => {
-    // Resolve Portal URL (Base URL for links)
-    // Priority: 1. System Settings, 2. Production Fallback (if on localhost), 3. Current Origin
-    let baseUrl = window.location.origin;
-    try {
-      const { SystemService } = await import('./systemService');
-      const settings = await SystemService.getSettings();
-      if (settings?.general?.portalUrl) {
-        baseUrl = settings.general.portalUrl;
-      } else if (baseUrl.includes('localhost')) {
-        baseUrl = 'https://lingland-2e52f.web.app'; // Fallback for local testing
-      }
-    } catch (e) {
-      console.warn("Could not fetch portal URL from settings, using origin.");
-    }
-
-    // Ensure baseUrl doesn't end with slash to avoid double slashes
-    const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const activationLink = `${cleanBaseUrl}/#/activate?email=${encodeURIComponent(email)}`;
-    
-    // Queue email via EmailService (which handles pre-rendering and 'message' field)
-    await EmailService.sendActivationEmail(email, displayName, activationLink);
+    const { getFunctions, httpsCallable } = await import('firebase/functions');
+    const functions = getFunctions();
+    const sendInvite = httpsCallable(functions, 'sendAccountActivationInvite');
+    const result = await sendInvite({ email: email.trim().toLowerCase(), displayName });
+    return result.data as { success: boolean; userId?: string };
   },
 
   uploadProfilePhoto: async (userId: string, file: File | string, role: string): Promise<string> => {

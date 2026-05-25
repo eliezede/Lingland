@@ -25,7 +25,7 @@ export interface Timesheet extends TenantScopedEntity {
     clientAmountCalculated: number;
     interpreterAmountCalculated: number;
 
-    clientInvoiceId?: string;
-    interpreterInvoiceId?: string;
+    clientInvoiceId?: string | null;
+    interpreterInvoiceId?: string | null;
     supportingDocumentUrl?: string;
 }

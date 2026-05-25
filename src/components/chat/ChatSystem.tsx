@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageCircle, X, Send, ChevronLeft, Paperclip, FileIcon, Calendar, ExternalLink, Hash, Users, User as UserIcon } from 'lucide-react';
+import { MessageCircle, X, Send, ChevronLeft, Paperclip, FileIcon, Calendar, ExternalLink, Hash } from 'lucide-react';
 import { ChatService } from '../../services/chatService';
 import { BookingService, StorageService } from '../../services/api';
 import { StaffService } from '../../services/staffService';
@@ -7,10 +7,12 @@ import { ChatThread, ChatMessage, Booking, User, Department } from '../../types'
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { UserAvatar } from '../ui/UserAvatar';
+import { useLocation } from 'react-router-dom';
 
 export const ChatSystem = () => {
   const { user, isAdmin } = useAuth();
   const { isOpen, setIsOpen, activeThreadId, setActiveThreadId } = useChat();
+  const location = useLocation();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeBooking, setActiveBooking] = useState<Booking | null>(null);
@@ -54,21 +56,17 @@ export const ChatSystem = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  if (!user) return null;
+  if (!user || location.pathname.endsWith('/messages')) return null;
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || !activeThreadId) return;
 
-    const thread = threads.find(t => t.id === activeThreadId);
-    const recipientId = thread?.participants.find(p => p !== user.id) || '';
-
     await ChatService.sendMessage(
       activeThreadId,
       user.id,
       user.displayName || 'Usuário',
-      inputText,
-      recipientId
+      inputText
     );
     setInputText('');
   };
@@ -82,8 +80,6 @@ export const ChatSystem = () => {
       const path = `chats/${activeThreadId}/${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
 
-      const thread = threads.find(t => t.id === activeThreadId);
-      const recipientId = thread?.participants.find(p => p !== user.id) || '';
       const type = file.type.startsWith('image/') ? 'IMAGE' : 'DOCUMENT';
 
       await ChatService.sendMessage(
@@ -91,7 +87,7 @@ export const ChatSystem = () => {
         user.id,
         user.displayName || 'Usuário',
         '',
-        recipientId,
+        undefined,
         { url, type }
       );
     } finally {
@@ -104,7 +100,7 @@ export const ChatSystem = () => {
   const totalUnread = threads.reduce((acc, t) => acc + (t.unreadCount[user.id] || 0), 0);
 
   return (
-    <div className="fixed bottom-24 lg:bottom-6 right-4 sm:right-6 z-[60] flex flex-col items-end">
+    <div className="fixed bottom-24 lg:bottom-6 right-4 sm:right-6 z-40 flex flex-col items-end">
       {isOpen && (
         <div className="mb-4 w-[calc(100vw-2rem)] sm:w-96 h-[500px] sm:h-[600px] max-h-[calc(100dvh-120px)] bg-white dark:bg-slate-900 rounded-[2rem] sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
           {/* Header Principal */}
@@ -139,12 +135,14 @@ export const ChatSystem = () => {
                 >
                   Recents
                 </button>
-                <button 
-                  onClick={() => setActiveTab('staff')}
-                  className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${activeTab === 'staff' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-100 hover:bg-white/10'}`}
-                >
-                  Staff
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => setActiveTab('staff')}
+                    className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${activeTab === 'staff' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-100 hover:bg-white/10'}`}
+                  >
+                    Staff
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -158,10 +156,10 @@ export const ChatSystem = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-tighter truncate">
-                    #{activeBooking.bookingRef || activeBooking.id.substring(0, 6)} • Vinculado
+                    #{activeBooking.bookingRef || activeBooking.id.substring(0, 6)} / Linked job
                   </p>
                   <p className="text-[11px] font-bold text-slate-700 dark:text-slate-300 truncate">
-                    {activeBooking.languageTo} • {activeBooking.date}
+                    {activeBooking.languageTo} / {activeBooking.date}
                   </p>
                 </div>
               </div>
@@ -182,7 +180,7 @@ export const ChatSystem = () => {
                   {threads.length === 0 ? (
                     <div className="py-24 text-center opacity-30">
                       <MessageCircle size={48} className="mx-auto mb-4" />
-                      <p className="text-sm font-black uppercase tracking-widest">Sem conversas</p>
+                      <p className="text-sm font-black uppercase tracking-widest">No conversations</p>
                     </div>
                   ) : (
                     threads.map(t => (
@@ -212,7 +210,7 @@ export const ChatSystem = () => {
                               {t.id.startsWith('dept-') ? t.metadata?.name : t.participantNames[t.participants.find(p => p !== user.id)!]}
                             </p>
                             {t.bookingId && <div className="text-[8px] font-black text-blue-500 uppercase flex items-center"><Hash size={8} className="mr-1" /> Job Ref</div>}
-                            <p className="text-xs text-slate-500 truncate group-hover:text-slate-700 dark:group-hover:text-slate-300 font-medium">{t.lastMessage || 'Nova conversa'}</p>
+                            <p className="text-xs text-slate-500 truncate group-hover:text-slate-700 dark:group-hover:text-slate-300 font-medium">{t.lastMessage || 'New conversation'}</p>
                           </div>
                         </div>
                         {(t.unreadCount[user.id] || 0) > 0 && (
@@ -234,7 +232,7 @@ export const ChatSystem = () => {
                         <button
                           key={dept.id}
                           onClick={async () => {
-                            const tid = await ChatService.getOrCreateDepartmentThread(dept.id, dept.name, staff.map(s => s.id));
+                            const tid = await ChatService.getOrCreateDepartmentThread(dept.id, dept.name, [user.id, ...staff.map(s => s.id)]);
                             setActiveThreadId(tid);
                           }}
                           className="p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-blue-500 transition-all flex items-center justify-between group text-left w-full"
@@ -261,9 +259,7 @@ export const ChatSystem = () => {
                         <div
                           key={s.id}
                           onClick={async () => {
-                            const names = { [user.id]: user.displayName || 'Me', [s.id]: s.displayName || 'Staff' };
-                            const photos = { [user.id]: user.photoUrl || '', [s.id]: s.photoUrl || '' };
-                            const tid = await ChatService.getOrCreateThread([user.id, s.id], names, photos);
+                            const tid = await ChatService.getOrCreateDirectThreadWithUser(user, s);
                             setActiveThreadId(tid);
                           }}
                           className="p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 cursor-pointer hover:border-blue-500 transition-all flex items-center gap-3"
@@ -304,10 +300,10 @@ export const ChatSystem = () => {
                           {m.fileUrl && (
                             <div className="mb-2">
                               {m.fileType === 'IMAGE' ? (
-                                <img src={m.fileUrl} alt="anexo" className="rounded-xl max-w-full h-auto cursor-pointer border border-white/10" onClick={() => window.open(m.fileUrl, '_blank')} />
+                                <img src={m.fileUrl} alt="Attachment" className="rounded-xl max-w-full h-auto cursor-pointer border border-white/10" onClick={() => window.open(m.fileUrl, '_blank')} />
                               ) : (
                                 <a href={m.fileUrl} target="_blank" rel="noreferrer" className={`flex items-center gap-2 p-3 rounded-xl text-xs font-bold ${isMe ? 'bg-black/10' : 'bg-slate-50 dark:bg-slate-700'}`}>
-                                  <FileIcon size={14} /> Ver Documento
+                                  <FileIcon size={14} /> Open document
                                 </a>
                               )}
                             </div>
@@ -345,7 +341,7 @@ export const ChatSystem = () => {
                   type="text"
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
-                  placeholder={isUploading ? "Enviando..." : "Sua mensagem..."}
+                  placeholder={isUploading ? "Uploading..." : "Write a message..."}
                   disabled={isUploading}
                   className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-2xl px-5 py-3 text-sm outline-none focus:ring-2 ring-blue-500 dark:text-white disabled:opacity-50 font-medium"
                 />
@@ -374,7 +370,7 @@ export const ChatSystem = () => {
           </span>
         )}
         <div className="absolute right-full mr-3 px-3 py-1.5 bg-slate-900 text-white text-[10px] font-black uppercase rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-xl hidden sm:block">
-          Precisa de ajuda?
+          Need help?
         </div>
       </button>
     </div>

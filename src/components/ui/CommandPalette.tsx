@@ -4,6 +4,8 @@ import {
     CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, Globe, Database
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { UserRole } from '../../types';
 
 interface CommandItem {
     id: string;
@@ -21,7 +23,9 @@ export const CommandPalette = () => {
     const [query, setQuery] = useState('');
     const [activeIndex, setActiveIndex] = useState(0);
     const navigate = useNavigate();
+    const { user } = useAuth();
     const inputRef = useRef<HTMLInputElement>(null);
+    const canUseAdminCommands = user?.role === UserRole.ADMIN || user?.role === UserRole.SUPER_ADMIN;
 
     const close = useCallback(() => { setIsOpen(false); setQuery(''); setActiveIndex(0); }, []);
 
@@ -74,6 +78,7 @@ export const CommandPalette = () => {
     const flat = categorized.flatMap(g => g.items);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
+        if (!canUseAdminCommands) return;
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
             e.preventDefault();
             setIsOpen(prev => !prev);
@@ -86,7 +91,7 @@ export const CommandPalette = () => {
                 setIsOpen(true);
             }
         }
-    }, [isOpen, close]);
+    }, [canUseAdminCommands, isOpen, close]);
 
     useEffect(() => {
         window.addEventListener('keydown', handleKeyDown);
@@ -98,6 +103,10 @@ export const CommandPalette = () => {
     }, [isOpen]);
 
     useEffect(() => { setActiveIndex(0); }, [query]);
+
+    useEffect(() => {
+        if (!canUseAdminCommands) close();
+    }, [canUseAdminCommands, close]);
 
     const execute = (item: CommandItem) => {
         item.onSelect();
@@ -111,7 +120,7 @@ export const CommandPalette = () => {
         if (e.key === 'Enter') { e.preventDefault(); if (flat[activeIndex]) execute(flat[activeIndex]); }
     };
 
-    if (!isOpen) return null;
+    if (!isOpen || !canUseAdminCommands) return null;
 
     return (
         <div

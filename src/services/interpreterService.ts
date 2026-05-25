@@ -3,41 +3,60 @@ import { db } from './firebaseConfig';
 import { Interpreter } from '../types';
 import { MOCK_INTERPRETERS, saveMockData } from './mockData';
 import { convertDoc, safeFetch } from './utils';
+import { ensureInterpreterOnboarding } from '../utils/interpreterFlow';
+
+const normalizeInterpreter = (interpreter: Interpreter): Interpreter => ({
+  ...interpreter,
+  onboarding: ensureInterpreterOnboarding(interpreter),
+  languages: interpreter.languages || interpreter.languageProficiencies?.map(p => p.language).filter(Boolean) || [],
+  regions: interpreter.regions || [interpreter.address?.postcode].filter(Boolean) as string[],
+});
 
 export const InterpreterService = {
   getAll: async (): Promise<Interpreter[]> => {
-    return safeFetch(async () => {
+    const data = await safeFetch(async () => {
       const snap = await getDocs(collection(db, 'interpreters'));
       return snap.docs.map(d => convertDoc<Interpreter>(d));
     }, MOCK_INTERPRETERS);
+    return data.map(normalizeInterpreter);
   },
 
   getById: async (id: string) => {
     try {
       const snap = await getDoc(doc(db, 'interpreters', id));
-      return snap.exists() ? convertDoc<Interpreter>(snap) : MOCK_INTERPRETERS.find(i => i.id === id);
+      const interpreter = snap.exists() ? convertDoc<Interpreter>(snap) : MOCK_INTERPRETERS.find(i => i.id === id);
+      return interpreter ? normalizeInterpreter(interpreter) : interpreter;
     } catch {
-      return MOCK_INTERPRETERS.find(i => i.id === id);
+      const interpreter = MOCK_INTERPRETERS.find(i => i.id === id);
+      return interpreter ? normalizeInterpreter(interpreter) : interpreter;
     }
   },
 
   updateProfile: async (id: string, data: Partial<Interpreter>) => {
+    const payload = data.onboarding ? { ...data, onboarding: ensureInterpreterOnboarding(data) } : data;
     try {
-      await updateDoc(doc(db, 'interpreters', id), data);
+      await updateDoc(doc(db, 'interpreters', id), payload);
     } catch (e) {
       const i = MOCK_INTERPRETERS.find(inter => inter.id === id);
-      if (i) Object.assign(i, data);
+      if (i) Object.assign(i, payload);
       saveMockData();
     }
   },
 
   create: async (data: Omit<Interpreter, 'id'>): Promise<Interpreter> => {
     const status = (data as any).status || 'ONBOARDING';
+    const payload = {
+      ...data,
+      status,
+      onboarding: ensureInterpreterOnboarding(data),
+      languages: data.languages || data.languageProficiencies?.map(p => p.language).filter(Boolean) || [],
+      regions: data.regions || [data.address?.postcode].filter(Boolean),
+    };
     try {
-      const ref = await addDoc(collection(db, 'interpreters'), { ...data, status });
-      return { id: ref.id, ...data, status } as Interpreter;
+      const ref = await addDoc(collection(db, 'interpreters'), payload);
+      return { id: ref.id, ...payload } as Interpreter;
     } catch {
-      const newInt = { id: `mock-${Date.now()}`, ...data, status } as Interpreter;
+      const newInt = { id: `mock-${Date.now()}`, ...payload } as Interpreter;
       MOCK_INTERPRETERS.push(newInt);
       saveMockData();
       return newInt;

@@ -1,39 +1,149 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-    Building2, Globe2, MapPin, Video,
-    Search, ChevronLeft, Save, Plus, X, Phone, Mail,
-    Calendar, Check, UserPlus, Info, CreditCard, ChevronRight, Zap
+    AlertCircle,
+    ArrowLeft,
+    Building2,
+    CalendarDays,
+    Check,
+    ChevronRight,
+    CircleDot,
+    Clock,
+    CreditCard,
+    FileText,
+    Globe2,
+    Hash,
+    Info,
+    Mail,
+    MapPin,
+    MessageSquareText,
+    Phone,
+    Save,
+    Search,
+    SlidersHorizontal,
+    UserCheck,
+    UserPlus,
+    Video,
+    X,
+    Zap,
 } from 'lucide-react';
-import { ClientService, InterpreterService, BookingService } from '../../../services/api';
-import { Client, Interpreter, ServiceType, BookingStatus } from '../../../types';
+import { BookingService, InterpreterService } from '../../../services/api';
+import { Booking, BookingStatus, Client, Interpreter, ServiceType } from '../../../types';
 import { useClients } from '../../../context/ClientContext';
 import { useToast } from '../../../context/ToastContext';
 import { Button } from '../../../components/ui/Button';
-import { Card } from '../../../components/ui/Card';
 import { Modal } from '../../../components/ui/Modal';
+import { StatusBadge } from '../../../components/StatusBadge';
 import { useAuth } from '../../../context/AuthContext';
-import { AddressService, UkAddress } from '../../../services/addressService';
+import { UkAddress } from '../../../services/addressService';
 import { PostcodeLookup } from '../../../components/ui/PostcodeLookup';
+
+type ClientSource = 'EXISTING' | 'GUEST';
+
+const panelClass = 'rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900';
+const labelClass = 'mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
+const inputClass = 'h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:disabled:bg-slate-900';
+const textareaClass = 'min-h-32 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white';
+
+const serviceOptions = Object.values(ServiceType);
+const genderOptions: Array<'None' | 'Male' | 'Female'> = ['None', 'Male', 'Female'];
+const translationFormats = ['Only Word', 'PDF', 'Certified', 'Other'];
+
+const serviceIcons: Record<string, React.ElementType> = {
+    [ServiceType.FACE_TO_FACE]: MapPin,
+    [ServiceType.VIDEO]: Video,
+    [ServiceType.TELEPHONE]: Phone,
+    [ServiceType.TRANSLATION]: FileText,
+    [ServiceType.BSL]: Globe2,
+};
+
+const Section = ({ title, icon: Icon, children, action }: { title: string; icon: React.ElementType; children: React.ReactNode; action?: React.ReactNode }) => (
+    <section className={panelClass}>
+        <div className="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+            <div className="flex min-w-0 items-center gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    <Icon size={15} />
+                </div>
+                <h2 className="truncate text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
+            </div>
+            {action}
+        </div>
+        <div className="p-3">{children}</div>
+    </section>
+);
+
+const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div className="min-w-0">
+        <label className={labelClass}>{label}</label>
+        {children}
+    </div>
+);
+
+const MetricCell = ({ icon: Icon, label, value, tone = 'default' }: { icon: React.ElementType; label: string; value: string; tone?: 'default' | 'warning' | 'success' }) => {
+    const toneClass = tone === 'warning'
+        ? 'text-amber-700 dark:text-amber-300'
+        : tone === 'success'
+            ? 'text-emerald-700 dark:text-emerald-300'
+            : 'text-slate-950 dark:text-white';
+
+    return (
+        <div className="min-w-0 border-b border-slate-200 p-3 dark:border-slate-800 sm:border-b-0 sm:border-r last:sm:border-r-0">
+            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <Icon size={13} />
+                <span>{label}</span>
+            </div>
+            <p className={`mt-1 truncate text-sm font-semibold ${toneClass}`}>{value || '-'}</p>
+        </div>
+    );
+};
+
+const SegmentedButton = ({ active, children, icon: Icon, onClick, disabled = false }: { active: boolean; children: React.ReactNode; icon?: React.ElementType; onClick: () => void; disabled?: boolean }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+            active
+                ? 'bg-slate-950 text-white shadow-sm dark:bg-white dark:text-slate-950'
+                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+        }`}
+    >
+        {Icon && <Icon size={14} className="shrink-0" />}
+        <span className="truncate">{children}</span>
+    </button>
+);
+
+const ChecklistItem = ({ done, label, value }: { done: boolean; label: string; value: string }) => (
+    <div className="flex items-center gap-3 rounded-md border border-slate-200 px-3 py-2 dark:border-slate-800">
+        <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${done ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+            {done ? <Check size={13} /> : <AlertCircle size={13} />}
+        </div>
+        <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-950 dark:text-white">{label}</p>
+            <p className="truncate text-xs text-slate-500">{value}</p>
+        </div>
+    </div>
+);
 
 export const AdminNewBooking = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
     const { showToast } = useToast();
     const { id } = useParams<{ id: string }>();
-    const isEditMode = !!id;
+    const isEditMode = Boolean(id);
     const { clientsMap } = useClients();
 
     const [loading, setLoading] = useState(false);
+    const [initialLoading, setInitialLoading] = useState(isEditMode);
     const clients = Object.values(clientsMap);
     const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
     const [searchingInterpreter, setSearchingInterpreter] = useState('');
-    const [organizationId, setOrganizationId] = useState<string>('');
+    const [originalBooking, setOriginalBooking] = useState<Booking | null>(null);
+    const [organizationId, setOrganizationId] = useState('');
     const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
     const [clientModalOpen, setClientModalOpen] = useState(false);
     const [clientSearchQuery, setClientSearchQuery] = useState('');
-
-    const [clientSource, setClientSource] = useState<'EXISTING' | 'GUEST'>('GUEST');
+    const [clientSource, setClientSource] = useState<ClientSource>('GUEST');
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [selectedInterpreter, setSelectedInterpreter] = useState<Interpreter | null>(null);
 
@@ -56,103 +166,177 @@ export const AdminNewBooking = () => {
         contactName: '',
         contactEmail: '',
         contactPhone: '',
-        // Translation-specific fields
         translationFormat: 'Only Word',
         translationFormatOther: '',
         quoteRequested: false,
-        sourceFiles: [] as string[],
+        sourceFiles: [] as Array<string | { name?: string; url?: string }>,
         deliveryEmail: '',
         lat: undefined as number | undefined,
-        lng: undefined as number | undefined
+        lng: undefined as number | undefined,
     });
 
     const isTranslation = formData.serviceType === ServiceType.TRANSLATION;
+    const isRemoteService = formData.serviceType === ServiceType.VIDEO || formData.serviceType === ServiceType.TELEPHONE || isTranslation;
+    const effectiveLocationType = isRemoteService ? 'ONLINE' : formData.locationType;
 
     useEffect(() => {
         loadInitialData();
-        if (isEditMode) {
-            loadBookingData();
-        }
+    }, []);
+
+    useEffect(() => {
+        if (isEditMode) loadBookingData();
     }, [id]);
 
-    const loadBookingData = async () => {
-        if (!id) return;
-        setLoading(true);
-        try {
-            const booking = await BookingService.getById(id);
-            if (booking) {
-                // Populate form data
-                setFormData({
-                    costCode: booking.costCode || '',
-                    serviceType: booking.serviceType,
-                    languageFrom: booking.languageFrom || 'English',
-                    languageTo: booking.languageTo || '',
-                    date: booking.date,
-                    startTime: booking.startTime,
-                    durationMinutes: booking.durationMinutes,
-                    locationType: booking.locationType,
-                    address: booking.address || '',
-                    postcode: booking.postcode || '',
-                    houseNumber: booking.houseNumber || '',
-                    onlineLink: booking.onlineLink || '',
-                    notes: booking.notes || '',
-                    genderPreference: booking.genderPreference || 'None',
-                    organization: booking.guestContact?.organisation || '',
-                    contactName: booking.guestContact?.name || '',
-                    contactEmail: booking.guestContact?.email || '',
-                    contactPhone: booking.guestContact?.phone || '',
-                    translationFormat: booking.translationFormat || 'Only Word',
-                    translationFormatOther: booking.translationFormatOther || '',
-                    quoteRequested: !!booking.quoteRequested,
-                    sourceFiles: booking.sourceFiles || [],
-                    deliveryEmail: booking.deliveryEmail || '',
-                    lat: booking.lat,
-                    lng: booking.lng
-                });
-                
-                if (booking.organizationId) {
-                    setOrganizationId(booking.organizationId);
-                }
-
-                if (booking.clientId) {
-                    setClientSource('EXISTING');
-                    const client = clientsMap[booking.clientId];
-                    if (client) setSelectedClient(client);
-                } else {
-                    setClientSource('GUEST');
-                }
-
-                if (booking.interpreterId) {
-                    const int = await InterpreterService.getById(booking.interpreterId);
-                    if (int) setSelectedInterpreter(int);
-                }
-            }
-        } catch (e) {
-            showToast('Failed to load booking data', 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
+    useEffect(() => {
+        if (!originalBooking?.clientId || selectedClient) return;
+        const client = clientsMap[originalBooking.clientId];
+        if (client) setSelectedClient(client);
+    }, [clientsMap, originalBooking?.clientId, selectedClient]);
 
     const loadInitialData = async () => {
         try {
-            const i = await InterpreterService.getAll();
-            const activeInts = i.filter(int => int.status === 'ACTIVE');
-            setInterpreters(activeInts);
-
-            // Extract unique languages
-            const allLangs = activeInts.flatMap(int => int.languages);
-            const uniqueLangs = Array.from(new Set(allLangs)).sort();
-            setAvailableLanguages(uniqueLangs);
-        } catch (e) {
-            console.error("Failed to load data", e);
+            const allInterpreters = await InterpreterService.getAll();
+            const activeInterpreters = allInterpreters.filter(int => int.status === 'ACTIVE');
+            setInterpreters(activeInterpreters);
+            setAvailableLanguages(Array.from(new Set(activeInterpreters.flatMap(int => int.languages || []))).sort());
+        } catch (error) {
+            console.error('Failed to load booking editor data', error);
         }
+    };
+
+    const loadBookingData = async () => {
+        if (!id) return;
+        setInitialLoading(true);
+        try {
+            const booking = await BookingService.getById(id);
+            if (!booking) {
+                showToast('Booking not found', 'error');
+                navigate('/admin/bookings');
+                return;
+            }
+
+            setOriginalBooking(booking);
+            setOrganizationId(booking.organizationId || '');
+            setFormData({
+                costCode: booking.costCode || '',
+                serviceType: booking.serviceType as ServiceType,
+                languageFrom: booking.languageFrom || 'English',
+                languageTo: booking.languageTo || '',
+                date: booking.date || '',
+                startTime: booking.startTime || '',
+                durationMinutes: booking.durationMinutes || 60,
+                locationType: booking.locationType || 'ONSITE',
+                address: booking.address || '',
+                postcode: booking.postcode || '',
+                houseNumber: (booking as any).houseNumber || '',
+                onlineLink: booking.onlineLink || '',
+                notes: booking.notes || '',
+                genderPreference: booking.genderPreference || 'None',
+                organization: booking.guestContact?.organisation || booking.clientName || '',
+                contactName: booking.guestContact?.name || '',
+                contactEmail: booking.guestContact?.email || '',
+                contactPhone: booking.guestContact?.phone || '',
+                translationFormat: booking.translationFormat || 'Only Word',
+                translationFormatOther: booking.translationFormatOther || '',
+                quoteRequested: Boolean(booking.quoteRequested),
+                sourceFiles: booking.sourceFiles || [],
+                deliveryEmail: booking.deliveryEmail || booking.guestContact?.email || '',
+                lat: booking.lat,
+                lng: booking.lng,
+            });
+
+            if (booking.clientId) setClientSource('EXISTING');
+            else setClientSource('GUEST');
+
+            if (booking.interpreterId) {
+                const interpreter = await InterpreterService.getById(booking.interpreterId);
+                if (interpreter) setSelectedInterpreter(interpreter);
+            }
+        } catch {
+            showToast('Failed to load booking data', 'error');
+        } finally {
+            setInitialLoading(false);
+        }
+    };
+
+    const filteredClientsForModal = useMemo(() => {
+        const query = clientSearchQuery.toLowerCase();
+        return clients.filter(c =>
+            (c.companyName || '').toLowerCase().includes(query) ||
+            (c.contactPerson || '').toLowerCase().includes(query) ||
+            (c.email || '').toLowerCase().includes(query)
+        );
+    }, [clients, clientSearchQuery]);
+
+    const matchingInterpreters = useMemo(() => {
+        if (!formData.languageTo) return interpreters;
+        const language = formData.languageTo.toLowerCase();
+        return interpreters.filter(i => (i.languages || []).some(l => l.toLowerCase() === language));
+    }, [interpreters, formData.languageTo]);
+
+    const filteredInterpreters = useMemo(() => {
+        const query = searchingInterpreter.toLowerCase();
+        return interpreters
+            .filter(i =>
+                i.name.toLowerCase().includes(query) ||
+                (i.languages || []).some(l => l.toLowerCase().includes(query)) ||
+                !query
+            )
+            .sort((a, b) => {
+                if (formData.languageTo) {
+                    const aExact = (a.languages || []).some(l => l.toLowerCase() === formData.languageTo.toLowerCase()) ? 0 : 1;
+                    const bExact = (b.languages || []).some(l => l.toLowerCase() === formData.languageTo.toLowerCase()) ? 0 : 1;
+                    if (aExact !== bExact) return aExact - bExact;
+                    const aPriority = a.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
+                    const bPriority = b.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
+                    if (aPriority !== bPriority) return aPriority - bPriority;
+                }
+                return a.name.localeCompare(b.name);
+            })
+            .slice(0, 14);
+    }, [interpreters, searchingInterpreter, formData.languageTo]);
+
+    const selectedClientLabel = selectedClient?.companyName || formData.organization || 'No client selected';
+    const hasClient = Boolean(selectedClient || formData.organization || formData.contactName);
+    const hasContact = Boolean(formData.contactEmail || formData.contactPhone);
+    const hasLanguage = Boolean(formData.languageTo);
+    const hasSchedule = Boolean(formData.date && (isTranslation || formData.startTime));
+    const hasLocation = isTranslation || effectiveLocationType === 'ONLINE' || Boolean(formData.address || formData.postcode);
+    const requiredMissing = !hasLanguage || !hasSchedule;
+
+    const scheduleLabel = formData.date
+        ? `${formData.date}${formData.startTime ? `, ${formData.startTime}` : ''}`
+        : 'No date';
+
+    const locationLabel = isTranslation
+        ? 'Document delivery'
+        : effectiveLocationType === 'ONLINE'
+            ? formData.onlineLink || 'Online'
+            : formData.postcode || formData.address || 'On-site';
+
+    const updateLocationFromAddress = (address: UkAddress) => {
+        setFormData(prev => ({
+            ...prev,
+            address: address.formattedAddress || [address.line1, address.townOrCity].filter(Boolean).join(', '),
+            postcode: address.postcode,
+            houseNumber: address.houseNumber || prev.houseNumber,
+            lat: address.lat,
+            lng: address.lng,
+        }));
+    };
+
+    const selectServiceType = (serviceType: ServiceType) => {
+        setFormData(prev => ({
+            ...prev,
+            serviceType,
+            locationType: serviceType === ServiceType.VIDEO || serviceType === ServiceType.TELEPHONE || serviceType === ServiceType.TRANSLATION ? 'ONLINE' : prev.locationType,
+        }));
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.languageTo || !formData.date || !formData.startTime) {
-            showToast('Please fill in all required fields', 'error');
+        if (requiredMissing) {
+            showToast(isTranslation ? 'Fill language and date before saving' : 'Fill language, date and time before saving', 'error');
             return;
         }
 
@@ -165,775 +349,462 @@ export const AdminNewBooking = () => {
                 languageTo: formData.languageTo,
                 date: formData.date,
                 startTime: formData.startTime,
-                durationMinutes: formData.durationMinutes,
-                locationType: formData.locationType,
+                durationMinutes: Number(formData.durationMinutes) || 60,
+                locationType: effectiveLocationType,
                 address: formData.address,
                 postcode: formData.postcode,
+                houseNumber: formData.houseNumber,
                 onlineLink: formData.onlineLink,
                 notes: formData.notes,
                 genderPreference: formData.genderPreference,
                 organizationId: organizationId || (user as any)?.organizationId || 'lingland-main',
-                status: selectedInterpreter ? 'PENDING_ASSIGNMENT' : 'INCOMING',
-                requestedByUserId: user?.id || 'admin',
+                status: isEditMode ? originalBooking?.status || BookingStatus.INCOMING : selectedInterpreter ? BookingStatus.OPENED : BookingStatus.INCOMING,
+                requestedByUserId: originalBooking?.requestedByUserId || user?.id || 'admin',
                 updatedAt: new Date().toISOString(),
-                // Translation-specific fields
                 translationFormat: formData.translationFormat,
                 translationFormatOther: formData.translationFormatOther,
                 quoteRequested: formData.quoteRequested,
                 sourceFiles: formData.sourceFiles,
                 deliveryEmail: formData.deliveryEmail || formData.contactEmail,
                 lat: formData.lat,
-                lng: formData.lng
+                lng: formData.lng,
             };
 
-            if (clientSource === 'EXISTING' && selectedClient) {
-                bookingData.clientId = selectedClient.id;
-                bookingData.clientName = selectedClient.companyName;
+            if (clientSource === 'EXISTING' && (selectedClient || originalBooking?.clientId)) {
+                bookingData.clientId = selectedClient?.id || originalBooking?.clientId;
+                bookingData.clientName = selectedClient?.companyName || originalBooking?.clientName || formData.organization || 'Registered Client';
                 bookingData.guestContact = {
-                    name: formData.contactName || selectedClient.contactPerson,
-                    email: formData.contactEmail || selectedClient.email,
+                    name: formData.contactName || selectedClient?.contactPerson || originalBooking?.guestContact?.name || '',
+                    email: formData.contactEmail || selectedClient?.email || originalBooking?.guestContact?.email || '',
                     phone: formData.contactPhone,
-                    organisation: selectedClient.companyName
+                    organisation: selectedClient?.companyName || originalBooking?.clientName || formData.organization,
                 };
             } else {
                 bookingData.clientName = formData.organization || 'Guest Client';
+                bookingData.clientId = '';
                 bookingData.guestContact = {
                     name: formData.contactName,
                     email: formData.contactEmail,
                     phone: formData.contactPhone,
-                    organisation: formData.organization
+                    organisation: formData.organization,
                 };
             }
 
             if (selectedInterpreter) {
                 bookingData.interpreterId = selectedInterpreter.id;
                 bookingData.interpreterName = selectedInterpreter.name;
+            } else if (isEditMode && originalBooking?.interpreterId) {
+                bookingData.interpreterId = null;
+                bookingData.interpreterName = null;
             }
 
             if (isEditMode) {
                 await BookingService.update(id!, bookingData);
                 showToast('Booking updated successfully', 'success');
+                navigate(`/admin/bookings/${id}`);
             } else {
                 bookingData.bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
                 bookingData.createdAt = new Date().toISOString();
                 await BookingService.create(bookingData);
                 showToast('Booking created successfully', 'success');
+                navigate('/admin/bookings');
             }
-            navigate('/admin/bookings');
-        } catch (error) {
-            showToast('Failed to create booking', 'error');
+        } catch {
+            showToast(isEditMode ? 'Failed to update booking' : 'Failed to create booking', 'error');
         } finally {
             setLoading(false);
         }
     };
 
-    const labelClasses = "block text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.15em] mb-2 ml-1";
-    const inputClasses = "w-full p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 dark:focus:border-blue-700 focus:outline-none transition-all text-slate-900 dark:text-white font-medium placeholder:text-slate-300 dark:placeholder:text-slate-600";
-
-    const filteredClientsForModal = clients.filter(c =>
-        c.companyName.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
-        c.contactPerson.toLowerCase().includes(clientSearchQuery.toLowerCase())
-    );
-
-    const filteredInterpreters = interpreters
-        .filter(i =>
-            i.name.toLowerCase().includes(searchingInterpreter.toLowerCase()) ||
-            i.languages.some(l => l.toLowerCase().includes(searchingInterpreter.toLowerCase()))
-        )
-        .sort((a, b) => {
-            // Sort by priority for the selected target language first
-            if (formData.languageTo) {
-                const aPrio = a.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
-                const bPrio = b.languageProficiencies?.find(p => p.language === formData.languageTo)?.l1 || 18;
-                if (aPrio !== bPrio) return aPrio - bPrio;
-            }
-            return a.name.localeCompare(b.name);
-        });
+    if (initialLoading) {
+        return (
+            <div className="flex min-h-[60vh] items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
+            </div>
+        );
+    }
 
     return (
-        <div className="space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center gap-4">
-                    <button
-                        onClick={() => navigate('/admin/bookings')}
-                        className="p-3 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm"
-                    >
-                        <ChevronLeft size={20} />
-                    </button>
-                    <div>
-                        <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {isEditMode ? 'Edit Booking Record' : 'Create Manual Booking'}
-                        </h1>
-                        <p className="text-slate-500 dark:text-slate-400 font-medium">
-                            {isEditMode ? `Updating ${formData.organization || 'Booking'}` : 'Register a request received via email or phone'}
-                        </p>
+        <form onSubmit={handleSubmit} className="-m-3 min-h-full bg-slate-100 pb-20 dark:bg-slate-950 sm:-m-5 lg:-m-6">
+            <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-5 lg:px-6">
+                <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings')}
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+                            aria-label="Back"
+                        >
+                            <ArrowLeft size={18} />
+                        </button>
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">
+                                    {isEditMode ? 'Edit booking record' : 'New booking record'}
+                                </h1>
+                                {originalBooking && <StatusBadge status={originalBooking.status} />}
+                                <span className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
+                                    {originalBooking?.bookingRef || 'Draft'}
+                                </span>
+                            </div>
+                            <p className="truncate text-xs text-slate-500">{selectedClientLabel}</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                        <Button type="button" variant="secondary" onClick={() => navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings')}>Cancel</Button>
+                        <Button type="submit" icon={Save} isLoading={loading} disabled={loading || requiredMissing}>
+                            {isEditMode ? 'Save changes' : 'Create booking'}
+                        </Button>
                     </div>
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-5">
+                        <MetricCell icon={Building2} label="Requester" value={selectedClientLabel} tone={hasClient ? 'default' : 'warning'} />
+                        <MetricCell icon={Globe2} label="Language" value={formData.languageTo ? `${formData.languageFrom} to ${formData.languageTo}` : 'Missing language'} tone={hasLanguage ? 'default' : 'warning'} />
+                        <MetricCell icon={CalendarDays} label="Schedule" value={scheduleLabel} tone={hasSchedule ? 'default' : 'warning'} />
+                        <MetricCell icon={MapPin} label="Location" value={locationLabel} tone={hasLocation ? 'default' : 'warning'} />
+                        <MetricCell icon={UserCheck} label="Assignment" value={selectedInterpreter?.name || `${matchingInterpreters.length} possible`} tone={selectedInterpreter ? 'success' : 'default'} />
+                    </div>
+                </div>
 
-                {/* Left Column: Client & Essentials */}
-                <div className="lg:col-span-7 space-y-6">
-
-                    {/* Billing Information */}
-                    <Card padding="lg">
-                        <div className="flex items-center gap-3 mb-8">
-                            <div className="bg-amber-50 dark:bg-amber-900/10 p-3 rounded-2xl text-amber-600 dark:text-amber-400">
-                                <CreditCard size={24} />
-                            </div>
-                            <h2 className="text-xl font-black text-slate-900 dark:text-white">Billing Information</h2>
-                        </div>
-                        <div>
-                            <label htmlFor="costCode" className={labelClasses}>Purchase Order / Cost Code</label>
-                            <input
-                                type="text"
-                                id="costCode"
-                                name="costCode"
-                                autoComplete="off"
-                                className={inputClasses + " font-mono"}
-                                placeholder="e.g. PO-2024-001 or CC-HR-99"
-                                value={formData.costCode}
-                                onChange={e => setFormData({ ...formData, costCode: e.target.value })}
-                            />
-                            {selectedClient && (
-                                <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase italic">
-                                    Default format for this client: {selectedClient.defaultCostCodeType}
-                                </p>
-                            )}
-                        </div>
-                    </Card>
-
-                    {/* Client Selection */}
-                    <Card padding="lg">
-                        <div className="flex items-center gap-3 mb-8">
-                            <div className="bg-blue-50 dark:bg-blue-900/10 p-3 rounded-2xl text-blue-600 dark:text-blue-400">
-                                <Building2 size={24} />
-                            </div>
-                            <h2 className="text-xl font-black text-slate-900 dark:text-white">Client Information</h2>
-                        </div>
-
-                        <div className="flex p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl mb-8">
-                            <button
-                                type="button"
-                                onClick={() => setClientSource('GUEST')}
-                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${clientSource === 'GUEST' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
-                            >
-                                Guest / New Client
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setClientSource('EXISTING')}
-                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${clientSource === 'EXISTING' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
-                            >
-                                Existing Registered Client
-                            </button>
-                        </div>
-
-                        {clientSource === 'EXISTING' ? (
-                            <div className="space-y-6">
-                                <div>
-                                    <label className={labelClasses}>Search Registered Client</label>
-
-                                    {!selectedClient ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => setClientModalOpen(true)}
-                                            className="w-full flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800 rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:border-blue-200 dark:hover:border-blue-900/50 transition-all text-left group"
-                                        >
-                                            <Search className="text-slate-400 dark:text-slate-600 group-hover:text-blue-500 transition-colors" size={18} />
-                                            <span className="text-slate-400 dark:text-slate-500 font-medium group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors">Click to browse and select a client...</span>
-                                        </button>
-                                    ) : (
-                                        <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-2xl">
-                                            <div className="flex items-center gap-4">
-                                                <div className="bg-blue-600 p-2 rounded-xl text-white">
-                                                    <Check size={16} />
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+                    <main className="space-y-4">
+                        <Section
+                            title="Requester"
+                            icon={Building2}
+                            action={
+                                <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-slate-950">
+                                    <SegmentedButton active={clientSource === 'GUEST'} onClick={() => { setClientSource('GUEST'); setSelectedClient(null); }}>
+                                        Guest
+                                    </SegmentedButton>
+                                    <SegmentedButton active={clientSource === 'EXISTING'} onClick={() => setClientSource('EXISTING')}>
+                                        Client
+                                    </SegmentedButton>
+                                </div>
+                            }
+                        >
+                            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+                                <div className="space-y-3">
+                                    {clientSource === 'EXISTING' ? (
+                                        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                                            {selectedClient ? (
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{selectedClient.companyName}</p>
+                                                        <p className="truncate text-xs text-slate-500">{selectedClient.contactPerson} - {selectedClient.email}</p>
+                                                    </div>
+                                                    <Button type="button" size="sm" variant="outline" onClick={() => setClientModalOpen(true)}>Change</Button>
                                                 </div>
-                                                <div>
-                                                    <div className="text-sm font-black text-blue-900 dark:text-blue-100">{selectedClient.companyName}</div>
-                                                    <div className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest">{selectedClient.contactPerson}</div>
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedClient(null)}
-                                                className="p-2 text-blue-400 hover:text-blue-600 dark:hover:text-blue-200 transition-colors"
-                                            >
-                                                <X size={18} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div>
-                                        <label htmlFor="contactName" className={labelClasses}>Request Member Name</label>
-                                        <input
-                                            type="text"
-                                            id="contactName"
-                                            name="contactName"
-                                            autoComplete="name"
-                                            className={inputClasses}
-                                            placeholder="Person who called/emailed"
-                                            value={formData.contactName}
-                                            onChange={e => setFormData({ ...formData, contactName: e.target.value })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="contactPhone" className={labelClasses}>Direct Contact Number</label>
-                                        <input
-                                            type="tel"
-                                            id="contactPhone"
-                                            name="contactPhone"
-                                            autoComplete="tel"
-                                            className={inputClasses}
-                                            placeholder="+44 0000 000000"
-                                            value={formData.contactPhone}
-                                            onChange={e => setFormData({ ...formData, contactPhone: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-6">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="md:col-span-2">
-                                        <label htmlFor="organization" className={labelClasses}>Organization / Company</label>
-                                        <input
-                                            type="text"
-                                            id="organization"
-                                            name="organization"
-                                            autoComplete="organization"
-                                            className={inputClasses}
-                                            placeholder="e.g. British Council"
-                                            value={formData.organization}
-                                            onChange={e => setFormData({ ...formData, organization: e.target.value })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="guestContactName" className={labelClasses}>Contact Person</label>
-                                        <input
-                                            type="text"
-                                            id="guestContactName"
-                                            name="guestContactName"
-                                            autoComplete="name"
-                                            className={inputClasses}
-                                            placeholder="Full Name"
-                                            value={formData.contactName}
-                                            onChange={e => setFormData({ ...formData, contactName: e.target.value })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="guestContactEmail" className={labelClasses}>Email Address</label>
-                                        <input
-                                            type="email"
-                                            id="guestContactEmail"
-                                            name="guestContactEmail"
-                                            autoComplete="email"
-                                            className={inputClasses}
-                                            placeholder="email@example.com"
-                                            value={formData.contactEmail}
-                                            onChange={e => setFormData({ ...formData, contactEmail: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </Card>
-
-                    {/* Service Details */}
-                    <Card padding="lg">
-                        <div className="flex items-center gap-3 mb-8">
-                            <div className="bg-emerald-50 dark:bg-emerald-900/10 p-3 rounded-2xl text-emerald-600 dark:text-emerald-400">
-                                <Globe2 size={24} />
-                            </div>
-                            <h2 className="text-xl font-black text-slate-900 dark:text-white">Service Logistics</h2>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div>
-                                <label className={labelClasses}>Service Type</label>
-                                <select
-                                    id="serviceType"
-                                    name="serviceType"
-                                    className={inputClasses}
-                                    value={formData.serviceType}
-                                    onChange={e => setFormData({ ...formData, serviceType: e.target.value as ServiceType })}
-                                >
-                                    {Object.values(ServiceType).map(type => (
-                                        <option key={type} value={type}>{type}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className={labelClasses}>Target Language <span className="text-red-500 ml-1">*</span></label>
-                                <select
-                                    required
-                                    id="languageTo"
-                                    name="languageTo"
-                                    className={inputClasses}
-                                    value={formData.languageTo}
-                                    onChange={e => setFormData({ ...formData, languageTo: e.target.value })}
-                                >
-                                    <option value="">Select Target Language...</option>
-                                    {availableLanguages.map(lang => (
-                                        <option key={lang} value={lang}>{lang}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className={labelClasses}>Date of Service <span className="text-red-500 ml-1">*</span></label>
-                                <div className="relative">
-                                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                    <input
-                                        type="date"
-                                        required
-                                        id="date"
-                                        name="date"
-                                        className={inputClasses + " pl-12"}
-                                        value={formData.date}
-                                        onChange={e => setFormData({ ...formData, date: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-
-                             <div className={isTranslation ? 'hidden' : ''}>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={labelClasses}>Time {!isTranslation && <span className="text-red-500 ml-1">*</span>}</label>
-                                        <input
-                                            type="time"
-                                            required={!isTranslation}
-                                            id="startTime"
-                                            name="startTime"
-                                            className={inputClasses}
-                                            value={formData.startTime}
-                                            onChange={e => setFormData({ ...formData, startTime: e.target.value })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className={labelClasses}>Duration (minutes) {!isTranslation && <span className="text-red-500 ml-1">*</span>}</label>
-                                        <input
-                                            type="number"
-                                            required={!isTranslation}
-                                            id="durationMinutes"
-                                            name="durationMinutes"
-                                            className={inputClasses}
-                                            value={formData.durationMinutes}
-                                            onChange={e => setFormData({ ...formData, durationMinutes: parseInt(e.target.value) })}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className={isTranslation ? 'hidden' : ''}>
-                                <label className={labelClasses}>Interpreter Gender Preference</label>
-                                <div className="grid grid-cols-3 gap-3">
-                                    {['None', 'Male', 'Female'].map(gender => (
-                                        <button
-                                            key={gender}
-                                            type="button"
-                                            onClick={() => setFormData({ ...formData, genderPreference: gender as any })}
-                                            className={`py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${formData.genderPreference === gender ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:border-slate-200 dark:hover:border-slate-700'}`}
-                                        >
-                                            {gender}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {!isTranslation && (
-                            <div className="mt-8 pt-8 border-t border-slate-50 dark:border-slate-800 animate-in fade-in slide-in-from-top-2">
-                                <label className={labelClasses}>Meeting Method</label>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <button
-                                        type="button"
-                                        onClick={() => setFormData({ ...formData, locationType: 'ONSITE' })}
-                                        className={`flex flex-col items-center justify-center p-6 border-2 rounded-2xl transition-all ${formData.locationType === 'ONSITE' ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-none' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:border-slate-200 dark:hover:border-slate-700'}`}
-                                    >
-                                        <MapPin size={24} className="mb-2" />
-                                        <span className="text-[10px] font-black uppercase tracking-widest">Face to Face</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setFormData({ ...formData, locationType: 'ONLINE' })}
-                                        className={`flex flex-col items-center justify-center p-6 border-2 rounded-2xl transition-all ${formData.locationType === 'ONLINE' ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-none' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:border-slate-200 dark:hover:border-slate-700'}`}
-                                    >
-                                        <Video size={24} className="mb-2" />
-                                        <span className="text-[10px] font-black uppercase tracking-widest">Remote / Video</span>
-                                    </button>
-                                </div>
-
-                                {formData.locationType === 'ONSITE' ? (
-                                        <div className="md:col-span-3">
-                                            <label className={labelClasses}>Job Location Address</label>
-                                            <PostcodeLookup 
-                                                onAddressSelected={(addr: UkAddress) => {
-                                                    setFormData({
-                                                        ...formData,
-                                                        address: addr.street || addr.formattedAddress,
-                                                        houseNumber: addr.houseNumber || '',
-                                                        postcode: addr.postcode,
-                                                        lat: addr.lat,
-                                                        lng: addr.lng
-                                                    });
-                                                }}
-                                                className="mb-2"
-                                            />
-                                            <p className="mt-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5 ml-1">
-                                                <div className="w-1 h-1 rounded-full bg-blue-500" />
-                                                Include house number for exact matches (e.g. "10 SW1A 1AA")
-                                            </p>
-                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-                                                <div>
-                                                    <label htmlFor="jobHouseNumber" className={labelClasses}>House/Flat #</label>
-                                                    <input
-                                                        type="text"
-                                                        id="jobHouseNumber"
-                                                        name="jobHouseNumber"
-                                                        autoComplete="address-line2"
-                                                        className={inputClasses}
-                                                        placeholder="e.g. 42B"
-                                                        value={formData.houseNumber}
-                                                        onChange={e => setFormData({ ...formData, houseNumber: e.target.value })}
-                                                    />
-                                                </div>
-                                                <div className="md:col-span-2">
-                                                    <label htmlFor="jobAddress" className={labelClasses}>Street Address</label>
-                                                    <input
-                                                        type="text"
-                                                        id="jobAddress"
-                                                        name="jobAddress"
-                                                        autoComplete="address-line1"
-                                                        className={inputClasses}
-                                                        placeholder="Street, Building name..."
-                                                        value={formData.address}
-                                                        onChange={e => setFormData({ ...formData, address: e.target.value, lat: undefined, lng: undefined })}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label htmlFor="jobPostcode" className={labelClasses}>Postcode</label>
-                                                    <input
-                                                        type="text"
-                                                        id="jobPostcode"
-                                                        name="jobPostcode"
-                                                        autoComplete="postal-code"
-                                                        className={inputClasses + " uppercase"}
-                                                        placeholder="SW1A 1AA"
-                                                        value={formData.postcode}
-                                                        onChange={e => setFormData({ ...formData, postcode: e.target.value, lat: undefined, lng: undefined })}
-                                                    />
-                                                </div>
-                                            </div>
-                                            {formData.lat && (
-                                                <p className="mt-2 text-[10px] text-green-600 font-bold uppercase tracking-widest flex items-center gap-1">
-                                                    <Check size={10} /> Geocoding Active: {formData.lat.toFixed(4)}, {formData.lng?.toFixed(4)}
-                                                </p>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setClientModalOpen(true)}
+                                                    className="flex h-10 w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 bg-white px-3 text-sm font-semibold text-slate-600 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                                                >
+                                                    <Search size={16} /> Select client
+                                                </button>
                                             )}
                                         </div>
+                                    ) : (
+                                        <Field label="Organisation">
+                                            <input className={inputClass} value={formData.organization} onChange={e => setFormData({ ...formData, organization: e.target.value })} placeholder="Organisation or requester" />
+                                        </Field>
+                                    )}
+
+                                    <div className="grid gap-3 md:grid-cols-3">
+                                        <Field label="Contact name">
+                                            <input className={inputClass} value={formData.contactName} onChange={e => setFormData({ ...formData, contactName: e.target.value })} placeholder="Requester" />
+                                        </Field>
+                                        <Field label="Email">
+                                            <div className="relative">
+                                                <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input type="email" className={`${inputClass} pl-8`} value={formData.contactEmail} onChange={e => setFormData({ ...formData, contactEmail: e.target.value })} placeholder="name@example.com" />
+                                            </div>
+                                        </Field>
+                                        <Field label="Phone">
+                                            <div className="relative">
+                                                <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input className={`${inputClass} pl-8`} value={formData.contactPhone} onChange={e => setFormData({ ...formData, contactPhone: e.target.value })} placeholder="+44..." />
+                                            </div>
+                                        </Field>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <Field label="PO / cost code">
+                                        <div className="relative">
+                                            <Hash size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                            <input className={`${inputClass} pl-8 font-mono`} value={formData.costCode} onChange={e => setFormData({ ...formData, costCode: e.target.value })} placeholder="PO / CC" />
+                                        </div>
+                                    </Field>
+                                    {selectedClient?.defaultCostCodeType && (
+                                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                                            Default: {selectedClient.defaultCostCodeType}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </Section>
+
+                        <Section title="Service and schedule" icon={SlidersHorizontal}>
+                            <div className="space-y-3">
+                                <Field label="Service type">
+                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                                        {serviceOptions.map(option => {
+                                            const Icon = serviceIcons[option] || CircleDot;
+                                            return (
+                                                <SegmentedButton key={option} active={formData.serviceType === option} icon={Icon} onClick={() => selectServiceType(option)}>
+                                                    {option}
+                                                </SegmentedButton>
+                                            );
+                                        })}
+                                    </div>
+                                </Field>
+
+                                <div className="grid gap-3 md:grid-cols-4">
+                                    <Field label="From">
+                                        <input className={inputClass} value={formData.languageFrom} onChange={e => setFormData({ ...formData, languageFrom: e.target.value })} />
+                                    </Field>
+                                    <Field label="To">
+                                        <input list="availableLanguages" className={inputClass} value={formData.languageTo} onChange={e => setFormData({ ...formData, languageTo: e.target.value })} placeholder="Required" />
+                                        <datalist id="availableLanguages">
+                                            {availableLanguages.map(language => <option key={language} value={language} />)}
+                                        </datalist>
+                                    </Field>
+                                    <Field label="Gender">
+                                        <select className={inputClass} value={formData.genderPreference} onChange={e => setFormData({ ...formData, genderPreference: e.target.value as any })}>
+                                            {genderOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                                        </select>
+                                    </Field>
+                                    <Field label="Matches">
+                                        <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                                            {formData.languageTo ? `${matchingInterpreters.length} active` : 'Choose language'}
+                                        </div>
+                                    </Field>
+                                </div>
+
+                                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+                                    <div className="grid gap-3 md:grid-cols-3">
+                                        <Field label="Date">
+                                            <input type="date" className={inputClass} value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+                                        </Field>
+                                        <Field label="Start">
+                                            <div className="relative">
+                                                <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                <input type="time" className={`${inputClass} pl-8`} value={formData.startTime} disabled={isTranslation} onChange={e => setFormData({ ...formData, startTime: e.target.value })} />
+                                            </div>
+                                        </Field>
+                                        <Field label="Duration">
+                                            <input type="number" min={15} step={15} className={inputClass} value={formData.durationMinutes} disabled={isTranslation} onChange={e => setFormData({ ...formData, durationMinutes: Number(e.target.value) })} />
+                                        </Field>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-slate-950">
+                                        <SegmentedButton active={effectiveLocationType === 'ONSITE'} disabled={isRemoteService} icon={MapPin} onClick={() => setFormData({ ...formData, locationType: 'ONSITE' })}>
+                                            On-site
+                                        </SegmentedButton>
+                                        <SegmentedButton active={effectiveLocationType === 'ONLINE'} icon={Video} onClick={() => setFormData({ ...formData, locationType: 'ONLINE' })}>
+                                            Remote
+                                        </SegmentedButton>
+                                    </div>
+                                </div>
+
+                                {effectiveLocationType === 'ONLINE' ? (
+                                    <Field label="Remote connection">
+                                        <input className={inputClass} value={formData.onlineLink} onChange={e => setFormData({ ...formData, onlineLink: e.target.value })} placeholder="Teams, Zoom, telephone bridge or joining notes" />
+                                    </Field>
                                 ) : (
-                                    <div className="mt-6 animate-in fade-in slide-in-from-top-2">
-                                        <label htmlFor="onlineLink" className={labelClasses}>Meeting Link / Platform</label>
-                                        <input
-                                            type="text"
-                                            id="onlineLink"
-                                            name="onlineLink"
-                                            autoComplete="url"
-                                            className={inputClasses}
-                                            placeholder="e.g. MS Teams Link, Zoom ID, or 'TBC'"
-                                            value={formData.onlineLink}
-                                            onChange={e => setFormData({ ...formData, onlineLink: e.target.value })}
-                                        />
+                                    <div className="space-y-3">
+                                        <PostcodeLookup onAddressSelected={updateLocationFromAddress} />
+                                        <div className="grid gap-3 md:grid-cols-[120px_1fr_150px]">
+                                            <Field label="House no.">
+                                                <input className={inputClass} value={formData.houseNumber} onChange={e => setFormData({ ...formData, houseNumber: e.target.value })} />
+                                            </Field>
+                                            <Field label="Address">
+                                                <input className={inputClass} value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                                            </Field>
+                                            <Field label="Postcode">
+                                                <input className={`${inputClass} uppercase`} value={formData.postcode} onChange={e => setFormData({ ...formData, postcode: e.target.value.toUpperCase() })} />
+                                            </Field>
+                                        </div>
                                     </div>
                                 )}
                             </div>
-                        )}
+                        </Section>
 
                         {isTranslation && (
-                            <div className="mt-8 pt-8 border-t border-slate-50 dark:border-slate-800 space-y-8 animate-in fade-in slide-in-from-top-4">
-                                <div>
-                                    <label className={labelClasses}>Format of Translated Text</label>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                        {['Body of Email', 'Only Word', 'Only Pdf', 'Word+Pdf', 'Leaflet', 'Other'].map(format => (
-                                            <button
-                                                key={format}
-                                                type="button"
-                                                onClick={() => setFormData({ ...formData, translationFormat: format })}
-                                                className={`py-3 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${formData.translationFormat === format ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500'}`}
-                                            >
-                                                {format}
-                                            </button>
-                                        ))}
-                                    </div>
+                            <Section title="Translation delivery" icon={FileText}>
+                                <div className="grid gap-3 lg:grid-cols-[1fr_1fr_220px]">
+                                    <Field label="Format">
+                                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                            {translationFormats.map(format => (
+                                                <SegmentedButton key={format} active={formData.translationFormat === format} onClick={() => setFormData({ ...formData, translationFormat: format })}>
+                                                    {format}
+                                                </SegmentedButton>
+                                            ))}
+                                        </div>
+                                    </Field>
+                                    <Field label="Delivery email">
+                                        <input type="email" className={inputClass} value={formData.deliveryEmail} onChange={e => setFormData({ ...formData, deliveryEmail: e.target.value })} placeholder="delivery@example.com" />
+                                    </Field>
+                                    <label className="flex h-full min-h-16 items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
+                                        <span className="text-sm font-semibold text-slate-950 dark:text-white">Quote first</span>
+                                        <input type="checkbox" checked={formData.quoteRequested} onChange={e => setFormData({ ...formData, quoteRequested: e.target.checked })} className="h-5 w-5 rounded border-slate-300 text-blue-600" />
+                                    </label>
                                     {formData.translationFormat === 'Other' && (
-                                        <input
-                                            type="text"
-                                            id="translationFormatOther"
-                                            name="translationFormatOther"
-                                            className={inputClasses + " mt-3"}
-                                            placeholder="Please specify format..."
-                                            value={formData.translationFormatOther}
-                                            onChange={e => setFormData({ ...formData, translationFormatOther: e.target.value })}
-                                        />
+                                        <Field label="Specify format">
+                                            <input className={inputClass} value={formData.translationFormatOther} onChange={e => setFormData({ ...formData, translationFormatOther: e.target.value })} />
+                                        </Field>
                                     )}
                                 </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    <div>
-                                        <label className={labelClasses}>Standard Rates / Quote</label>
-                                        <div className="flex p-1 bg-slate-100 dark:bg-slate-800/50 rounded-2xl">
-                                            <button
-                                                type="button"
-                                                onClick={() => setFormData({ ...formData, quoteRequested: false })}
-                                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!formData.quoteRequested ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >
-                                                Standard Rates
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setFormData({ ...formData, quoteRequested: true })}
-                                                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${formData.quoteRequested ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >
-                                                Please Quote First
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className={labelClasses}>Delivery Email Address</label>
-                                        <input
-                                            type="email"
-                                            id="deliveryEmail"
-                                            name="deliveryEmail"
-                                            className={inputClasses}
-                                            placeholder="Where to send the translation..."
-                                            value={formData.deliveryEmail}
-                                            onChange={e => setFormData({ ...formData, deliveryEmail: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
+                            </Section>
                         )}
-                    </Card>
-                </div>
+                    </main>
 
-                {/* Right Column: Assignment & Notes */}
-                <div className="lg:col-span-5 space-y-6">
-
-                    {/* Internal Notes */}
-                    <div className="bg-slate-900 dark:bg-blue-950 rounded-[2.5rem] p-8 lg:p-10 text-white shadow-2xl shadow-slate-900/20">
-                        <div className="flex items-center gap-3 mb-8">
-                            <div className="bg-white/10 p-3 rounded-2xl text-white">
-                                <Info size={24} />
+                    <aside className="space-y-4 xl:sticky xl:top-32 xl:self-start">
+                        <Section title="Save readiness" icon={Info}>
+                            <div className="space-y-2">
+                                <ChecklistItem done={hasClient} label="Requester" value={selectedClientLabel} />
+                                <ChecklistItem done={hasContact} label="Contact" value={formData.contactEmail || formData.contactPhone || 'No contact channel'} />
+                                <ChecklistItem done={hasLanguage} label="Language" value={formData.languageTo || 'Missing target language'} />
+                                <ChecklistItem done={hasSchedule} label="Schedule" value={scheduleLabel} />
+                                <ChecklistItem done={hasLocation} label="Location" value={locationLabel} />
                             </div>
-                            <h2 className="text-xl font-black">Admin Notes</h2>
-                        </div>
-                        <textarea
-                            id="notes"
-                            name="notes"
-                            className="w-full h-40 bg-white/5 border border-white/10 rounded-2xl p-6 outline-none focus:ring-4 focus:ring-white/5 focus:border-white/20 transition-all text-white font-medium placeholder:text-white/20 resize-none"
-                            placeholder="Any special instructions or case notes for the interpreter..."
-                            value={formData.notes}
-                            onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                        />
-                    </div>
+                        </Section>
 
-                    {/* Interpreter Assignment */}
-                    <Card padding="lg" className="relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 dark:bg-amber-900/10 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
-
-                        <div className="relative z-10">
-                            <div className="flex items-center gap-3 mb-8">
-                                <div className="bg-amber-50 dark:bg-amber-900/10 p-3 rounded-2xl text-amber-600 dark:text-amber-400">
-                                    <UserPlus size={24} />
-                                </div>
-                                <h2 className="text-xl font-black text-slate-900 dark:text-white">Immediate Assignment</h2>
-                            </div>
-
-                            <div className="relative">
-                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-600" size={18} />
-                                <input
-                                    type="text"
-                                    id="interpreterSearch"
-                                    name="interpreterSearch"
-                                    className={inputClasses + " pl-12 bg-slate-50 dark:bg-slate-800/50"}
-                                    placeholder="Search for an interpreter..."
-                                    value={searchingInterpreter}
-                                    onChange={(e) => setSearchingInterpreter(e.target.value)}
-                                />
-                            </div>
-
-                            {searchingInterpreter && !selectedInterpreter && (
-                                <div className="mt-4 border border-slate-100 dark:border-slate-800 rounded-2xl max-h-60 overflow-y-auto p-2 bg-slate-50/50 dark:bg-slate-900/50">
-                                    {filteredInterpreters.map(i => (
-                                        <button
-                                            key={i.id}
-                                            type="button"
-                                            onClick={() => {
-                                                setSelectedInterpreter(i);
-                                                setSearchingInterpreter('');
-                                            }}
-                                            className="w-full flex items-center justify-between p-4 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-all text-left shadow-sm shadow-transparent hover:shadow-slate-200/50 dark:hover:shadow-none mb-1"
-                                        >
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center font-black text-sm">
-                                                    {i.name.charAt(0)}
-                                                </div>
-                                                <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-sm font-bold text-slate-900 dark:text-white">{i.name}</div>
-                                                        {i.acceptsDirectAssignment && (
-                                                            <Zap size={12} className="text-amber-500 fill-amber-500 animate-pulse" />
-                                                        )}
-                                                    </div>
-                                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">{i.languages.slice(0, 2).join(', ')}</div>
-                                                </div>
+                        <Section title="Interpreter assignment" icon={UserPlus}>
+                            <div className="space-y-3">
+                                {selectedInterpreter ? (
+                                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate text-sm font-semibold text-emerald-950 dark:text-emerald-100">{selectedInterpreter.name}</p>
+                                                <p className="truncate text-xs text-emerald-700 dark:text-emerald-300">{(selectedInterpreter.languages || []).slice(0, 4).join(', ')}</p>
                                             </div>
-                                            <Plus size={16} className="text-slate-300 dark:text-slate-700" />
-                                        </button>
-                                    ))}
-                                    {filteredInterpreters.length === 0 && (
-                                        <div className="p-10 text-center">
-                                            <p className="text-xs text-slate-400 dark:text-slate-500 font-bold">No matches found</p>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {selectedInterpreter && (
-                                <div className="mt-6 flex items-center justify-between p-6 bg-slate-900 dark:bg-slate-950 text-white rounded-[2rem] shadow-xl shadow-slate-200 dark:shadow-none">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white font-black text-lg">
-                                            {selectedInterpreter.name.charAt(0)}
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2">
-                                                <div className="text-sm font-black">{selectedInterpreter.name}</div>
-                                                {selectedInterpreter.acceptsDirectAssignment && (
-                                                    <Zap size={14} className="text-amber-400 fill-amber-400" />
-                                                )}
-                                            </div>
-                                            <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-0.5">Assigned Directly</div>
+                                            <button type="button" onClick={() => setSelectedInterpreter(null)} className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40" aria-label="Remove interpreter">
+                                                <X size={16} />
+                                            </button>
                                         </div>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedInterpreter(null)}
-                                        className="p-2 text-white/30 hover:text-white transition-colors"
-                                    >
-                                        <X size={20} />
-                                    </button>
-                                </div>
-                            )}
-
-                            {!selectedInterpreter && !searchingInterpreter && (
-                                <div className="mt-8 flex items-start gap-4 p-6 bg-slate-50 dark:bg-slate-900/50 rounded-[2rem] border border-slate-100 dark:border-slate-800">
-                                    <div className="text-blue-500 dark:text-blue-400 mt-1">
-                                        <Info size={16} />
-                                    </div>
-                                    <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 leading-relaxed uppercase tracking-wider">
-                                        If left empty, this job will be created as a <span className="text-blue-600 dark:text-blue-400">Pending Request</span> and sent to the general bidding pool.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </Card>
-
-                    {/* Submit Action */}
-                    <div className="pt-4 pb-24 lg:pb-4 sticky bottom-4 z-40 lg:static">
-                        <div className="bg-slate-50/80 dark:bg-slate-950/80 lg:bg-transparent backdrop-blur-md lg:backdrop-blur-none p-4 -mx-4 lg:p-0 lg:mx-0 rounded-3xl lg:rounded-none shadow-[0_-10px_40px_-10px_rgba(0,0,0,0.1)] lg:shadow-none border border-slate-200/50 dark:border-slate-800/50 lg:border-transparent">
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full h-16 lg:h-20 bg-blue-600 text-white rounded-2xl lg:rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[12px] shadow-2xl shadow-blue-200 dark:shadow-none hover:bg-blue-700 hover:-translate-y-1 transition-all active:scale-95 flex items-center justify-center gap-4 group"
-                            >
-                                {loading ? (
-                                    <div className="w-6 h-6 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
                                 ) : (
-                                    <>
-                                        <Save size={20} className="group-hover:scale-110 transition-transform" />
-                                        {isEditMode ? 'Save Changes' : 'Publish Booking'}
-                                    </>
+                                    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+                                        Assignment pool: {matchingInterpreters.length} active matches
+                                    </div>
                                 )}
-                            </button>
-                            <p className="text-center mt-4 lg:mt-6 text-[9px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.3em]">
-                                Validated Secure Submission • Lingland V3
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </form>
 
-            {/* Client Selection Modal */}
+                                <div className="relative">
+                                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input className={`${inputClass} pl-9`} value={searchingInterpreter} onChange={e => setSearchingInterpreter(e.target.value)} placeholder="Search interpreter or language" />
+                                </div>
+
+                                <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-md border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                                    {filteredInterpreters.map(interpreter => {
+                                        const exactLanguage = formData.languageTo && (interpreter.languages || []).some(l => l.toLowerCase() === formData.languageTo.toLowerCase());
+                                        return (
+                                            <button
+                                                key={interpreter.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSelectedInterpreter(interpreter);
+                                                    setSearchingInterpreter('');
+                                                }}
+                                                className="flex w-full items-center justify-between gap-3 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800"
+                                            >
+                                                <div className="min-w-0">
+                                                    <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{interpreter.name}</p>
+                                                    <p className="truncate text-xs text-slate-500">{(interpreter.languages || []).slice(0, 4).join(', ')}</p>
+                                                </div>
+                                                <div className="flex shrink-0 items-center gap-2">
+                                                    {exactLanguage && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">MATCH</span>}
+                                                    {interpreter.acceptsDirectAssignment ? <Zap size={14} className="text-amber-500" /> : <ChevronRight size={14} className="text-slate-300" />}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </Section>
+
+                        <Section title="Admin notes" icon={MessageSquareText}>
+                            <textarea className={textareaClass} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} placeholder="Operational notes, access instructions, risks, case context..." />
+                        </Section>
+
+                        <Section title="Billing snapshot" icon={CreditCard}>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
+                                    <p className="text-slate-500">Cost code</p>
+                                    <p className="mt-1 truncate font-semibold text-slate-950 dark:text-white">{formData.costCode || '-'}</p>
+                                </div>
+                                <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
+                                    <p className="text-slate-500">Status</p>
+                                    <p className="mt-1 truncate font-semibold text-slate-950 dark:text-white">{originalBooking?.status || 'Draft'}</p>
+                                </div>
+                            </div>
+                        </Section>
+                    </aside>
+                </div>
+            </div>
+
             <Modal
                 isOpen={clientModalOpen}
                 onClose={() => {
                     setClientModalOpen(false);
                     setClientSearchQuery('');
                 }}
-                title="Select Registered Client"
+                title="Select client"
                 maxWidth="2xl"
             >
-                <div className="space-y-4">
+                <div className="space-y-3">
                     <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                         <input
-                            type="text"
-                            id="clientSearch"
-                            name="clientSearch"
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-slate-900 dark:text-white font-medium placeholder:text-slate-400"
-                            placeholder="Search by company name or contact person..."
+                            className={`${inputClass} pl-9`}
+                            placeholder="Search company, contact or email"
                             value={clientSearchQuery}
                             onChange={(e) => setClientSearchQuery(e.target.value)}
                             autoFocus
                         />
                     </div>
-
-                    <div className="max-h-96 overflow-y-auto space-y-2 pr-2">
-                        {filteredClientsForModal.length > 0 ? (
-                            filteredClientsForModal.map(c => (
-                                <button
-                                    key={c.id}
-                                    type="button"
-                                    onClick={() => {
-                                        setSelectedClient(c);
-                                        setClientModalOpen(false);
-                                        setClientSearchQuery('');
-                                    }}
-                                    className="w-full flex items-center gap-4 p-4 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-slate-100 dark:border-slate-800 hover:border-blue-200 dark:hover:border-blue-800 rounded-xl transition-all text-left group"
-                                >
-                                    <div className="bg-slate-100 dark:bg-slate-800 group-hover:bg-blue-100 dark:group-hover:bg-blue-900/40 p-3 rounded-lg text-slate-400 dark:text-slate-500 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                        <Building2 size={20} />
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-900 dark:group-hover:text-blue-100 transition-colors">{c.companyName}</div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{c.contactPerson}</div>
-                                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-medium mt-1">{c.email}</div>
-                                    </div>
-                                    <ChevronRight size={18} className="text-slate-300 dark:text-slate-700 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors" />
-                                </button>
-                            ))
-                        ) : (
-                            <div className="text-center py-12">
-                                <Building2 size={48} className="mx-auto text-slate-300 dark:text-slate-700 mb-4" />
-                                <p className="text-slate-500 dark:text-slate-400 font-medium">No clients found</p>
-                                <p className="text-xs text-slate-400 dark:text-slate-600 mt-1">Try adjusting your search query</p>
+                    <div className="max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                        {filteredClientsForModal.map(client => (
+                            <button
+                                key={client.id}
+                                type="button"
+                                onClick={() => {
+                                    setSelectedClient(client);
+                                    setFormData(prev => ({
+                                        ...prev,
+                                        organization: client.companyName,
+                                        contactName: prev.contactName || client.contactPerson,
+                                        contactEmail: prev.contactEmail || client.email,
+                                    }));
+                                    setClientModalOpen(false);
+                                    setClientSearchQuery('');
+                                }}
+                                className="grid w-full grid-cols-[32px_minmax(0,1fr)_24px] items-center gap-3 border-b border-slate-100 bg-white px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
+                            >
+                                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-slate-800">
+                                    <Building2 size={16} />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{client.companyName}</p>
+                                    <p className="truncate text-xs text-slate-500">{client.contactPerson} - {client.email}</p>
+                                </div>
+                                <ChevronRight size={16} className="text-slate-400" />
+                            </button>
+                        ))}
+                        {filteredClientsForModal.length === 0 && (
+                            <div className="p-8 text-center text-sm text-slate-500">
+                                No clients found.
                             </div>
                         )}
                     </div>
-
-                    {filteredClientsForModal.length > 0 && (
-                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                            <p className="text-xs text-slate-400 dark:text-slate-600 text-center">
-                                Showing {filteredClientsForModal.length} of {clients.length} registered clients
-                            </p>
-                        </div>
-                    )}
                 </div>
             </Modal>
-        </div>
+        </form>
     );
 };

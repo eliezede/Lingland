@@ -46,7 +46,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             <NavItem to="/admin/bookings" icon={CalendarDays} label="All Bookings" active={isActive('/admin/bookings')} />
             <NavItem to="/admin/clients" icon={Briefcase} label="Clients" active={isActive('/admin/clients')} />
             <NavItem to="/admin/interpreters" icon={Users} label="Interpreters" active={isActive('/admin/interpreters')} />
-            <NavItem to="/admin/timesheets" icon={FileText} label="Timesheets" active={isActive('/admin/timesheets')} />
+            <NavItem to="/admin/operations/timesheets" icon={FileText} label="Timesheets" active={isActive('/admin/operations/timesheets')} />
           </>
         );
       case UserRole.CLIENT:
@@ -61,7 +61,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         return (
           <>
             <NavItem to="/interpreter/dashboard" icon={LayoutDashboard} label="Dashboard" active={isActive('/interpreter/dashboard')} />
-            <NavItem to="/interpreter/schedule" icon={CheckCircle2} label="My Jobs" active={isActive('/interpreter/schedule')} />
+            <NavItem to="/interpreter/jobs" icon={CheckCircle2} label="My Jobs" active={isActive('/interpreter/jobs')} />
           </>
         );
       default:

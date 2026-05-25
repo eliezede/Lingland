@@ -11,6 +11,7 @@ export interface BulkAction {
 }
 
 interface BulkActionBarProps {
+    selectedIds?: string[];
     selectedCount: number;
     totalCount: number;
     actions: BulkAction[];
@@ -33,6 +34,7 @@ const variantStyles = {
  * Provides fast batch operations with visual feedback.
  */
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
+    selectedIds = [],
     selectedCount,
     totalCount,
     actions,
@@ -44,14 +46,14 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     if (selectedCount === 0) return null;
 
     return (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 duration-200">
-            <div className="flex items-center gap-3 bg-slate-900 dark:bg-slate-800 text-white px-4 py-3 rounded-2xl shadow-2xl shadow-slate-900/40 border border-slate-700">
+        <div className="fixed inset-x-3 bottom-3 z-50 animate-in slide-in-from-bottom-4 duration-200 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2">
+            <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-3 text-white shadow-2xl shadow-slate-900/40 backdrop-blur sm:flex-row sm:items-center sm:px-4">
                 {/* Selection info */}
-                <div className="flex items-center gap-2.5 pr-3 border-r border-slate-700">
-                    <div className="w-6 h-6 rounded-md bg-blue-600 flex items-center justify-center text-[11px] font-black">
+                <div className="flex min-w-0 items-center gap-2.5 border-slate-700 sm:border-r sm:pr-3">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-[11px] font-bold">
                         {selectedCount}
                     </div>
-                    <span className="text-sm font-bold text-white/90">
+                    <span className="truncate text-sm font-semibold text-white/90">
                         {selectedCount} {entityLabel}{selectedCount !== 1 ? 's' : ''} selected
                     </span>
                     {onSelectAll && selectedCount < totalCount && (
@@ -65,15 +67,15 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
                     {actions.map((action, idx) => {
                         const Icon = action.icon;
                         return (
                             <button
                                 key={idx}
-                                onClick={() => action.onClick([])} // IDs passed externally
+                                onClick={() => action.onClick(selectedIds)}
                                 disabled={action.disabled || isLoading}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${variantStyles[action.variant || 'default']}`}
+                                className={`flex min-h-9 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variantStyles[action.variant || 'default']}`}
                             >
                                 {Icon && <Icon size={13} />}
                                 {action.label}
@@ -85,7 +87,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                 {/* Clear */}
                 <button
                     onClick={onClearSelection}
-                    className="ml-1 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                    className="absolute right-2 top-2 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white sm:static sm:ml-1"
                     title="Clear selection"
                 >
                     <X size={16} />

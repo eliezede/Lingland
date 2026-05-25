@@ -139,6 +139,10 @@ export const InterpreterTimesheetForm = () => {
       const endISO = `${baseDate}T${formData.end}:00`;
 
       // 3. Submit
+      const claimedTotal = job.serviceCategory === ServiceCategory.TRANSLATION
+        ? formData.wordCount * formData.unitPrice
+        : calculatedStats.earnings;
+
       await submitTimesheet({
         bookingId: job.id,
         clientId: job.clientId,
@@ -154,12 +158,12 @@ export const InterpreterTimesheetForm = () => {
         parking: formData.parking,
         transport: formData.transport,
         sessionDurationMinutes: calculatedStats.duration,
-        totalToPay: calculatedStats.earnings,
+        totalToPay: claimedTotal,
         // Translation fields
         wordCount: formData.wordCount,
         unitPrice: formData.unitPrice,
         units: formData.units,
-        interpreterAmountCalculated: job.serviceCategory === ServiceCategory.TRANSLATION ? formData.wordCount * formData.unitPrice : calculatedStats.earnings
+        interpreterAmountCalculated: claimedTotal
       });
 
       showToast("Timesheet submitted successfully!", "success");
@@ -177,7 +181,9 @@ export const InterpreterTimesheetForm = () => {
 
   if (!job) return <div className="p-8 flex items-center justify-center min-h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
 
-  const isStep1Valid = job.serviceCategory === ServiceCategory.TRANSLATION 
+  const isTranslation = job.serviceCategory === ServiceCategory.TRANSLATION;
+  const finalEarnings = isTranslation ? formData.wordCount * formData.unitPrice : calculatedStats.earnings;
+  const isStep1Valid = isTranslation
     ? formData.wordCount > 0 && formData.unitPrice > 0 
     : formData.start && formData.end;
 
@@ -469,13 +475,13 @@ export const InterpreterTimesheetForm = () => {
                    </div>
                    <div className="pl-4 space-y-1">
                       <p className="text-slate-500 text-[10px] font-black uppercase">Total Earnings</p>
-                      <p className="text-xl font-black text-emerald-400">£{calculatedStats.earnings.toFixed(2)}</p>
+                      <p className="text-xl font-black text-emerald-400">£{finalEarnings.toFixed(2)}</p>
                     </div>
                 </div>
              </div>
 
              {/* Signature Section */}
-             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-6">
+             {!isTranslation && <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-6">
                 <div className="flex items-center gap-3 text-slate-900 mb-2">
                   <UserCheck className="text-purple-500" size={20} />
                   <h3 className="font-bold">Client Verification</h3>
@@ -506,7 +512,7 @@ export const InterpreterTimesheetForm = () => {
                      By signing, the client confirms the duration and expenses listed above are accurate.
                    </p>
                 </div>
-             </div>
+             </div>}
 
              <div className="flex gap-4">
               <button
@@ -517,7 +523,7 @@ export const InterpreterTimesheetForm = () => {
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting || !formData.clientNameSigned || !formData.clientSignatureUrl}
+                disabled={isSubmitting || (!isTranslation && (!formData.clientNameSigned || !formData.clientSignatureUrl))}
                 className="flex-[2] py-5 bg-blue-600 text-white font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? (

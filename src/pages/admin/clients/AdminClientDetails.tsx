@@ -70,15 +70,15 @@ export const AdminClientDetails = () => {
     const handleStartChat = async () => {
         if (!user || !client) return;
         try {
-            const names = {
-                [user.id]: user.displayName || 'Admin',
-                [client.id]: client.companyName
-            };
-            const photos = {
-                [user.id]: user.photoUrl || '',
-                [client.id]: client.photoUrl || ''
-            };
-            const threadId = await ChatService.getOrCreateThread([user.id, client.id], names, photos);
+            const clientUser = await ChatService.resolveUserByProfileId(client.id) || await ChatService.resolveUserByEmail(client.email);
+            if (!clientUser) {
+                showToast('No active user account found for this client', 'error');
+                return;
+            }
+            const threadId = await ChatService.getOrCreateDirectThreadWithUser(
+                user,
+                { ...clientUser, displayName: client.companyName, photoUrl: client.photoUrl || clientUser.photoUrl }
+            );
             openThread(threadId);
         } catch (error) {
 

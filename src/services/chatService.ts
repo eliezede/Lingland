@@ -1,65 +1,150 @@
 import {
-  collection, query, where, onSnapshot,
-  addDoc, serverTimestamp, doc, updateDoc, increment,
-  setDoc, getDoc, limit, orderBy
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  doc,
+  updateDoc,
+  increment,
+  setDoc,
+  getDoc,
+  getDocs,
+  limit,
 } from 'firebase/firestore';
 import { db } from './firebaseConfig';
-import { ChatThread, ChatMessage, NotificationType } from '../types';
+import { ChatMessage, ChatThread, NotificationType, User, UserRole } from '../types';
 import { NotificationService } from './notificationService';
+import { MOCK_USERS } from './mockData';
+
+type ChatParticipant = Pick<User, 'id' | 'displayName' | 'photoUrl' | 'email' | 'role' | 'profileId'>;
+
+const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
+
+const toMillis = (value: any) => {
+  if (!value) return 0;
+  if (value?.toDate) return value.toDate().getTime();
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const normalizeThread = (id: string, data: any): ChatThread => ({
+  id,
+  participants: data.participants || [],
+  participantNames: data.participantNames || {},
+  participantPhotos: data.participantPhotos || {},
+  lastMessage: data.lastMessage || '',
+  lastMessageAt: data.lastMessageAt?.toDate ? data.lastMessageAt.toDate().toISOString() : data.lastMessageAt,
+  bookingId: data.bookingId || undefined,
+  departmentId: data.departmentId || undefined,
+  type: data.type || (data.bookingId ? 'BOOKING' : 'DIRECT'),
+  unreadCount: data.unreadCount || {},
+  metadata: data.metadata || {},
+});
+
+const normalizeMessage = (id: string, data: any): ChatMessage => ({
+  id,
+  threadId: data.threadId,
+  senderId: data.senderId,
+  senderName: data.senderName,
+  text: data.text || '',
+  createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+  fileUrl: data.fileUrl || undefined,
+  fileType: data.fileType || undefined,
+});
+
+const getUserFromDoc = (id: string, data: any): ChatParticipant => ({
+  id,
+  displayName: data.displayName || data.name || data.email || 'User',
+  photoUrl: data.photoUrl || '',
+  email: data.email || '',
+  role: data.role,
+  profileId: data.profileId,
+});
 
 export const ChatService = {
-  getOrCreateThread: async (participants: string[], names: Record<string, string>, photos?: Record<string, string>, bookingId?: string) => {
-    // Generate a unique stable ID based on sorted participants or booking
-    const threadId = bookingId ? `booking-${bookingId}` : participants.sort().join('_');
+  getOrCreateThread: async (
+    participants: string[],
+    names: Record<string, string>,
+    photos: Record<string, string> = {},
+    bookingId?: string,
+    metadata: Record<string, any> = {}
+  ) => {
+    const cleanParticipants = unique(participants);
+    const threadId = bookingId ? `booking-${bookingId}` : cleanParticipants.slice().sort().join('_');
     const threadRef = doc(db, 'chatThreads', threadId);
-
     const threadSnap = await getDoc(threadRef);
+    const unreadCount = cleanParticipants.reduce((acc, participantId) => ({ ...acc, [participantId]: 0 }), {});
 
     if (!threadSnap.exists()) {
-      const threadData: any = {
-        participants,
+      await setDoc(threadRef, {
+        id: threadId,
+        type: bookingId ? 'BOOKING' : 'DIRECT',
+        participants: cleanParticipants,
         participantNames: names,
-        participantPhotos: photos || {},
-        updatedAt: serverTimestamp(),
+        participantPhotos: photos,
         bookingId: bookingId || null,
-        unreadCount: participants.reduce((acc, p) => ({ ...acc, [p]: 0 }), {})
-      };
-      await setDoc(threadRef, threadData);
+        metadata,
+        unreadCount,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     } else {
-      // If thread exists, just refresh the participant names in case they changed, 
-      // but do NOT reset the unreadCount or participants list.
+      const existing = threadSnap.data();
+      const mergedParticipants = unique([...(existing.participants || []), ...cleanParticipants]);
+      const unreadPatch = mergedParticipants.reduce((acc, participantId) => {
+        if ((existing.unreadCount || {})[participantId] === undefined) {
+          return { ...acc, [`unreadCount.${participantId}`]: 0 };
+        }
+        return acc;
+      }, {} as Record<string, number>);
+
       await updateDoc(threadRef, {
-        participantNames: names,
-        participantPhotos: photos || {},
-        updatedAt: serverTimestamp()
+        participants: mergedParticipants,
+        participantNames: { ...(existing.participantNames || {}), ...names },
+        participantPhotos: { ...(existing.participantPhotos || {}), ...photos },
+        metadata: { ...(existing.metadata || {}), ...metadata },
+        updatedAt: serverTimestamp(),
+        ...unreadPatch,
       });
     }
 
     return threadId;
   },
-  
+
   getOrCreateDepartmentThread: async (departmentId: string, departmentName: string, staffIds: string[]) => {
     const threadId = `dept-${departmentId}`;
     const threadRef = doc(db, 'chatThreads', threadId);
     const threadSnap = await getDoc(threadRef);
+    const cleanStaffIds = unique(staffIds);
 
     if (!threadSnap.exists()) {
-      const threadData: any = {
+      await setDoc(threadRef, {
         id: threadId,
         type: 'DEPARTMENT',
         departmentId,
-        participants: staffIds,
-        participantNames: { [threadId]: departmentName }, // Special case for group name
+        participants: cleanStaffIds,
+        participantNames: { [threadId]: departmentName },
+        unreadCount: cleanStaffIds.reduce((acc, participantId) => ({ ...acc, [participantId]: 0 }), {}),
+        metadata: { name: departmentName },
+        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        unreadCount: staffIds.reduce((acc, p) => ({ ...acc, [p]: 0 }), {}),
-        metadata: { name: departmentName }
-      };
-      await setDoc(threadRef, threadData);
+      });
     } else {
-      // Update participants list if needed
+      const existing = threadSnap.data();
+      const unreadPatch = cleanStaffIds.reduce((acc, participantId) => {
+        if ((existing.unreadCount || {})[participantId] === undefined) {
+          return { ...acc, [`unreadCount.${participantId}`]: 0 };
+        }
+        return acc;
+      }, {} as Record<string, number>);
+
       await updateDoc(threadRef, {
-        participants: staffIds, // Sync with current staff
-        updatedAt: serverTimestamp()
+        participants: cleanStaffIds,
+        metadata: { ...(existing.metadata || {}), name: departmentName },
+        updatedAt: serverTimestamp(),
+        ...unreadPatch,
       });
     }
 
@@ -71,62 +156,68 @@ export const ChatService = {
     senderId: string,
     senderName: string,
     text: string,
-    recipientId: string,
-    attachment?: { url: string, type: 'IMAGE' | 'DOCUMENT' }
+    recipientId?: string,
+    attachment?: { url: string; type: 'IMAGE' | 'DOCUMENT' }
   ) => {
+    const cleanText = text.trim();
+    if (!cleanText && !attachment) return;
+
+    const threadRef = doc(db, 'chatThreads', threadId);
+    const threadSnap = await getDoc(threadRef);
+    if (!threadSnap.exists()) throw new Error('Chat thread not found');
+
+    const thread = normalizeThread(threadSnap.id, threadSnap.data());
+    const recipients = recipientId
+      ? [recipientId]
+      : thread.participants.filter(participantId => participantId !== senderId);
+
     const messageData = {
       threadId,
       senderId,
       senderName,
-      text,
+      text: cleanText,
       createdAt: new Date().toISOString(),
       fileUrl: attachment?.url || null,
-      fileType: attachment?.type || null
+      fileType: attachment?.type || null,
     };
 
-    // 1. Save message
     await addDoc(collection(db, 'messages'), messageData);
 
-    // 2. Update thread summary
-    const updateData: any = {
-      lastMessage: attachment ? (attachment.type === 'IMAGE' ? '📷 Sent a photo' : '📄 Sent a document') : text,
+    const updateData: Record<string, any> = {
+      lastMessage: attachment ? (attachment.type === 'IMAGE' ? 'Sent an image' : 'Sent a document') : cleanText,
       lastMessageAt: messageData.createdAt,
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
     };
 
-    // 3. Increment unread for recipient
-    if (recipientId) {
-      updateData[`unreadCount.${recipientId}`] = increment(1);
+    recipients.forEach(participantId => {
+      updateData[`unreadCount.${participantId}`] = increment(1);
+    });
 
-      // Send notification
+    await updateDoc(threadRef, updateData);
+
+    recipients.forEach(participantId => {
       NotificationService.notify(
-        recipientId,
+        participantId,
         `New message from ${senderName}`,
-        attachment ? (attachment.type === 'IMAGE' ? '📷 Photo' : '📄 Document') : (text.length > 60 ? text.substring(0, 57) + '...' : text),
+        attachment ? (attachment.type === 'IMAGE' ? 'Image attachment' : 'Document attachment') : (cleanText.length > 80 ? `${cleanText.slice(0, 77)}...` : cleanText),
         NotificationType.CHAT,
-        ''
-      );
-    }
-
-    await updateDoc(doc(db, 'chatThreads', threadId), updateData);
+        thread.type === 'BOOKING' && thread.bookingId ? `/admin/bookings/${thread.bookingId}` : ''
+      ).catch(() => {});
+    });
   },
 
   subscribeToMessages: (threadId: string, callback: (messages: ChatMessage[]) => void) => {
-    // We order by createdAt. Limit to 50 for enterprise performance.
     const q = query(
       collection(db, 'messages'),
       where('threadId', '==', threadId),
-      limit(50)
+      limit(100)
     );
 
     return onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage));
-      // Sort in memory because Firestore compound queries might require manual index creation 
-      // which we want to avoid during simple dev phases unless absolutely necessary.
-      const sortedMsgs = msgs.sort((a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-      callback(sortedMsgs);
+      const messages = snapshot.docs
+        .map(d => normalizeMessage(d.id, d.data()))
+        .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt));
+      callback(messages);
     });
   },
 
@@ -137,21 +228,97 @@ export const ChatService = {
     );
 
     return onSnapshot(q, (snapshot) => {
-      const threads = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ChatThread));
-      // Sort by activity in memory
-      const sortedThreads = threads.sort((a, b) => {
-        const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-        const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-        return timeB - timeA;
-      });
-      callback(sortedThreads);
+      const threads = snapshot.docs
+        .map(d => normalizeThread(d.id, d.data()))
+        .sort((a, b) => toMillis(b.lastMessageAt || b.metadata?.updatedAt) - toMillis(a.lastMessageAt || a.metadata?.updatedAt));
+      callback(threads);
     });
   },
 
   resetUnread: async (threadId: string, userId: string) => {
-    if (!userId) return;
+    if (!threadId || !userId) return;
     await updateDoc(doc(db, 'chatThreads', threadId), {
-      [`unreadCount.${userId}`]: 0
+      [`unreadCount.${userId}`]: 0,
     });
-  }
+  },
+
+  resolveUserByProfileId: async (profileId: string): Promise<ChatParticipant | null> => {
+    if (!profileId) return null;
+    try {
+      const q = query(collection(db, 'users'), where('profileId', '==', profileId), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
+    } catch {
+      // fall through to mock fallback
+    }
+    const mockUser = MOCK_USERS.find(user => user.profileId === profileId);
+    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+  },
+
+  resolveUserByEmail: async (email: string): Promise<ChatParticipant | null> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return null;
+    try {
+      const q = query(collection(db, 'users'), where('email', '==', cleanEmail), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
+    } catch {
+      // fall through to mock fallback
+    }
+    const mockUser = MOCK_USERS.find(user => user.email?.toLowerCase() === cleanEmail);
+    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+  },
+
+  getAdminSupportUser: async (): Promise<ChatParticipant | null> => {
+    try {
+      const q = query(collection(db, 'users'), where('role', 'in', [UserRole.SUPER_ADMIN, UserRole.ADMIN]), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
+    } catch {
+      // fall through to mock fallback
+    }
+    const mockUser = MOCK_USERS.find(user => user.role === UserRole.SUPER_ADMIN || user.role === UserRole.ADMIN);
+    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+  },
+
+  getOrCreateDirectThreadWithUser: async (
+    currentUser: ChatParticipant,
+    otherUser: ChatParticipant,
+    metadata: Record<string, any> = {}
+  ) => {
+    return ChatService.getOrCreateThread(
+      [currentUser.id, otherUser.id],
+      {
+        [currentUser.id]: currentUser.displayName || 'Me',
+        [otherUser.id]: otherUser.displayName || otherUser.email || 'User',
+      },
+      {
+        [currentUser.id]: currentUser.photoUrl || '',
+        [otherUser.id]: otherUser.photoUrl || '',
+      },
+      undefined,
+      metadata
+    );
+  },
+
+  getOrCreateBookingThread: async (
+    bookingId: string,
+    currentUser: ChatParticipant,
+    otherUser: ChatParticipant,
+    metadata: Record<string, any> = {}
+  ) => {
+    return ChatService.getOrCreateThread(
+      [currentUser.id, otherUser.id],
+      {
+        [currentUser.id]: currentUser.displayName || 'Me',
+        [otherUser.id]: otherUser.displayName || otherUser.email || 'User',
+      },
+      {
+        [currentUser.id]: currentUser.photoUrl || '',
+        [otherUser.id]: otherUser.photoUrl || '',
+      },
+      bookingId,
+      metadata
+    );
+  },
 };

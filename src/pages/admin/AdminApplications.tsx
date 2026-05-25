@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { ApplicationService } from '../../services/applicationService';
 import { InterpreterService, UserService } from '../../services/api';
 import { InterpreterApplication, ApplicationStatus, UserRole, NotificationType, OnboardingDocStatus } from '../../types';
@@ -17,14 +17,21 @@ import {
   Mail, Phone, Check, UserPlus, Info,
   CheckCircle2, XCircle, Clock, Search, Eye, ArrowUpRight, ShieldCheck, FileText, ExternalLink, AlertCircle
 } from 'lucide-react';
+import { ensureInterpreterOnboarding } from '../../utils/interpreterFlow';
 
 type TabType = ApplicationStatus | 'ALL' | 'ONBOARDING';
+const APPLICATION_TABS: TabType[] = ['ALL', ApplicationStatus.PENDING, 'ONBOARDING', ApplicationStatus.APPROVED, ApplicationStatus.REJECTED];
+
+const getTabFromSearch = (search: string): TabType => {
+  const tab = new URLSearchParams(search).get('tab') as TabType | null;
+  return tab && APPLICATION_TABS.includes(tab) ? tab : 'ALL';
+};
 
 export const AdminApplications = () => {
-  const navigate = useNavigate();
+  const location = useLocation();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabType>('ALL');
+  const [activeTab, setActiveTab] = useState<TabType>(() => getTabFromSearch(location.search));
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkLoading, setIsBulkLoading] = useState(false);
@@ -41,12 +48,16 @@ export const AdminApplications = () => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    setActiveTab(getTabFromSearch(location.search));
+  }, [location.search]);
+
   const loadData = async () => {
     setLoading(true);
     try {
       const apps = await ApplicationService.getAll();
       const interps = await InterpreterService.getAll();
-      const onboardingInterps = interps.filter(i => i.status === 'ONBOARDING');
+      const onboardingInterps = interps.filter(i => ['ONBOARDING', 'IMPORTED', 'APPLICANT'].includes(i.status));
       
       const normalizedApps = apps.map(a => ({ ...a, itemType: 'APPLICATION' }));
       const normalizedInterps = onboardingInterps.map(i => ({ ...i, itemType: 'ONBOARDING_INTERPRETER' }));
@@ -98,13 +109,7 @@ export const AdminApplications = () => {
         isAvailable: false,
         acceptsDirectAssignment: true,
         organizationId: 'lingland-main',
-        onboarding: {
-          dbs: { status: 'MISSING' },
-          idCheck: { status: 'MISSING' },
-          certifications: { status: 'MISSING' },
-          rightToWork: { status: 'MISSING' },
-          overallStatus: 'DOCUMENTS_PENDING'
-        },
+        onboarding: ensureInterpreterOnboarding({}),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       } as any);
@@ -114,19 +119,20 @@ export const AdminApplications = () => {
         email: app.email,
         role: UserRole.INTERPRETER,
         profileId: newInt.id,
-        status: 'ACTIVE'
+        status: 'IMPORTED'
       });
 
       await EmailService.sendApplicationEmail(app, 'APPROVED');
-      // Activation link and Auth account creation now handled by backend Cloud Function trigger
+      const activationResult = await UserService.sendActivationInvite(app.email, app.name);
+      await InterpreterService.updateProfile(newInt.id, { activationEmailSentAt: new Date().toISOString() });
 
       if (newUser && newUser.id) {
         NotificationService.notify(
-          newUser.id,
+          activationResult?.userId || newUser.id,
           'Welcome to Lingland!',
           'Your account has been successfully provisioned. Please complete your onboarding by uploading your compliance documents.',
           NotificationType.SUCCESS,
-          '/profile/compliance'
+          '/interpreter/dashboard'
         );
       }
 
@@ -226,6 +232,8 @@ export const AdminApplications = () => {
     try {
       await InterpreterService.updateProfile(interp.id, {
         status: 'ACTIVE',
+        isAvailable: true,
+        updatedAt: new Date().toISOString(),
         onboarding: {
           ...(interp.onboarding || {}),
           overallStatus: 'COMPLETED'
@@ -285,10 +293,11 @@ export const AdminApplications = () => {
         if (item.itemType === 'ONBOARDING_INTERPRETER') {
           const ob = item.onboarding;
           const hasPending = [ob?.dbs, ob?.idCheck, ob?.certifications, ob?.rightToWork].some(d => d?.status === 'IN_REVIEW');
+          const isPendingActivation = item.status === 'IMPORTED';
           return (
             <div className="flex flex-col gap-1">
-              <Badge variant={hasPending ? 'warning' : 'info'}>
-                {hasPending ? 'DOCS PENDING' : 'ONBOARDING'}
+              <Badge variant={hasPending ? 'warning' : isPendingActivation ? 'info' : 'info'}>
+                {isPendingActivation ? 'PENDING ACTIVATION' : hasPending ? 'DOCS PENDING' : item.status}
               </Badge>
               {hasPending && <span className="text-[9px] text-amber-600 dark:text-amber-500 font-bold uppercase animate-pulse italic">Action Required</span>}
             </div>
@@ -351,7 +360,7 @@ export const AdminApplications = () => {
         </div>
       )
     }
-  ], [navigate]);
+  ], []);
 
   const handleRowClick = (item: any) => {
     if (item.itemType === 'ONBOARDING_INTERPRETER') {
@@ -369,7 +378,7 @@ export const AdminApplications = () => {
         subtitle="Manage new interpreter applications and active onboarding documents."
       >
         <div className="flex items-center bg-white dark:bg-slate-900/50 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto whitespace-nowrap scrollbar-hide transition-colors">
-          {(['ALL', 'PENDING', 'ONBOARDING', 'APPROVED', 'REJECTED'] as TabType[]).map(tab => {
+          {APPLICATION_TABS.map(tab => {
             const count = tab === 'ALL' ? items.length : 
                          tab === 'ONBOARDING' ? items.filter(i => i.itemType === 'ONBOARDING_INTERPRETER').length :
                          items.filter(i => i.itemType === 'APPLICATION' && i.status === tab).length;
@@ -407,11 +416,11 @@ export const AdminApplications = () => {
             />
           </div>
           <BulkActionBar
+            selectedIds={selectedIds}
             selectedCount={selectedIds.length}
             totalCount={filteredItems.length}
             onClearSelection={() => setSelectedIds([])}
             actions={[
-              { label: 'Bulk Approve', onClick: () => handleBulkStatus(selectedIds, ApplicationStatus.APPROVED), variant: 'success', icon: CheckCircle2 },
               { label: 'Reject', onClick: () => handleBulkStatus(selectedIds, ApplicationStatus.REJECTED), variant: 'danger', icon: XCircle },
             ]}
           />

@@ -7,6 +7,7 @@ import { StorageService } from '../../services/api';
 import { PoundSterling, Upload, FileText, Check, CalendarDays, ExternalLink, Calculator } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { getTimesheetInterpreterAmount } from '../../utils/interpreterFlow';
 
 export const InterpreterPayments = () => {
   const { user } = useAuth();
@@ -43,7 +44,7 @@ export const InterpreterPayments = () => {
 
   const handleSubmit = async () => {
     try {
-      await createInvoice(selectedJobs, invRef);
+      await createInvoice(selectedJobs, invRef, uploadedUrl || undefined);
       showToast("Invoice created successfully!", "success");
       setSelectedJobs([]);
       setInvRef('');
@@ -55,7 +56,7 @@ export const InterpreterPayments = () => {
 
   const totalSelected = readyToInvoice
     .filter(t => selectedJobs.includes(t.id))
-    .reduce((sum, t) => sum + (t.totalInterpreterAmount || 0), 0);
+    .reduce((sum, t) => sum + getTimesheetInterpreterAmount(t), 0);
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-[calc(100vh-4rem)] bg-slate-50 animate-in fade-in duration-700">
@@ -107,7 +108,7 @@ export const InterpreterPayments = () => {
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate">REF: {job.bookingId || 'CONFIDENTIAL'}</p>
                         </div>
                         <div className="text-right ml-4">
-                          <p className="text-sm font-black text-slate-900">£{job.totalInterpreterAmount?.toFixed(2)}</p>
+                          <p className="text-sm font-black text-slate-900">£{getTimesheetInterpreterAmount(job).toFixed(2)}</p>
                         </div>
                       </label>
                     ))}
