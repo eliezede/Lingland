@@ -100,7 +100,7 @@ const notifyInterpreterUser = async (
 };
 
 const dispatchTimesheetSubmittedComms = async (booking: Booking, timesheet: Timesheet) => {
-  const ref = booking.bookingRef || booking.id.slice(0, 8);
+  const ref = booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id.slice(0, 8);
   const interpreterData = await getInterpreterEmailData(timesheet.interpreterId || booking.interpreterId);
 
   await Promise.allSettled([
@@ -126,7 +126,7 @@ const dispatchTimesheetSubmittedComms = async (booking: Booking, timesheet: Time
 };
 
 const dispatchReadyForInvoiceComms = async (booking: Booking, timesheet?: Timesheet | null) => {
-  const ref = booking.bookingRef || booking.id.slice(0, 8);
+  const ref = booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id.slice(0, 8);
   const interpreterData = await getInterpreterEmailData(timesheet?.interpreterId || booking.interpreterId);
 
   await Promise.allSettled([
@@ -572,6 +572,88 @@ export const BillingService = {
     }
   },
 
+  recordManualInvoiceIssued: async (bookingId: string): Promise<void> => {
+    try {
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+      const booking = { id: bookingSnap.id, ...bookingSnap.data() } as Booking;
+      if (booking.status !== BookingStatus.READY_FOR_INVOICE) {
+        throw new Error('Job must be ready for invoice before marking it invoiced.');
+      }
+
+      await updateDoc(bookingRef, {
+        status: BookingStatus.INVOICED,
+        invoicedAt: new Date().toISOString(),
+        updatedAt: serverTimestamp()
+      });
+
+      await addDoc(collection(db, 'jobEvents'), {
+        jobId: booking.id,
+        organizationId: booking.organizationId || 'lingland-main',
+        type: 'CLIENT_INVOICE_GENERATED',
+        source: 'admin',
+        description: 'Invoice issue was recorded manually by staff.',
+        metadata: {
+          fromStatus: booking.status,
+          toStatus: BookingStatus.INVOICED,
+          recordedByStaff: true,
+          source: 'manual_staff'
+        },
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+      if (mockBooking && mockBooking.status === BookingStatus.READY_FOR_INVOICE) {
+        mockBooking.status = BookingStatus.INVOICED;
+        saveMockData();
+        return;
+      }
+      throw e;
+    }
+  },
+
+  recordManualPaymentReceived: async (bookingId: string): Promise<void> => {
+    try {
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+      const booking = { id: bookingSnap.id, ...bookingSnap.data() } as Booking;
+      if (booking.status !== BookingStatus.INVOICED) {
+        throw new Error('Job must be invoiced before marking payment received.');
+      }
+
+      await updateDoc(bookingRef, {
+        status: BookingStatus.PAID,
+        paidAt: new Date().toISOString(),
+        updatedAt: serverTimestamp()
+      });
+
+      await addDoc(collection(db, 'jobEvents'), {
+        jobId: booking.id,
+        organizationId: booking.organizationId || 'lingland-main',
+        type: 'CLIENT_PAYMENT_RECEIVED',
+        source: 'admin',
+        description: 'Client payment was recorded manually by staff.',
+        metadata: {
+          fromStatus: booking.status,
+          toStatus: BookingStatus.PAID,
+          recordedByStaff: true,
+          source: 'manual_staff'
+        },
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+      if (mockBooking && mockBooking.status === BookingStatus.INVOICED) {
+        mockBooking.status = BookingStatus.PAID;
+        saveMockData();
+        return;
+      }
+      throw e;
+    }
+  },
+
   getInterpreterTimesheets: async (interpreterId: string): Promise<Timesheet[]> => {
     return safeFetch(async () => {
       const q = query(collection(db, 'timesheets'), where('interpreterId', '==', interpreterId));
@@ -678,6 +760,62 @@ export const BillingService = {
       saveMockData();
       return mockTs;
     }
+  },
+
+  recordManualTimesheetReceived: async (bookingId: string): Promise<Timesheet> => {
+    const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
+    const booking = bookingSnap.exists()
+      ? ({ id: bookingSnap.id, ...bookingSnap.data() } as Booking)
+      : MOCK_BOOKINGS.find(b => b.id === bookingId);
+
+    if (!booking) throw new Error('Booking not found');
+    if (!booking.clientId) throw new Error('Booking has no client linked');
+    if (!booking.interpreterId) throw new Error('Booking has no interpreter assigned');
+    if (booking.status !== BookingStatus.SESSION_COMPLETED) {
+      throw new Error('Session must be marked completed before recording a timesheet.');
+    }
+
+    const actualStart = `${booking.date}T${booking.startTime || '00:00'}:00`;
+    const actualEnd = new Date(new Date(actualStart).getTime() + (booking.durationMinutes || 60) * 60000).toISOString();
+    const durationMinutes = booking.durationMinutes || 60;
+
+    const timesheet = await BillingService.submitTimesheet({
+      bookingId: booking.id,
+      interpreterId: booking.interpreterId,
+      clientId: booking.clientId,
+      sessionMode: booking.sessionMode || (booking.locationType === 'ONLINE' ? SessionMode.VIDEO : SessionMode.F2F),
+      actualStart,
+      actualEnd,
+      sessionDurationMinutes: durationMinutes,
+      breakDurationMinutes: 0,
+      units: 'hours',
+      unitsBillableToClient: Math.max(durationMinutes / 60, 1),
+      unitsPayableToInterpreter: Math.max(durationMinutes / 60, 1),
+      sessionFees: 0,
+      totalToPay: 0,
+      interpreterAmountCalculated: 0,
+      clientAmountCalculated: booking.totalAmount || 0
+    });
+
+    try {
+      await addDoc(collection(db, 'jobEvents'), {
+        jobId: booking.id,
+        organizationId: booking.organizationId || 'lingland-main',
+        type: 'TIMESHEET_SUBMITTED',
+        source: 'admin',
+        description: 'Timesheet receipt was recorded manually by staff.',
+        metadata: {
+          timesheetId: timesheet.id,
+          recordedByStaff: true,
+          source: 'manual_staff'
+        },
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('[BillingService] Failed to write manual timesheet event', e);
+    }
+
+    return timesheet;
   },
 
   createNonExecutedJobClaim: async (bookingId: string, reason: string = 'Job was not executed'): Promise<Timesheet> => {

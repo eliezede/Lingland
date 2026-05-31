@@ -8,10 +8,10 @@ import { useToast } from '../../context/ToastContext';
 import { SystemSettings, ServiceType } from '../../types';
 import { 
   Save, Building2, PoundSterling, Clock, Database, 
-  Check, Globe2, AlertCircle, ShieldCheck 
+  Check, Globe2, AlertCircle, ShieldCheck, Workflow, MailX
 } from 'lucide-react';
 
-type Tab = 'GENERAL' | 'FINANCE' | 'OPERATIONS' | 'MASTER_DATA';
+type Tab = 'GENERAL' | 'PLATFORM' | 'FINANCE' | 'OPERATIONS' | 'MASTER_DATA';
 
 export const AdminSettings = () => {
   const navigate = useNavigate();
@@ -66,6 +66,34 @@ export const AdminSettings = () => {
     </button>
   );
 
+  const platformMode = formData.platformMode || {
+    operatingMode: 'AIRTABLE_MIRROR',
+    communicationMode: 'SUPPRESSED',
+    sourceOfTruth: 'AIRTABLE',
+    airtableImportMode: 'ON',
+    hybridOperationsEnabled: true,
+    jobNumbering: {
+      prefix: 'LING',
+      year: 26,
+      nextSequence: 17037,
+      displayIncludesLanguage: true
+    }
+  };
+
+  const updatePlatformMode = (patch: Partial<typeof platformMode>) => {
+    setFormData({
+      ...formData,
+      platformMode: {
+        ...platformMode,
+        ...patch,
+        jobNumbering: {
+          ...platformMode.jobNumbering,
+          ...(patch.jobNumbering || {})
+        }
+      }
+    });
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -82,6 +110,7 @@ export const AdminSettings = () => {
         {/* Tabs Navigation */}
         <div className="flex border-b border-gray-100 dark:border-slate-800 overflow-x-auto scrollbar-hide">
           <TabButton id="GENERAL" label="General" icon={Building2} />
+          <TabButton id="PLATFORM" label="Platform Mode" icon={Workflow} />
           <TabButton id="FINANCE" label="Finance & Billing" icon={PoundSterling} />
           <TabButton id="OPERATIONS" label="Operations" icon={Clock} />
           <TabButton id="MASTER_DATA" label="Master Data" icon={Database} />
@@ -164,6 +193,147 @@ export const AdminSettings = () => {
                     <Check size={12} className="mr-1" /> This address appears on official PDF invoices and headers.
                   </p>
                 </div>
+              </div>
+            )}
+
+            {/* --- PLATFORM MODE TAB --- */}
+            {activeTab === 'PLATFORM' && (
+              <div className="space-y-8 animate-fade-in">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 dark:border-amber-900/40 dark:bg-amber-950/20">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <h3 className="flex items-center gap-2 text-lg font-bold text-slate-950 dark:text-white">
+                        <MailX size={20} className="text-amber-600" />
+                        Test Mode Control
+                      </h3>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-amber-900 dark:text-amber-100">
+                        Use real Airtable/client/interpreter data while keeping external communication suppressed. Admins can operate jobs manually until Lingland is ready to become the live source of truth.
+                      </p>
+                    </div>
+                    <Badge variant={platformMode.communicationMode === 'LIVE' ? 'success' : 'warning'}>
+                      {platformMode.communicationMode}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Operating Mode</label>
+                    <select
+                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      value={platformMode.operatingMode}
+                      onChange={e => updatePlatformMode({ operatingMode: e.target.value as any })}
+                    >
+                      <option value="AIRTABLE_MIRROR">Airtable mirror</option>
+                      <option value="HYBRID">Hybrid operations</option>
+                      <option value="PLATFORM_LIVE">Platform live</option>
+                    </select>
+                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Mirror imports and audits Airtable. Hybrid allows staff and users to operate in parallel. Platform live makes Lingland the primary workflow.</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Communication Mode</label>
+                    <select
+                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      value={platformMode.communicationMode}
+                      onChange={e => updatePlatformMode({ communicationMode: e.target.value as any })}
+                    >
+                      <option value="SUPPRESSED">Suppressed - no emails sent</option>
+                      <option value="INTERNAL_ONLY">Internal only - admins/finance</option>
+                      <option value="SELECTIVE_LIVE">Selective live</option>
+                      <option value="LIVE">Live - all templates enabled</option>
+                    </select>
+                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Suppressed mode writes an audit record instead of adding messages to the Firebase mail queue.</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Source of Truth</label>
+                    <select
+                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      value={platformMode.sourceOfTruth}
+                      onChange={e => updatePlatformMode({ sourceOfTruth: e.target.value as any })}
+                    >
+                      <option value="AIRTABLE">Airtable</option>
+                      <option value="HYBRID">Hybrid</option>
+                      <option value="PLATFORM">Platform</option>
+                    </select>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Airtable Import Mode</label>
+                    <select
+                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      value={platformMode.airtableImportMode}
+                      onChange={e => updatePlatformMode({ airtableImportMode: e.target.value as any })}
+                    >
+                      <option value="ON">On - import active</option>
+                      <option value="READ_ONLY">Read only - compare/audit</option>
+                      <option value="OFF">Off - platform intake only</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                  <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-950 dark:text-white">Job Numbering</h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">Keeps platform references aligned with Airtable format for audit and transition.</p>
+                    </div>
+                    <Badge variant="info">
+                      {platformMode.jobNumbering.prefix}{platformMode.jobNumbering.year}.{platformMode.jobNumbering.nextSequence} Kurdish
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Prefix</label>
+                      <input
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        value={platformMode.jobNumbering.prefix}
+                        onChange={e => updatePlatformMode({ jobNumbering: { prefix: e.target.value.toUpperCase() } as any })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Year</label>
+                      <input
+                        type="number"
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        value={platformMode.jobNumbering.year}
+                        onChange={e => updatePlatformMode({ jobNumbering: { year: Number(e.target.value) } as any })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Next Sequence</label>
+                      <input
+                        type="number"
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-950 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        value={platformMode.jobNumbering.nextSequence}
+                        onChange={e => updatePlatformMode({ jobNumbering: { nextSequence: Number(e.target.value) } as any })}
+                      />
+                    </div>
+                    <label className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:text-slate-200">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 rounded border-slate-300 text-blue-600"
+                        checked={platformMode.jobNumbering.displayIncludesLanguage}
+                        onChange={e => updatePlatformMode({ jobNumbering: { displayIncludesLanguage: e.target.checked } as any })}
+                      />
+                      Include language in display ref
+                    </label>
+                  </div>
+                </div>
+
+                <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-950">
+                  <span>
+                    <span className="block font-bold text-slate-950 dark:text-white">Hybrid manual operations</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">Staff can manually record assignment sent, accepted, timesheet received, invoicing and payment even when users are passive.</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    className="h-6 w-6 rounded border-slate-300 text-blue-600"
+                    checked={platformMode.hybridOperationsEnabled}
+                    onChange={e => updatePlatformMode({ hybridOperationsEnabled: e.target.checked })}
+                  />
+                </label>
               </div>
             )}
 

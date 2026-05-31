@@ -90,6 +90,7 @@ export const MigrationService = {
     const userSnap = await getDocs(usersQuery);
     
     let sent = 0;
+    let suppressed = 0;
     let errors = 0;
 
     for (const userDoc of userSnap.docs) {
@@ -105,7 +106,12 @@ export const MigrationService = {
           }
         }
 
-        await UserService.sendActivationInvite(userData.email, userData.displayName);
+        const inviteResult = await UserService.sendActivationInvite(userData.email, userData.displayName);
+        if ((inviteResult as any)?.suppressed) {
+          console.log(`Activation invite suppressed for ${userData.email} (${(inviteResult as any).communicationMode})`);
+          suppressed++;
+          continue;
+        }
 
         // Mark as sent on interpreter profile
         if (userData.profileId) {
@@ -121,6 +127,6 @@ export const MigrationService = {
       }
     }
 
-    return { sent, errors };
+    return { sent, suppressed, errors };
   }
 };

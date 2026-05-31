@@ -1,6 +1,30 @@
 import { collection, doc, getDocs, getDoc, setDoc, query, where, addDoc } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import { Booking, BookingStatus, EmailTemplate, EMAIL_VARIABLES, UserRole, ServiceType, InterpreterApplication, ApplicationStatus, User, ServiceCategory } from '../types';
+import { SystemService } from './systemService';
+
+type EmailRecipientType = EmailTemplate['recipientType'];
+
+const getDeliveryDecision = async (recipientType: EmailRecipientType, forceLive = false) => {
+    if (forceLive) return { canSend: true, mode: 'LIVE', reason: '' };
+    const mode = (await SystemService.getPlatformMode()).communicationMode;
+    if (mode === 'LIVE') return { canSend: true, mode, reason: '' };
+    if (mode === 'INTERNAL_ONLY' && recipientType === 'ADMIN') return { canSend: true, mode, reason: '' };
+    if (mode === 'SELECTIVE_LIVE' && recipientType === 'ADMIN') return { canSend: true, mode, reason: '' };
+    return { canSend: false, mode, reason: `Communication mode ${mode} suppressed this email` };
+};
+
+const recordSuppressedEmail = async (payload: Record<string, unknown>) => {
+    try {
+        await addDoc(collection(db, 'emailAudit'), {
+            ...payload,
+            status: 'SUPPRESSED',
+            createdAt: new Date().toISOString()
+        });
+    } catch (error) {
+        console.warn('[EmailService] Failed to audit suppressed email', error);
+    }
+};
 
 export const DEFAULT_TEMPLATES: EmailTemplate[] = [
     {
@@ -382,7 +406,7 @@ export const EmailService = {
             const booking = entity as Booking;
             dictionary['{{clientName}}'] = booking.guestContact?.name || booking.clientName || 'Valued Client';
             dictionary['{{interpreterName}}'] = extraData.interpreterName || booking.interpreterName || 'Interpreter';
-            dictionary['{{bookingRef}}'] = booking.bookingRef || booking.id.substring(0, 8);
+            dictionary['{{bookingRef}}'] = booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id.substring(0, 8);
             dictionary['{{date}}'] = booking.date ? new Date(booking.date).toLocaleDateString() : '';
             dictionary['{{time}}'] = booking.startTime || '';
             dictionary['{{location}}'] = booking.locationType === 'ONLINE' ? 'Remote / Online' : (booking.postcode || 'Onsite');
@@ -427,7 +451,7 @@ export const EmailService = {
     sendStatusEmail: async (
         booking: Booking,
         newStatus: BookingStatus | string,
-        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; adminEmail?: string; cancelReason?: string } = {}
+        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; adminEmail?: string; cancelReason?: string; forceLive?: boolean } = {}
     ) => {
         console.log(`[EmailService] Triggered for status: ${newStatus}, bookingId: ${booking.id}`);
         try {
@@ -481,6 +505,22 @@ export const EmailService = {
                     continue;
                 }
 
+                const delivery = await getDeliveryDecision(template.recipientType, extraData.forceLive);
+                if (!delivery.canSend) {
+                    await recordSuppressedEmail({
+                        to: [recipientEmail],
+                        message: { subject, html: body },
+                        recipientType: template.recipientType,
+                        templateId: template.id,
+                        statusTrigger: newStatus,
+                        bookingId: booking.id,
+                        communicationMode: delivery.mode,
+                        suppressedReason: delivery.reason
+                    });
+                    console.log(`[EmailService] Suppressed email for ${recipientEmail} (mode: ${delivery.mode})`);
+                    continue;
+                }
+
                 try {
                     await addDoc(collection(db, 'mail'), {
                         to: [recipientEmail],
@@ -504,7 +544,7 @@ export const EmailService = {
 
     sendAssignmentRemovedEmail: async (
         booking: Booking,
-        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; removalReason?: string } = {}
+        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; removalReason?: string; forceLive?: boolean } = {}
     ) => {
         try {
             const templates = await EmailService.getTemplates();
@@ -525,11 +565,28 @@ export const EmailService = {
 
                 if (!recipientEmail) continue;
 
+                const subject = EmailService.parseTemplate(template.subject, booking, extraData);
+                const body = EmailService.parseTemplate(template.body, booking, extraData);
+                const delivery = await getDeliveryDecision(template.recipientType, extraData.forceLive);
+                if (!delivery.canSend) {
+                    await recordSuppressedEmail({
+                        to: [recipientEmail],
+                        message: { subject, html: body },
+                        recipientType: template.recipientType,
+                        templateId: template.id,
+                        statusTrigger: 'ASSIGNMENT_REMOVED',
+                        bookingId: booking.id,
+                        communicationMode: delivery.mode,
+                        suppressedReason: delivery.reason
+                    });
+                    continue;
+                }
+
                 await addDoc(collection(db, 'mail'), {
                     to: [recipientEmail],
                     message: {
-                        subject: EmailService.parseTemplate(template.subject, booking, extraData),
-                        html: EmailService.parseTemplate(template.body, booking, extraData)
+                        subject,
+                        html: body
                     },
                     statusTrigger: 'ASSIGNMENT_REMOVED',
                     bookingId: booking.id,
@@ -577,6 +634,22 @@ export const EmailService = {
 
                 if (!recipientEmail) continue;
 
+                const delivery = await getDeliveryDecision(template.recipientType, extraData.forceLive);
+                if (!delivery.canSend) {
+                    await recordSuppressedEmail({
+                        to: [recipientEmail],
+                        message: { subject, html: body },
+                        recipientType: template.recipientType,
+                        templateId: template.id,
+                        statusTrigger: triggerEvent,
+                        applicationId: application.id,
+                        communicationMode: delivery.mode,
+                        suppressedReason: delivery.reason
+                    });
+                    console.log(`[EmailService] Suppressed application email for ${recipientEmail} (mode: ${delivery.mode})`);
+                    continue;
+                }
+
                 try {
                     await addDoc(collection(db, 'mail'), {
                         to: [recipientEmail],
@@ -615,6 +688,20 @@ export const EmailService = {
             // We pass a dummy entity because parseTemplate needs it, but we'll rely on extraData
             const subject = EmailService.parseTemplate(template.subject, {}, extraData);
             const body = EmailService.parseTemplate(template.body, {}, extraData);
+            const delivery = await getDeliveryDecision(template.recipientType);
+            if (!delivery.canSend) {
+                await recordSuppressedEmail({
+                    to: [email],
+                    message: { subject, html: body },
+                    recipientType: template.recipientType,
+                    templateId: template.id,
+                    statusTrigger: 'IMPORTED',
+                    communicationMode: delivery.mode,
+                    suppressedReason: delivery.reason
+                });
+                console.log(`[EmailService] Suppressed activation email for ${email} (mode: ${delivery.mode})`);
+                return;
+            }
 
             await addDoc(collection(db, 'mail'), {
                 to: [email],
@@ -693,6 +780,18 @@ export const EmailService = {
                 templateId: template.id,
                 createdAt: new Date().toISOString()
             };
+
+            const delivery = await getDeliveryDecision(template.recipientType);
+            if (!delivery.canSend) {
+                await recordSuppressedEmail({
+                    ...payload,
+                    recipientType: template.recipientType,
+                    communicationMode: delivery.mode,
+                    suppressedReason: delivery.reason
+                });
+                console.log(`[EmailService] Suppressed test email for ${testRecipient} (mode: ${delivery.mode})`);
+                return true;
+            }
 
             const writePromise = addDoc(collection(db, 'mail'), payload);
             

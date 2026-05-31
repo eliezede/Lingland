@@ -136,6 +136,27 @@ export enum BookingStatus {
   PAID = 'PAID' // Invoice paid
 }
 
+export type OperatingMode = 'AIRTABLE_MIRROR' | 'HYBRID' | 'PLATFORM_LIVE';
+export type CommunicationMode = 'SUPPRESSED' | 'INTERNAL_ONLY' | 'SELECTIVE_LIVE' | 'LIVE';
+export type SourceOfTruth = 'AIRTABLE' | 'HYBRID' | 'PLATFORM';
+export type AirtableImportMode = 'ON' | 'READ_ONLY' | 'OFF';
+export type BookingSourceSystem = 'AIRTABLE' | 'STAFF_MANUAL' | 'CLIENT_PORTAL' | 'INTERPRETER_APP' | 'PLATFORM';
+export type BookingSyncStatus = 'SYNCED' | 'LOCAL_ONLY' | 'CONFLICT' | 'ARCHIVED';
+
+export interface PlatformModeSettings {
+  operatingMode: OperatingMode;
+  communicationMode: CommunicationMode;
+  sourceOfTruth: SourceOfTruth;
+  airtableImportMode: AirtableImportMode;
+  hybridOperationsEnabled: boolean;
+  jobNumbering: {
+    prefix: string;
+    year: number;
+    nextSequence: number;
+    displayIncludesLanguage: boolean;
+  };
+}
+
 
 export interface Booking {
   id: string;
@@ -164,6 +185,14 @@ export interface Booking {
   interpreterName?: string;
   interpreterPhotoUrl?: string;
   bookingRef?: string;
+  jobNumber?: string;
+  displayRef?: string;
+  legacyPlatformRef?: string;
+  legacyAirtableRef?: string;
+  sourceSystem?: BookingSourceSystem;
+  sourceRecordId?: string;
+  lastSyncedAt?: string;
+  syncStatus?: BookingSyncStatus;
   expectedEndTime?: string;
   createdAt?: any;
   updatedAt?: any;
@@ -540,6 +569,7 @@ export interface SystemSettings {
     activeServiceTypes: ServiceType[];
     priorityLanguages: string[];
   };
+  platformMode?: PlatformModeSettings;
 }
 
 

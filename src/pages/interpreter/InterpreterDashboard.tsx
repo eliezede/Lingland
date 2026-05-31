@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StatsService } from '../../services/statsService';
 import { useAuth } from '../../context/AuthContext';
 import { BookingService, BillingService, InterpreterService } from '../../services/api';
-import { Booking, BookingStatus } from '../../types';
+import { AssignmentStatus, Booking, BookingAssignment, BookingStatus } from '../../types';
 import { useNavigate } from 'react-router-dom';
 import {
   MapPin, Clock, CheckCircle2,
@@ -79,7 +79,7 @@ const HighDensityActivityTable = ({ title, data, loading, onRowClick }: { title:
               <td className="px-4 py-3 whitespace-nowrap">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider
                   ${item.raw.status === BookingStatus.READY_FOR_INVOICE || item.raw.status === BookingStatus.BOOKED ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
-                    item.raw.status === BookingStatus.OPENED ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                    [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(item.raw.status) ? 'bg-amber-50 text-amber-700 border border-amber-100' :
                       'bg-slate-50 text-slate-700 border border-slate-100'}`}>
                   {item.raw.status === BookingStatus.BOOKED ? 'CONFIRMED' : item.raw.status}
                 </span>
@@ -148,11 +148,12 @@ export const InterpreterDashboard = () => {
         StatsService.getInterpreterStats(interpreterId)
       ]);
 
-      // Categorize
       const isPending = (s: string) => s === BookingStatus.OPENED || s === BookingStatus.ASSIGNMENT_PENDING || s === 'PENDING_ASSIGNMENT';
+      const assignmentByBooking = new Map(offerList.map((assignment: BookingAssignment) => [assignment.bookingId, assignment]));
       const confirmed = schedule.filter((b: Booking) => !isPending(b.status as string));
-      // We tag these as "direct" so the UI knows they use Booking ID
-      const directPending = schedule.filter((b: Booking) => isPending(b.status as string)).map(b => ({ ...b, _isDirect: true }));
+      const directPending = schedule
+        .filter((b: Booking) => isPending(b.status as string))
+        .map(b => ({ ...b, _isDirect: true, _assignmentId: assignmentByBooking.get(b.id)?.id }));
 
       const upcoming = confirmed
         .filter((b: Booking) => new Date(b.date + 'T' + (b.startTime || '00:00')) > new Date())
@@ -192,7 +193,8 @@ export const InterpreterDashboard = () => {
         })
       );
 
-      setOffers([...directPending, ...enrichedOffers]);
+      const directIds = new Set(directPending.map((b: any) => b.id));
+      setOffers([...directPending, ...enrichedOffers.filter(offer => !directIds.has(offer.id))]);
 
       setStats({
         completedBookings: realStats.completedBookings || 0,
@@ -226,10 +228,11 @@ export const InterpreterDashboard = () => {
   const handleAcceptJob = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        // Direct assignment: The ID is the Booking ID. Update the booking status to BOOKED.
-        await BookingService.updateStatus(id, BookingStatus.BOOKED);
+        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user?.profileId && assignment.status === AssignmentStatus.OFFERED);
+        const targetAssignment = directAssignment || await BookingService.ensureInterpreterAssignment(id, user!.profileId!);
+        await BookingService.acceptOffer(targetAssignment.id);
       } else {
-        // Broadcast offer: We need the assignment ID to accept.
         await BookingService.acceptOffer(assignmentId || id);
       }
       showToast('Job accepted successfully!', 'success');
@@ -242,10 +245,11 @@ export const InterpreterDashboard = () => {
   const handleRejectJob = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        // Direct assignment: Unassign interpreter
-        await BookingService.unassignInterpreterFromBooking(id);
+        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user?.profileId && assignment.status === AssignmentStatus.OFFERED);
+        const targetAssignment = directAssignment || await BookingService.ensureInterpreterAssignment(id, user!.profileId!);
+        await BookingService.declineOffer(targetAssignment.id);
       } else {
-        // Broadcast Offer
         await BookingService.declineOffer(assignmentId || id);
       }
       showToast('Job declined', 'info');

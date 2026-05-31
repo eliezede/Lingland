@@ -4,13 +4,18 @@ import { JobStatus } from '../status';
 import { Job } from '../types';
 import { NotificationService } from '../../../services/notificationService';
 import { EmailService } from '../../../services/emailService';
+import { JobNumberService } from '../../../services/jobNumberService';
 import { MOCK_USERS, MOCK_BOOKINGS, saveMockData } from '../../../services/mockData';
 import { NotificationType } from '../../../types';
 
 export const createJob = async (jobData: Omit<Job, 'id' | 'status'>): Promise<Job> => {
+    const referencedJob = await JobNumberService.ensureBookingReference(jobData as any);
     const newJob = {
         ...jobData,
+        ...referencedJob,
         status: JobStatus.INCOMING,
+        sourceSystem: (jobData as any).sourceSystem || 'STAFF_MANUAL',
+        syncStatus: (jobData as any).syncStatus || 'LOCAL_ONLY',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
     };
@@ -24,7 +29,7 @@ export const createJob = async (jobData: Omit<Job, 'id' | 'status'>): Promise<Jo
             NotificationService.notify(
                 admin.id,
                 'New Job Request',
-                `Client ${jobData.clientName} requested a ${jobData.languageTo} interpreter for ${jobData.date}.`,
+                `Reference ${(newJob as any).bookingRef}: ${jobData.clientName} requested a ${jobData.languageTo} interpreter for ${jobData.date}.`,
                 NotificationType.INFO,
                 `/admin/bookings/${docRef.id}`
             );

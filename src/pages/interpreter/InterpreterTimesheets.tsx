@@ -52,7 +52,9 @@ export const InterpreterTimesheets = () => {
                   {pendingSubmission.map(job => (
                     <div
                       key={job.id}
-                      onClick={() => navigate(`/interpreter/timesheets/new/${job.id}`)}
+                      onClick={() => navigate(`/interpreter/timesheets/new/${job.id}`, {
+                        state: { returnTo: '/interpreter/timesheets', returnLabel: 'Timesheets' }
+                      })}
                       className="group flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl border border-amber-200 bg-amber-50/30 hover:bg-amber-50 transition-all cursor-pointer shadow-sm hover:shadow-md"
                     >
                       <div className="mb-4 sm:mb-0">

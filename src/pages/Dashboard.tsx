@@ -14,6 +14,7 @@ import {
   UserCheck,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 import { Booking, BookingStatus, UserRole } from '../types';
 import { BookingService, InterpreterService, StatsService } from '../services/api';
@@ -24,6 +25,8 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { InterpreterAllocationDrawer } from '../components/operations/InterpreterAllocationDrawer';
 import { InterpreterPreviewDrawer } from '../components/operations/InterpreterPreviewDrawer';
+import { Modal } from '../components/ui/Modal';
+import { StatusBadge } from '../components/StatusBadge';
 
 type DashboardJob = Booking & {
   interpreterPhotoUrl?: string;
@@ -146,6 +149,7 @@ export const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<Booking | null>(null);
   const [selectedInterpreterId, setSelectedInterpreterId] = useState<string | null>(null);
+  const [isJobPreviewOpen, setIsJobPreviewOpen] = useState(false);
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
@@ -226,14 +230,27 @@ export const Dashboard = () => {
 
   const openAllocation = (job: Booking) => {
     setSelectedJob(job);
+    setIsJobPreviewOpen(false);
     setIsAllocationOpen(true);
   };
 
   const openInterpreter = (job: Booking) => {
     if (!job.interpreterId) return;
     setSelectedJob(job);
+    setIsJobPreviewOpen(false);
     setSelectedInterpreterId(job.interpreterId);
     setIsPreviewOpen(true);
+  };
+
+  const openJobPreview = (job: Booking) => {
+    setSelectedJob(job);
+    setIsJobPreviewOpen(true);
+  };
+
+  const openJobDetails = (job: Booking) => {
+    navigate(`/admin/bookings/${job.id}`, {
+      state: { returnTo: '/admin/dashboard', returnLabel: 'Operations Command' },
+    });
   };
 
   if (!isAdmin) {
@@ -414,7 +431,7 @@ export const Dashboard = () => {
                   <tr
                     key={job.id}
                     className="group cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-950/40"
-                    onClick={() => navigate(`/admin/bookings/${job.id}`)}
+                    onClick={() => openJobPreview(job)}
                   >
                     <td className="px-4 py-4">
                       <div className="min-w-[220px]">
@@ -464,9 +481,15 @@ export const Dashboard = () => {
                     </td>
                     <td className="px-4 py-4"><StatusPill status={job.status} /></td>
                     <td className="px-4 py-4 text-right">
-                      <span className="text-xs font-black uppercase tracking-wider text-blue-600 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openJobPreview(job);
+                        }}
+                        className="text-xs font-black uppercase tracking-wider text-blue-600 opacity-0 transition hover:text-blue-700 group-hover:opacity-100"
+                      >
                         Manage
-                      </span>
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -478,6 +501,69 @@ export const Dashboard = () => {
 
       {selectedJob && (
         <>
+          <Modal
+            isOpen={isJobPreviewOpen}
+            onClose={() => setIsJobPreviewOpen(false)}
+            title={`Job ${selectedJob.bookingRef || selectedJob.id.slice(0, 8)}`}
+            maxWidth="2xl"
+            footer={
+              <div className="flex w-full gap-2">
+                <Button variant="secondary" className="flex-1" onClick={() => setIsJobPreviewOpen(false)} icon={X}>Close</Button>
+                <Button className="flex-1" onClick={() => openJobDetails(selectedJob)} icon={ArrowUpRight}>Full details</Button>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current stage</p>
+                    <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">{selectedJob.clientName || selectedJob.guestContact?.organisation || 'Guest client'}</h3>
+                    <p className="mt-1 text-sm text-slate-500">{selectedJob.languageFrom || 'English'} to {selectedJob.languageTo || 'TBC'} · {selectedJob.serviceType || selectedJob.serviceCategory}</p>
+                  </div>
+                  <StatusBadge status={selectedJob.status} />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Schedule</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{formatDate(selectedJob.date)}</p>
+                  <p className="text-sm text-blue-600">{selectedJob.startTime || 'TBC'} {selectedJob.durationMinutes ? `(${selectedJob.durationMinutes}m)` : ''}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Assignment</p>
+                  {selectedJob.interpreterId ? (
+                    <button
+                      onClick={() => openInterpreter(selectedJob)}
+                      className="mt-1 flex items-center gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-blue-50 dark:hover:bg-blue-950/20"
+                    >
+                      <UserAvatar name={selectedJob.interpreterName || 'Interpreter'} src={selectedJob.interpreterPhotoUrl} size="xs" />
+                      <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">{selectedJob.interpreterName || 'Assigned'}</span>
+                    </button>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={() => openAllocation(selectedJob)} icon={UserPlus}>Assign interpreter</Button>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Location</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{selectedJob.locationType === 'ONLINE' ? 'Remote / online' : selectedJob.postcode || 'On-site'}</p>
+                  <p className="text-sm text-slate-500">{selectedJob.locationType === 'ONLINE' ? selectedJob.onlineLink || 'No link' : selectedJob.address || selectedJob.location || 'No address'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Contact</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{selectedJob.guestContact?.name || 'No contact'}</p>
+                  <p className="text-sm text-slate-500">{selectedJob.guestContact?.email || selectedJob.guestContact?.phone || 'No contact details'}</p>
+                </div>
+              </div>
+
+              {(selectedJob.notes || selectedJob.adminNotes) && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
+                  {selectedJob.adminNotes || selectedJob.notes}
+                </div>
+              )}
+            </div>
+          </Modal>
           <InterpreterAllocationDrawer
             isOpen={isAllocationOpen}
             onClose={() => setIsAllocationOpen(false)}

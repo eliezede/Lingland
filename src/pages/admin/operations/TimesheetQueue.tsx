@@ -142,7 +142,9 @@ export const TimesheetQueue = () => {
                         selectedIds={selectedIds}
                         onSelectionChange={setSelectedIds}
                         onRowClick={openAuditHub}
-                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`)}
+                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`, {
+                            state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Timesheet Review' },
+                        })}
                         isLoading={loading}
                         emptyMessage="No pending timesheets for review."
                     />

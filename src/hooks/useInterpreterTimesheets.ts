@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { BookingService, BillingService } from '../services/api';
-import { Booking, BookingStatus, Timesheet } from '../types';
+import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../types';
 
 export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [pendingSubmission, setPendingSubmission] = useState<Booking[]>([]);
@@ -26,7 +26,9 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
       const pending = schedule.filter(b => {
         const hasTimesheet = timesheets.some(t => t.bookingId === b.id);
         const scheduledEnd = new Date(`${b.date}T${b.endTime || b.expectedEndTime || b.startTime || '23:59'}`);
-        const isCompleted = scheduledEnd <= new Date();
+        const isCompleted = b.serviceCategory === ServiceCategory.TRANSLATION
+          ? new Date(`${b.date}T23:59:00`) <= new Date()
+          : scheduledEnd <= new Date();
         return b.status === BookingStatus.BOOKED && isCompleted && !hasTimesheet;
       });
 

@@ -36,6 +36,7 @@ import {
     UserPlus,
     Video,
     X,
+    XCircle,
 } from 'lucide-react';
 import { useBookings } from '../../../hooks/useBookings';
 import { useAuth } from '../../../context/AuthContext';
@@ -57,7 +58,7 @@ import { ViewManagerDrawer } from '../../../components/operations/ViewManagerDra
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { useConfirm } from '../../../context/ConfirmContext';
 
-type QuickFilter = 'ALL' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'TIMESHEET' | 'INVOICE_READY' | 'CANCELLED';
+type QuickFilter = 'ALL' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'COMPLETED' | 'TIMESHEET' | 'INVOICE_READY' | 'AWAITING_PAYMENT' | 'CANCELLED';
 type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter';
 type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter';
 type ToolPanel = 'hide' | 'filter' | 'group' | 'sort' | null;
@@ -106,11 +107,12 @@ const getTimingMeta = (job: Booking) => {
 const getNextAction = (job: Booking) => {
     if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) return 'Assign interpreter';
     if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && !job.interpreterId) return 'Assign interpreter';
-    if (job.status === BookingStatus.ASSIGNMENT_PENDING) return 'Await interpreter';
-    if (job.status === BookingStatus.BOOKED) return 'Monitor delivery';
+    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && job.interpreterId) return 'Record response';
+    if (job.status === BookingStatus.BOOKED) return 'Mark completed';
+    if (job.status === BookingStatus.SESSION_COMPLETED) return 'Record timesheet';
     if (job.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
-    if (job.status === BookingStatus.READY_FOR_INVOICE) return 'Invoice review';
-    if (job.status === BookingStatus.INVOICED) return 'Await payment';
+    if (job.status === BookingStatus.READY_FOR_INVOICE) return 'Mark invoiced';
+    if (job.status === BookingStatus.INVOICED) return 'Mark paid';
     if (job.status === BookingStatus.PAID) return 'Complete';
     if (job.status === BookingStatus.CANCELLED) return 'Cancelled';
     return 'Review';
@@ -126,8 +128,12 @@ const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
             return jobs.filter(job => [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && !job.interpreterId);
         case 'TIMESHEET':
             return jobs.filter(job => job.status === BookingStatus.TIMESHEET_SUBMITTED);
+        case 'COMPLETED':
+            return jobs.filter(job => job.status === BookingStatus.SESSION_COMPLETED);
         case 'INVOICE_READY':
             return jobs.filter(job => job.status === BookingStatus.READY_FOR_INVOICE);
+        case 'AWAITING_PAYMENT':
+            return jobs.filter(job => job.status === BookingStatus.INVOICED);
         case 'CANCELLED':
             return jobs.filter(job => job.status === BookingStatus.CANCELLED);
         default:
@@ -241,6 +247,18 @@ export const JobsBoard = () => {
 
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
 
+    const openJobDetails = (job: Booking) => {
+        navigate(`/admin/bookings/${job.id}`, {
+            state: { returnTo: '/admin/bookings', returnLabel: 'Jobs Board' },
+        });
+    };
+
+    const openEditJob = (job: Booking) => {
+        navigate(`/admin/bookings/edit/${job.id}`, {
+            state: { returnTo: '/admin/bookings', returnLabel: 'Jobs Board' },
+        });
+    };
+
     const handleAssignClick = (e: React.MouseEvent, job: Booking) => {
         e.stopPropagation();
         setSelectedJob(job);
@@ -261,14 +279,15 @@ export const JobsBoard = () => {
             width: '132px',
             icon: FileText,
             primary: true,
-            getSortValue: job => job.bookingRef || job.id,
+            getSortValue: job => job.displayRef || job.jobNumber || job.bookingRef || job.id,
             render: job => {
                 const timing = getTimingMeta(job);
+                const reference = job.displayRef || job.jobNumber || job.bookingRef || job.id.slice(0, 8);
                 return (
                     <div className="flex min-w-0 items-center gap-2">
                         <div className={`h-8 w-1 rounded-full ${timing.bar}`} />
                         <div className="min-w-0">
-                            <p className="truncate font-semibold text-slate-950 dark:text-white">{job.bookingRef || job.id.slice(0, 8)}</p>
+                            <p className="truncate font-semibold text-slate-950 dark:text-white">{reference}</p>
                             {timing.tone !== 'neutral' && <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{timing.label}</p>}
                         </div>
                     </div>
@@ -406,10 +425,22 @@ export const JobsBoard = () => {
                 if (job.status === BookingStatus.TIMESHEET_SUBMITTED) {
                     return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleVerifyTimesheet(job); }}>Verify</Button>;
                 }
-                if (job.status === BookingStatus.READY_FOR_INVOICE) {
-                    return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); navigate('/admin/operations/timesheets'); }}>Invoice</Button>;
+                if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && job.interpreterId) {
+                    return <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={(e) => { e.stopPropagation(); handleRecordInterpreterResponse(job, true); }}>Accepted</Button>;
                 }
-                return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); navigate(`/admin/bookings/${job.id}`); }}>Open</Button>;
+                if (job.status === BookingStatus.BOOKED) {
+                    return <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={(e) => { e.stopPropagation(); handleRecordSessionCompleted(job); }}>Complete</Button>;
+                }
+                if (job.status === BookingStatus.SESSION_COMPLETED) {
+                    return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleRecordManualTimesheet(job); }}>Timesheet</Button>;
+                }
+                if (job.status === BookingStatus.READY_FOR_INVOICE) {
+                    return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInvoiceIssued(job); }}>Invoice</Button>;
+                }
+                if (job.status === BookingStatus.INVOICED) {
+                    return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordPaymentReceived(job); }}>Paid</Button>;
+                }
+                return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); openJobDetails(job); }}>Open</Button>;
             },
         },
     ], [getClientCompany]);
@@ -422,6 +453,9 @@ export const JobsBoard = () => {
         if (!query) return bookings;
         return bookings.filter(b => (
             b.bookingRef?.toLowerCase().includes(query) ||
+            b.jobNumber?.toLowerCase().includes(query) ||
+            b.displayRef?.toLowerCase().includes(query) ||
+            b.legacyAirtableRef?.toLowerCase().includes(query) ||
             b.clientName?.toLowerCase().includes(query) ||
             b.guestContact?.organisation?.toLowerCase().includes(query) ||
             b.guestContact?.name?.toLowerCase().includes(query) ||
@@ -442,8 +476,10 @@ export const JobsBoard = () => {
         OVERDUE: applyQuickFilter(viewFilteredBookings, 'OVERDUE').length,
         TODAY: applyQuickFilter(viewFilteredBookings, 'TODAY').length,
         UNASSIGNED: applyQuickFilter(viewFilteredBookings, 'UNASSIGNED').length,
+        COMPLETED: applyQuickFilter(viewFilteredBookings, 'COMPLETED').length,
         TIMESHEET: applyQuickFilter(viewFilteredBookings, 'TIMESHEET').length,
         INVOICE_READY: applyQuickFilter(viewFilteredBookings, 'INVOICE_READY').length,
+        AWAITING_PAYMENT: applyQuickFilter(viewFilteredBookings, 'AWAITING_PAYMENT').length,
         CANCELLED: applyQuickFilter(viewFilteredBookings, 'CANCELLED').length,
     }), [viewFilteredBookings]);
 
@@ -564,6 +600,109 @@ export const JobsBoard = () => {
         }
     };
 
+    const handleRecordInterpreterResponse = async (job: Booking, accepted: boolean) => {
+        const ok = await confirm({
+            title: accepted ? 'Record Interpreter Acceptance' : 'Record Interpreter Decline',
+            message: accepted
+                ? 'Use this when the interpreter accepted outside the app. The job will move to booked.'
+                : 'Use this when the interpreter declined outside the app. The job will return to the assignment queue.',
+            confirmLabel: accepted ? 'Record Accepted' : 'Record Declined',
+            variant: accepted ? 'primary' : 'warning',
+        });
+        if (!ok) return;
+
+        try {
+            await BookingService.recordInterpreterResponseByStaff(job.id, accepted);
+            refresh();
+            if (selectedJob?.id === job.id) {
+                setSelectedJob({
+                    ...job,
+                    status: accepted ? BookingStatus.BOOKED : BookingStatus.NEEDS_ASSIGNMENT,
+                    ...(accepted ? {} : { interpreterId: undefined, interpreterName: undefined, interpreterPhotoUrl: undefined })
+                });
+            }
+            showToast(accepted ? 'Interpreter acceptance recorded' : 'Interpreter decline recorded', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record interpreter response', 'error');
+        }
+    };
+
+    const handleRecordManualTimesheet = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Timesheet Received',
+            message: 'Use this when the interpreter sent the timesheet outside the app. A claim will be created for finance review.',
+            confirmLabel: 'Record Timesheet',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BillingService.recordManualTimesheetReceived(job.id);
+            refresh();
+            if (selectedJob?.id === job.id) setSelectedJob({ ...job, status: BookingStatus.TIMESHEET_SUBMITTED });
+            showToast('Timesheet recorded for review', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record timesheet', 'error');
+        }
+    };
+
+    const handleRecordSessionCompleted = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Session Completed',
+            message: 'Use this when staff confirmed the session was delivered outside the interpreter app.',
+            confirmLabel: 'Mark Completed',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BookingService.recordSessionCompletedByStaff(job.id);
+            refresh();
+            if (selectedJob?.id === job.id) setSelectedJob({ ...job, status: BookingStatus.SESSION_COMPLETED });
+            showToast('Session marked as completed', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to mark session completed', 'error');
+        }
+    };
+
+    const handleRecordInvoiceIssued = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Invoice Issued',
+            message: 'Use this when finance created or sent the invoice outside the platform.',
+            confirmLabel: 'Mark Invoiced',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BillingService.recordManualInvoiceIssued(job.id);
+            refresh();
+            if (selectedJob?.id === job.id) setSelectedJob({ ...job, status: BookingStatus.INVOICED });
+            showToast('Invoice issued recorded', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record invoice', 'error');
+        }
+    };
+
+    const handleRecordPaymentReceived = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Payment Received',
+            message: 'Use this when finance confirmed payment outside the platform.',
+            confirmLabel: 'Mark Paid',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BillingService.recordManualPaymentReceived(job.id);
+            refresh();
+            if (selectedJob?.id === job.id) setSelectedJob({ ...job, status: BookingStatus.PAID });
+            showToast('Payment received recorded', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record payment', 'error');
+        }
+    };
+
     const handleBulkStatus = async (ids: string[], status: BookingStatus) => {
         setIsBulkLoading(true);
         let done = 0;
@@ -581,9 +720,39 @@ export const JobsBoard = () => {
         refresh();
     };
 
+    const handleBulkManualStep = async (
+        ids: string[],
+        label: string,
+        action: (job: Booking) => Promise<void>
+    ) => {
+        const ok = await confirm({
+            title: `Bulk ${label}`,
+            message: `Apply "${label}" to ${ids.length} selected job${ids.length !== 1 ? 's' : ''}? Jobs that are not in the correct stage will be skipped.`,
+            confirmLabel: label,
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        setIsBulkLoading(true);
+        let done = 0;
+        const selectedJobs = sortedBookings.filter(job => ids.includes(job.id));
+        await Promise.allSettled(selectedJobs.map(async job => {
+            try {
+                await action(job);
+                done += 1;
+            } catch {
+                // Incorrect-stage jobs are skipped; the final toast reports successes.
+            }
+        }));
+        setSelectedIds([]);
+        setIsBulkLoading(false);
+        refresh();
+        showToast(`${done} job${done !== 1 ? 's' : ''} updated`, done > 0 ? 'success' : 'info');
+    };
+
     const renderContextMenu = (job: Booking): ContextMenuItem[] => [
-        { label: 'View Details', icon: Eye, onClick: () => navigate(`/admin/bookings/${job.id}`) },
-        { label: 'Edit Job', icon: Pencil, onClick: () => navigate(`/admin/bookings/edit/${job.id}`) },
+        { label: 'View Details', icon: Eye, onClick: () => openJobDetails(job) },
+        { label: 'Edit Job', icon: Pencil, onClick: () => openEditJob(job) },
         { divider: true as const },
         ...(!job.interpreterId && [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status)
             ? [{ label: 'Assign Interpreter', icon: UserPlus, onClick: () => { setSelectedJob(job); setIsAllocationOpen(true); } }]
@@ -591,8 +760,26 @@ export const JobsBoard = () => {
         ...(job.status === BookingStatus.TIMESHEET_SUBMITTED
             ? [{ label: 'Verify Timesheet', icon: FileText, onClick: () => handleVerifyTimesheet(job) }]
             : []),
+        ...([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && job.interpreterId
+            ? [
+                { label: 'Record Accepted', icon: CheckCircle2, onClick: () => handleRecordInterpreterResponse(job, true) },
+                { label: 'Record Declined', icon: XCircle, onClick: () => handleRecordInterpreterResponse(job, false) },
+            ]
+            : []),
         ...(job.status === BookingStatus.BOOKED
-            ? [{ label: 'Mark Not Executed', icon: AlertCircle, onClick: () => handleMarkNotExecuted(job) }]
+            ? [
+                { label: 'Mark Completed', icon: CheckCircle2, onClick: () => handleRecordSessionCompleted(job) },
+                { label: 'Mark Not Executed', icon: AlertCircle, onClick: () => handleMarkNotExecuted(job) },
+            ]
+            : []),
+        ...(job.status === BookingStatus.SESSION_COMPLETED
+            ? [{ label: 'Record Timesheet', icon: FileText, onClick: () => handleRecordManualTimesheet(job) }]
+            : []),
+        ...(job.status === BookingStatus.READY_FOR_INVOICE
+            ? [{ label: 'Mark Invoiced', icon: Receipt, onClick: () => handleRecordInvoiceIssued(job) }]
+            : []),
+        ...(job.status === BookingStatus.INVOICED
+            ? [{ label: 'Mark Paid', icon: Receipt, onClick: () => handleRecordPaymentReceived(job) }]
             : []),
         { label: 'Copy Job URL', icon: Copy, onClick: () => navigator.clipboard?.writeText(`${window.location.origin}/#/admin/bookings/${job.id}`) },
         { label: 'Cancel Job', icon: Trash2, variant: 'danger' as const, onClick: () => handleQuickStatusChange(job, BookingStatus.CANCELLED) },
@@ -742,7 +929,7 @@ export const JobsBoard = () => {
                 className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${selected ? 'bg-blue-50 dark:bg-blue-950/30' : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60'}`}
                 style={{ gridTemplateColumns }}
                 onClick={() => handleRowClick(job)}
-                onDoubleClick={() => navigate(`/admin/bookings/${job.id}`)}
+                onDoubleClick={() => openJobDetails(job)}
             >
                 <div className="flex items-center justify-center border-r border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950">
                     <button
@@ -909,8 +1096,10 @@ export const JobsBoard = () => {
                     <FilterChip label="Overdue" count={quickCounts.OVERDUE} active={quickFilter === 'OVERDUE'} onClick={() => setQuickFilter('OVERDUE')} />
                     <FilterChip label="Today" count={quickCounts.TODAY} active={quickFilter === 'TODAY'} onClick={() => setQuickFilter('TODAY')} />
                     <FilterChip label="Unassigned" count={quickCounts.UNASSIGNED} active={quickFilter === 'UNASSIGNED'} onClick={() => setQuickFilter('UNASSIGNED')} />
+                    <FilterChip label="Completed" count={quickCounts.COMPLETED} active={quickFilter === 'COMPLETED'} onClick={() => setQuickFilter('COMPLETED')} />
                     <FilterChip label="Timesheets" count={quickCounts.TIMESHEET} active={quickFilter === 'TIMESHEET'} onClick={() => setQuickFilter('TIMESHEET')} />
                     <FilterChip label="Invoice ready" count={quickCounts.INVOICE_READY} active={quickFilter === 'INVOICE_READY'} onClick={() => setQuickFilter('INVOICE_READY')} />
+                    <FilterChip label="Awaiting payment" count={quickCounts.AWAITING_PAYMENT} active={quickFilter === 'AWAITING_PAYMENT'} onClick={() => setQuickFilter('AWAITING_PAYMENT')} />
                     <FilterChip label="Cancelled" count={quickCounts.CANCELLED} active={quickFilter === 'CANCELLED'} onClick={() => setQuickFilter('CANCELLED')} />
                     {activeFilterCount > 0 && (
                         <Button size="sm" variant="ghost" icon={X} onClick={() => { setSearchQuery(''); setQuickFilter('ALL'); }}>Clear</Button>
@@ -1026,7 +1215,11 @@ export const JobsBoard = () => {
                 onClearSelection={() => setSelectedIds([])}
                 onSelectAll={() => setSelectedIds(sortedBookings.map(b => b.id))}
                 actions={[
-                    { label: 'Confirm', icon: UserCheck, onClick: () => handleBulkStatus(selectedIds, BookingStatus.BOOKED), variant: 'success' },
+                    { label: 'Book', icon: UserCheck, onClick: () => handleBulkStatus(selectedIds, BookingStatus.BOOKED), variant: 'success' },
+                    { label: 'Complete', icon: CheckCircle2, onClick: (ids) => handleBulkManualStep(ids, 'Complete', job => BookingService.recordSessionCompletedByStaff(job.id)), variant: 'success' },
+                    { label: 'Timesheet', icon: FileText, onClick: (ids) => handleBulkManualStep(ids, 'Record Timesheet', async job => { await BillingService.recordManualTimesheetReceived(job.id); }) },
+                    { label: 'Invoice', icon: Receipt, onClick: (ids) => handleBulkManualStep(ids, 'Mark Invoiced', job => BillingService.recordManualInvoiceIssued(job.id)) },
+                    { label: 'Paid', icon: Receipt, onClick: (ids) => handleBulkManualStep(ids, 'Mark Paid', job => BillingService.recordManualPaymentReceived(job.id)), variant: 'success' },
                     { label: 'Cancel', icon: Trash2, onClick: () => handleBulkStatus(selectedIds, BookingStatus.CANCELLED), variant: 'danger' },
                 ]}
             />
@@ -1035,12 +1228,12 @@ export const JobsBoard = () => {
                 isOpen={isDrawerOpen}
                 onClose={() => setIsDrawerOpen(false)}
                 type="drawer"
-                title={selectedJob ? `Job ${selectedJob.bookingRef || selectedJob.id.slice(0, 8)}` : 'Job record'}
+                title={selectedJob ? `Job ${selectedJob.displayRef || selectedJob.jobNumber || selectedJob.bookingRef || selectedJob.id.slice(0, 8)}` : 'Job record'}
                 footer={
                     <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
                         <Button variant="outline" size="sm" onClick={() => setIsDrawerOpen(false)}>Close</Button>
-                        <Button variant="secondary" size="sm" onClick={() => navigate(`/admin/bookings/edit/${selectedJob?.id}`)} icon={Pencil}>Edit</Button>
-                        <Button size="sm" onClick={() => navigate(`/admin/bookings/${selectedJob?.id}`)} icon={ArrowUpRight}>Full details</Button>
+                        <Button variant="secondary" size="sm" onClick={() => selectedJob && openEditJob(selectedJob)} icon={Pencil}>Edit</Button>
+                        <Button size="sm" onClick={() => selectedJob && openJobDetails(selectedJob)} icon={ArrowUpRight}>Full details</Button>
                     </div>
                 }
             >
@@ -1061,14 +1254,29 @@ export const JobsBoard = () => {
                                 {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(selectedJob.status) && !selectedJob.interpreterId && (
                                      <Button size="sm" onClick={(e) => handleAssignClick(e, selectedJob)} icon={UserPlus}>Assign</Button>
                                  )}
+                                {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(selectedJob.status) && selectedJob.interpreterId && (
+                                    <>
+                                        <Button size="sm" onClick={() => handleRecordInterpreterResponse(selectedJob, true)} icon={CheckCircle2}>Accepted</Button>
+                                        <Button variant="outline" size="sm" onClick={() => handleRecordInterpreterResponse(selectedJob, false)} icon={XCircle}>Declined</Button>
+                                    </>
+                                )}
                                 {selectedJob.status === BookingStatus.BOOKED && (
-                                    <Button variant="outline" size="sm" onClick={() => handleMarkNotExecuted(selectedJob)} icon={AlertCircle}>Not executed</Button>
+                                    <>
+                                        <Button size="sm" onClick={() => handleRecordSessionCompleted(selectedJob)} icon={CheckCircle2}>Complete</Button>
+                                        <Button variant="outline" size="sm" onClick={() => handleMarkNotExecuted(selectedJob)} icon={AlertCircle}>Not executed</Button>
+                                    </>
+                                )}
+                                {selectedJob.status === BookingStatus.SESSION_COMPLETED && (
+                                    <Button size="sm" onClick={() => handleRecordManualTimesheet(selectedJob)} icon={FileText} className="col-span-2">Record timesheet</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.TIMESHEET_SUBMITTED && (
                                     <Button size="sm" onClick={() => handleVerifyTimesheet(selectedJob)} icon={FileText} className="col-span-2">Verify timesheet</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.READY_FOR_INVOICE && (
-                                    <Button size="sm" onClick={() => navigate('/admin/operations/timesheets')} icon={Receipt} className="col-span-2">Invoicing review</Button>
+                                    <Button size="sm" onClick={() => handleRecordInvoiceIssued(selectedJob)} icon={Receipt} className="col-span-2">Mark invoiced</Button>
+                                )}
+                                {selectedJob.status === BookingStatus.INVOICED && (
+                                    <Button size="sm" onClick={() => handleRecordPaymentReceived(selectedJob)} icon={Receipt} className="col-span-2">Mark paid</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.PAID && (
                                     <p className="col-span-2 rounded-md bg-emerald-50 p-2 text-center text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">Completed and paid</p>

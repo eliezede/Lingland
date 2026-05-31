@@ -71,14 +71,26 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
         if (t.includes('MESSAGE') || t.includes('CHAT')) return <MessageSquare size={14} className="text-emerald-500" />;
         if (t.includes('FILE') || t.includes('DOC')) return <FileText size={14} className="text-amber-500" />;
         if (t.includes('MAIL')) return <Mail size={14} className="text-sky-500" />;
-        if (t.includes('BILL') || t.includes('INVOICE') || t.includes('PAID')) return <Receipt size={14} className="text-emerald-600" />;
+        if (t.includes('BILL') || t.includes('INVOICE') || t.includes('PAID') || t.includes('PAYMENT')) return <Receipt size={14} className="text-emerald-600" />;
         if (t.includes('DELETE')) return <Trash2 size={14} className="text-slate-600" />;
         if (t.includes('EDIT')) return <Edit size={14} className="text-orange-500" />;
         return <Clock size={14} className="text-slate-400" />;
     };
 
     const formatEventName = (type: string) => {
-        return type.replace(/_/g, ' ').toLowerCase();
+        return type
+            .replace(/_/g, ' ')
+            .toLowerCase()
+            .replace(/\b\w/g, char => char.toUpperCase());
+    };
+
+    const getEventDescription = (evt: TimelineEvent) => {
+        if (evt.description) return evt.description;
+        const from = evt.metadata?.fromStatus;
+        const to = evt.metadata?.toStatus;
+        if (from && to) return `Moved from ${from} to ${to}.`;
+        if (evt.metadata?.recordedByStaff) return 'Recorded manually by staff.';
+        return `The job record was updated with ${formatEventName(evt.type)} event.`;
     };
 
     return (
@@ -102,7 +114,7 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                                         {formatEventName(evt.type)}
                                     </h4>
                                     <p className="text-sm text-slate-600 dark:text-slate-400 leading-snug">
-                                        {evt.description || `The job record was updated with ${formatEventName(evt.type)} event.`}
+                                        {getEventDescription(evt)}
                                     </p>
                                 </div>
                                 <div className="shrink-0 text-right">
@@ -127,6 +139,16 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                                     {evt.metadata?.status && (
                                         <Badge variant="neutral" className="text-[9px] uppercase font-black">
                                             {evt.metadata.status}
+                                        </Badge>
+                                    )}
+                                    {evt.metadata?.recordedByStaff && (
+                                        <Badge variant="warning" className="text-[9px] uppercase font-black">
+                                            Manual staff
+                                        </Badge>
+                                    )}
+                                    {evt.metadata?.source && (
+                                        <Badge variant="neutral" className="text-[9px] uppercase font-black">
+                                            {String(evt.metadata.source).replace(/_/g, ' ')}
                                         </Badge>
                                     )}
                                 </div>

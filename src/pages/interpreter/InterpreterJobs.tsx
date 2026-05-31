@@ -29,7 +29,9 @@ export const InterpreterJobs = () => {
     const dateStr = d.toISOString().split('T')[0];
     const jobOnDay = jobs.find(j => j.date === dateStr);
     if (jobOnDay) {
-      navigate(`/interpreter/jobs/${jobOnDay.id}`);
+      navigate(`/interpreter/jobs/${jobOnDay.id}`, {
+        state: { returnTo: '/interpreter/jobs', returnTab: 'UPCOMING', returnLabel: 'Upcoming Schedule' }
+      });
     }
   };
 
@@ -148,7 +150,9 @@ export const InterpreterJobs = () => {
                         {jobs.map(job => (
                           <div
                             key={job.id}
-                            onClick={() => navigate(`/interpreter/jobs/${job.id}`)}
+                            onClick={() => navigate(`/interpreter/jobs/${job.id}`, {
+                              state: { returnTo: '/interpreter/jobs', returnTab: 'UPCOMING', returnLabel: 'Upcoming Schedule' }
+                            })}
                             className="p-4 sm:p-6 hover:bg-slate-50/80 transition-colors group flex flex-col sm:flex-row gap-6 justify-between items-start sm:items-center cursor-pointer"
                           >
                             <div className="flex items-start gap-4 flex-1">

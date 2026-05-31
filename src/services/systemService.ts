@@ -5,6 +5,32 @@ import { SystemSettings } from '../types';
 import { MOCK_CLIENTS, MOCK_INTERPRETERS, MOCK_BOOKINGS, MOCK_USERS, MOCK_SETTINGS, saveMockData } from './mockData';
 import { safeFetch } from './utils';
 
+const DEFAULT_PLATFORM_MODE: NonNullable<SystemSettings['platformMode']> = {
+  operatingMode: 'AIRTABLE_MIRROR',
+  communicationMode: 'SUPPRESSED',
+  sourceOfTruth: 'AIRTABLE',
+  airtableImportMode: 'ON',
+  hybridOperationsEnabled: true,
+  jobNumbering: {
+    prefix: 'LING',
+    year: 26,
+    nextSequence: 17037,
+    displayIncludesLanguage: true
+  }
+};
+
+const withSettingsDefaults = (settings: SystemSettings): SystemSettings => ({
+  ...settings,
+  platformMode: {
+    ...DEFAULT_PLATFORM_MODE,
+    ...(settings.platformMode || {}),
+    jobNumbering: {
+      ...DEFAULT_PLATFORM_MODE.jobNumbering,
+      ...(settings.platformMode?.jobNumbering || {})
+    }
+  }
+});
+
 export const SystemService = {
   checkConnection: async (): Promise<boolean> => {
     try {
@@ -35,8 +61,13 @@ export const SystemService = {
   getSettings: async (): Promise<SystemSettings> => {
     return safeFetch(async () => {
       const snap = await getDoc(doc(db, 'system', 'settings'));
-      return snap.exists() ? snap.data() as SystemSettings : MOCK_SETTINGS;
-    }, MOCK_SETTINGS);
+      return withSettingsDefaults(snap.exists() ? snap.data() as SystemSettings : MOCK_SETTINGS);
+    }, withSettingsDefaults(MOCK_SETTINGS));
+  },
+
+  getPlatformMode: async () => {
+    const settings = await SystemService.getSettings();
+    return settings.platformMode || DEFAULT_PLATFORM_MODE;
   },
 
   updateSettings: async (settings: Partial<SystemSettings>) => {

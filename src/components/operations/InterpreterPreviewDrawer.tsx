@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
     UserCircle2, Mail, Phone, MapPin, Languages,
     Award, ShieldCheck, Star, Calendar, ArrowUpRight,
@@ -32,6 +32,7 @@ export const InterpreterPreviewDrawer: React.FC<InterpreterPreviewDrawerProps> =
     onSuccess,
 }) => {
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const { showToast } = useToast();
     const { confirm } = useConfirm();
@@ -41,6 +42,12 @@ export const InterpreterPreviewDrawer: React.FC<InterpreterPreviewDrawerProps> =
     const [isUnassigning, setIsUnassigning] = useState(false);
 
     const actionsDeps = createDependencies((user as any)?.organizationId || 'lingland-main');
+
+    const openJobDetails = (job: Booking) => {
+        navigate(`/admin/bookings/${job.id}`, {
+            state: { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Previous workspace' },
+        });
+    };
 
     useEffect(() => {
         if (isOpen && interpreterId) {
@@ -203,7 +210,7 @@ export const InterpreterPreviewDrawer: React.FC<InterpreterPreviewDrawerProps> =
                                                 </p>
                                             </div>
                                         </div>
-                                        <button onClick={() => navigate(`/admin/bookings/${job.id}`)} className="p-2 text-slate-400 hover:text-blue-600 transition-colors">
+                                        <button onClick={() => openJobDetails(job)} className="p-2 text-slate-400 hover:text-blue-600 transition-colors">
                                             <ArrowUpRight size={18} />
                                         </button>
                                     </div>

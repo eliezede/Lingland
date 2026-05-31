@@ -130,12 +130,14 @@ export const AdminInterpreterDetails = () => {
           updatedAt: now
         });
       }
-      await UserService.sendActivationInvite(interpreter.email, interpreter.name);
+      const inviteResult = await UserService.sendActivationInvite(interpreter.email, interpreter.name);
+      if ((inviteResult as any)?.suppressed) {
+        showToast('Activation invite suppressed by Communication Mode', 'info');
+        return;
+      }
+
       await InterpreterService.updateProfile(interpreter.id, { activationEmailSentAt: now });
-      
-      // Update local state
       setInterpreter({ ...interpreter, activationEmailSentAt: now });
-      
       showToast(interpreter.activationEmailSentAt ? 'Activation email resent successfully' : 'Activation email queued successfully', 'success');
     } catch (error) {
       console.error('Failed to send activation email', error);
@@ -510,7 +512,14 @@ export const AdminInterpreterDetails = () => {
                               <StatusBadge status={job.status} />
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <button onClick={() => navigate(`/admin/bookings/${job.id}`)} className="p-2 text-slate-400 hover:text-blue-600 transition-all"><ArrowUpRight size={18} /></button>
+                              <button
+                                onClick={() => navigate(`/admin/bookings/${job.id}`, {
+                                  state: { returnTo: `/admin/interpreters/${id}`, returnLabel: 'Interpreter profile' },
+                                })}
+                                className="p-2 text-slate-400 hover:text-blue-600 transition-all"
+                              >
+                                <ArrowUpRight size={18} />
+                              </button>
                             </td>
                           </tr>
                         ))

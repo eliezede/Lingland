@@ -7,7 +7,7 @@ import {
     Calendar, Clock, MapPin, Video, Globe2,
     MessageSquare, CheckCircle2, XCircle, Info, ExternalLink, ShieldCheck, User
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 interface JobDetailsModalProps {
     isOpen: boolean;
@@ -27,11 +27,12 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
     onMessageAdmin
 }) => {
     const navigate = useNavigate();
+    const location = useLocation();
     const [processing, setProcessing] = useState(false);
 
     if (!job) return null;
 
-    const isOffer = job.status === BookingStatus.INCOMING || job.status === BookingStatus.OPENED || job.status === BookingStatus.ASSIGNMENT_PENDING || job.status === 'PENDING_ASSIGNMENT';
+    const isOffer = Boolean(job._isDirect || job._isBroadcast || job._assignmentId || job.status === BookingStatus.OPENED || job.status === BookingStatus.ASSIGNMENT_PENDING || job.status === 'PENDING_ASSIGNMENT');
 
     const handleAction = async (action: () => Promise<void> | undefined) => {
         if (!action) return;
@@ -53,7 +54,12 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                     variant="outline"
                     onClick={() => {
                         onClose();
-                        navigate(`/interpreter/jobs/${job.id}`);
+                        navigate(`/interpreter/jobs/${job.id}`, {
+                            state: {
+                                returnTo: `${location.pathname}${location.search}`,
+                                returnLabel: 'Previous workspace'
+                            }
+                        });
                     }}
                     icon={ExternalLink}
                     size="sm"

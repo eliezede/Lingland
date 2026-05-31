@@ -131,6 +131,12 @@ export const AdminClientDetails = () => {
         { label: 'Net Terms', value: `${client.paymentTermsDays || 30} Days`, icon: CreditCard, color: 'indigo' }
     ];
 
+    const openJobDetails = (job: Booking) => {
+        navigate(`/admin/bookings/${job.id}`, {
+            state: { returnTo: `/admin/clients/${id}`, returnLabel: 'Client profile' },
+        });
+    };
+
     return (
         <div className="space-y-4 pb-20">
             {/* Header */}
@@ -257,7 +263,7 @@ export const AdminClientDetails = () => {
                                         {jobs.map(job => (
                                             <div
                                                 key={job.id}
-                                                onClick={() => navigate(`/admin/bookings/${job.id}`)}
+                                                onClick={() => openJobDetails(job)}
                                                 className="group flex flex-col md:flex-row md:items-center justify-between p-4 bg-slate-50 hover:bg-white rounded-xl border border-slate-100 hover:border-blue-200 hover:shadow-sm transition-all cursor-pointer"
                                             >
                                                 <div className="flex items-center gap-4">

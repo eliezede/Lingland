@@ -142,7 +142,9 @@ export const AssignmentCenter = () => {
                         selectedIds={selectedIds}
                         onSelectionChange={setSelectedIds}
                         onRowClick={openAssignmentHub}
-                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`)}
+                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`, {
+                            state: { returnTo: '/admin/operations/assignments', returnLabel: 'Assignment Center' },
+                        })}
                         isLoading={loading}
                         emptyMessage="All jobs are currently assigned. Great work!"
                     />

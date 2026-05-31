@@ -124,7 +124,9 @@ export const AdminApplications = () => {
 
       await EmailService.sendApplicationEmail(app, 'APPROVED');
       const activationResult = await UserService.sendActivationInvite(app.email, app.name);
-      await InterpreterService.updateProfile(newInt.id, { activationEmailSentAt: new Date().toISOString() });
+      if (!(activationResult as any)?.suppressed) {
+        await InterpreterService.updateProfile(newInt.id, { activationEmailSentAt: new Date().toISOString() });
+      }
 
       if (newUser && newUser.id) {
         NotificationService.notify(

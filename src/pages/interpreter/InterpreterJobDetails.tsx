@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { BookingService, ChatService } from '../../services/api';
-import { Booking, BookingStatus } from '../../types';
+import { AssignmentStatus, Booking, BookingAssignment, BookingStatus, ServiceCategory } from '../../types';
 import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare, CheckCircle2, XCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -10,6 +10,7 @@ import { useChat } from '../../context/ChatContext';
 export const InterpreterJobDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { showToast } = useToast();
   const { openThread } = useChat();
@@ -18,16 +19,29 @@ export const InterpreterJobDetails = () => {
   const [isDirectOffer, setIsDirectOffer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const routeState = location.state as { returnTo?: string; returnTab?: string; returnLabel?: string } | null;
+
+  const goBackToContext = () => {
+    if (routeState?.returnTo) {
+      navigate(routeState.returnTo, { state: routeState.returnTab ? { tab: routeState.returnTab } : undefined });
+      return;
+    }
+    navigate('/interpreter/jobs');
+  };
 
   useEffect(() => {
     if (id && user?.profileId) {
       Promise.all([
         BookingService.getById(id),
         BookingService.getInterpreterOffers(user.profileId)
-      ]).then(([res, offers]) => {
+      ]).then(async ([res, offers]) => {
         setJob(res || null);
         setIsDirectOffer(!!res?.interpreterId && res.interpreterId === user.profileId && [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(res.status));
-        const matchingOffer = offers.find(o => o.bookingId === id);
+        let matchingOffer = offers.find(o => o.bookingId === id);
+        if (!matchingOffer && res?.interpreterId === user.profileId) {
+          const assignments = await BookingService.getAssignmentsByBookingId(id);
+          matchingOffer = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user.profileId && assignment.status === AssignmentStatus.OFFERED);
+        }
         setAssignmentId(matchingOffer?.id || null);
       }).finally(() => setLoading(false));
     } else {
@@ -63,15 +77,15 @@ export const InterpreterJobDetails = () => {
     setProcessing(true);
     try {
       if (assignmentId) {
-        // Fallback for broadcast offers if they ever route here
         await BookingService.acceptOffer(assignmentId);
       } else if (isDirectOffer || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) {
-        await BookingService.updateStatus(job.id, BookingStatus.BOOKED);
+        const recoveredAssignment = await BookingService.ensureInterpreterAssignment(job.id, user!.profileId!);
+        await BookingService.acceptOffer(recoveredAssignment.id);
       } else {
         throw new Error('This job is not currently available to accept.');
       }
       showToast('Job accepted successfully!', 'success');
-      navigate('/interpreter/dashboard');
+      navigate('/interpreter/jobs', { state: { tab: 'UPCOMING' } });
     } catch (e: any) {
       showToast(e.message || 'Failed to accept job', 'error');
     } finally {
@@ -83,15 +97,16 @@ export const InterpreterJobDetails = () => {
     if (!job) return;
     setProcessing(true);
     try {
-      if (isDirectOffer || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) {
-        await BookingService.unassignInterpreterFromBooking(job.id);
-      } else if (assignmentId) {
+      if (assignmentId) {
         await BookingService.declineOffer(assignmentId);
+      } else if (isDirectOffer || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) {
+        const recoveredAssignment = await BookingService.ensureInterpreterAssignment(job.id, user!.profileId!);
+        await BookingService.declineOffer(recoveredAssignment.id);
       } else {
         throw new Error('This job is not currently available to decline.');
       }
       showToast('Job declined.', 'info');
-      navigate('/interpreter/dashboard');
+      navigate('/interpreter/jobs', { state: { tab: 'OFFERS' } });
     } catch (e: any) {
       showToast(e.message || 'Failed to decline job', 'error');
     } finally {
@@ -104,13 +119,18 @@ export const InterpreterJobDetails = () => {
 
   const isOnline = job.locationType === 'ONLINE';
   const canRespondToOffer = isDirectOffer || !!assignmentId || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status);
+  const scheduledEnd = new Date(`${job.date}T${job.endTime || job.expectedEndTime || job.startTime || '23:59'}`);
+  const isCompletedForTimesheet = job.serviceCategory === ServiceCategory.TRANSLATION
+    ? new Date(`${job.date}T23:59:00`) <= new Date()
+    : scheduledEnd <= new Date();
+  const canSubmitTimesheet = job.status === BookingStatus.BOOKED && isCompletedForTimesheet;
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
       {/* Premium Page Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <button
-          onClick={() => navigate(-1)}
+          onClick={goBackToContext}
           className="flex items-center text-sm font-semibold text-slate-600 hover:text-slate-900 transition-colors"
         >
           <ChevronLeft size={16} className="mr-1" /> Jobs / {job.bookingRef || job.id?.slice(0, 6)}
@@ -288,9 +308,11 @@ export const InterpreterJobDetails = () => {
                 <CheckCircle2 size={16} className="mr-2" /> Accept Job
               </button>
             </div>
-          ) : job.status === BookingStatus.BOOKED && (job.serviceType === 'TRANSLATION' ? true : new Date(job.date) < new Date()) ? (
+          ) : canSubmitTimesheet ? (
             <button
-              onClick={() => navigate(`/interpreter/timesheets/new/${job.id}`)}
+              onClick={() => navigate(`/interpreter/timesheets/new/${job.id}`, {
+                state: { returnTo: `/interpreter/jobs/${job.id}`, returnLabel: 'Job details' }
+              })}
               className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex items-center justify-center text-sm tracking-tight"
             >
               <FileText className="mr-2" size={16} /> {job.serviceType === 'TRANSLATION' ? 'Submit Work / Delivery' : 'Submit Timesheet'}

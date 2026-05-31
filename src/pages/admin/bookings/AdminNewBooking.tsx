@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
     AlertCircle,
     ArrowLeft,
@@ -127,10 +127,12 @@ const ChecklistItem = ({ done, label, value }: { done: boolean; label: string; v
 
 export const AdminNewBooking = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const { showToast } = useToast();
     const { id } = useParams<{ id: string }>();
     const isEditMode = Boolean(id);
+    const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
     const { clientsMap } = useClients();
 
     const [loading, setLoading] = useState(false);
@@ -308,6 +310,14 @@ export const AdminNewBooking = () => {
         ? `${formData.date}${formData.startTime ? `, ${formData.startTime}` : ''}`
         : 'No date';
 
+    const returnToEditOrigin = () => {
+        if (routeState?.returnTo) {
+            navigate(routeState.returnTo);
+            return;
+        }
+        navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings');
+    };
+
     const locationLabel = isTranslation
         ? 'Document delivery'
         : effectiveLocationType === 'ONLINE'
@@ -401,10 +411,11 @@ export const AdminNewBooking = () => {
             if (isEditMode) {
                 await BookingService.update(id!, bookingData);
                 showToast('Booking updated successfully', 'success');
-                navigate(`/admin/bookings/${id}`);
+                returnToEditOrigin();
             } else {
-                bookingData.bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
                 bookingData.createdAt = new Date().toISOString();
+                bookingData.sourceSystem = 'STAFF_MANUAL';
+                bookingData.syncStatus = 'LOCAL_ONLY';
                 const createdBooking = await BookingService.create(bookingData);
                 if (selectedInterpreter) {
                     await BookingService.createAssignment(createdBooking.id, selectedInterpreter.id);
@@ -434,7 +445,7 @@ export const AdminNewBooking = () => {
                     <div className="flex min-w-0 items-center gap-3">
                         <button
                             type="button"
-                            onClick={() => navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings')}
+                            onClick={returnToEditOrigin}
                             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
                             aria-label="Back"
                         >
@@ -455,7 +466,7 @@ export const AdminNewBooking = () => {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                        <Button type="button" variant="secondary" onClick={() => navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings')}>Cancel</Button>
+                        <Button type="button" variant="secondary" onClick={returnToEditOrigin}>Cancel</Button>
                         <Button type="submit" icon={Save} isLoading={loading} disabled={loading || requiredMissing}>
                             {isEditMode ? 'Save changes' : 'Create booking'}
                         </Button>

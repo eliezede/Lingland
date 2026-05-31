@@ -401,7 +401,9 @@ export const AdminInterpreters = () => {
               ) : (
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {interpreterJobs.slice(0, 5).map(job => (
-                    <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-800 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer" onClick={() => navigate(`/admin/bookings/${job.id}`)}>
+                    <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-800 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors cursor-pointer" onClick={() => navigate(`/admin/bookings/${job.id}`, {
+                      state: { returnTo: '/admin/interpreters', returnLabel: 'Interpreters' },
+                    })}>
                       <div className="flex flex-col gap-0.5">
                         <span className="text-xs font-bold text-slate-900 dark:text-white">{job.bookingRef || `#${job.id.slice(-4)}`}</span>
                         <span className="text-[10px] text-slate-500 dark:text-slate-400">{job.date} • {job.startTime}</span>

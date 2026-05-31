@@ -88,7 +88,11 @@ export const AdminTimesheets = () => {
                   <tr key={ts.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
-                        <Link to={`/admin/bookings/${ts.bookingId}`} className="text-sm font-black text-blue-600 hover:underline flex items-center">
+                        <Link
+                          to={`/admin/bookings/${ts.bookingId}`}
+                          state={{ returnTo: '/admin/operations/timesheets', returnLabel: 'Timesheet Review' }}
+                          className="text-sm font-black text-blue-600 hover:underline flex items-center"
+                        >
                           {ts.bookingId.substring(0, 8).toUpperCase()} <ArrowUpRight size={14} className="ml-1" />
                         </Link>
                         <span className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Job Link</span>

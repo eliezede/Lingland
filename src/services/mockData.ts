@@ -169,6 +169,19 @@ const DEFAULT_SETTINGS: SystemSettings = {
       ServiceType.BSL
     ],
     priorityLanguages: ['Arabic', 'Polish', 'Romanian', 'Urdu', 'Spanish']
+  },
+  platformMode: {
+    operatingMode: 'AIRTABLE_MIRROR',
+    communicationMode: 'SUPPRESSED',
+    sourceOfTruth: 'AIRTABLE',
+    airtableImportMode: 'ON',
+    hybridOperationsEnabled: true,
+    jobNumbering: {
+      prefix: 'LING',
+      year: 26,
+      nextSequence: 17037,
+      displayIncludesLanguage: true
+    }
   }
 };
 

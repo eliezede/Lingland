@@ -97,6 +97,12 @@ export const AdminClients = () => {
     }
   };
 
+  const openJobFromClient = (job: Booking) => {
+    navigate(`/admin/bookings/${job.id}`, {
+      state: { returnTo: '/admin/clients', returnLabel: 'Clients' },
+    });
+  };
+
   const handleStartChat = async (e: React.MouseEvent | undefined, clientId: string, clientName: string, clientPhoto?: string) => {
     if (e) e.stopPropagation();
     if (!user) return;
@@ -358,7 +364,7 @@ export const AdminClients = () => {
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar flex-1">
                     {clientJobs.slice(0, 5).map(job => (
-                      <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-100 dark:border-slate-800 group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all cursor-pointer" onClick={() => navigate(`/admin/bookings/${job.id}`)}>
+                      <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-100 dark:border-slate-800 group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all cursor-pointer" onClick={() => openJobFromClient(job)}>
                         <div className="flex flex-col gap-1">
                           <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">{job.bookingRef || `#${job.id.slice(-4)}`}</span>
                           <span className="text-xs text-xs text-slate-500 dark:text-slate-400">{job.date}</span>

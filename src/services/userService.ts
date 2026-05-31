@@ -4,6 +4,7 @@ import { User, Interpreter, StaffProfile, Client } from '../types';
 import { StorageService } from './storageService';
 import { MOCK_USERS, saveMockData } from './mockData';
 import { convertDoc, safeFetch } from './utils';
+import { SystemService } from './systemService';
 
 export const UserService = {
   getUserById: async (id: string): Promise<User | undefined> => {
@@ -98,11 +99,30 @@ export const UserService = {
   },
 
   sendActivationInvite: async (email: string, displayName: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const communicationMode = (await SystemService.getPlatformMode()).communicationMode;
+    if (communicationMode !== 'LIVE') {
+      await addDoc(collection(db, 'emailAudit'), {
+        to: [cleanEmail],
+        recipientType: 'INTERPRETER',
+        statusTrigger: 'ACCOUNT_ACTIVATION',
+        status: 'SUPPRESSED',
+        communicationMode,
+        suppressedReason: `Communication mode ${communicationMode} suppressed account activation invite`,
+        message: {
+          subject: `Account activation invite for ${displayName}`,
+          html: ''
+        },
+        createdAt: new Date().toISOString()
+      });
+      return { success: false, suppressed: true, communicationMode };
+    }
+
     const { getFunctions, httpsCallable } = await import('firebase/functions');
     const functions = getFunctions();
     const sendInvite = httpsCallable(functions, 'sendAccountActivationInvite');
-    const result = await sendInvite({ email: email.trim().toLowerCase(), displayName });
-    return result.data as { success: boolean; userId?: string };
+    const result = await sendInvite({ email: cleanEmail, displayName });
+    return result.data as { success: boolean; userId?: string; suppressed?: boolean; communicationMode?: string };
   },
 
   uploadProfilePhoto: async (userId: string, file: File | string, role: string): Promise<string> => {

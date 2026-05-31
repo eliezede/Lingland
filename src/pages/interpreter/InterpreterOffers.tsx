@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { MapPin, Clock, Calendar, CheckCircle, XCircle } from 'lucide-react';
@@ -8,6 +9,7 @@ import { Spinner } from '../../components/ui/Spinner';
 
 export const InterpreterOffers = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const [processing, setProcessing] = useState<string | null>(null);
   
@@ -56,7 +58,13 @@ export const InterpreterOffers = () => {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {offers.map((offer) => (
-            <div key={offer.id} className="bg-white rounded-xl shadow-sm border border-blue-100 p-6 relative overflow-hidden">
+            <div
+              key={offer.id}
+              className="bg-white rounded-xl shadow-sm border border-blue-100 p-6 relative overflow-hidden cursor-pointer transition hover:border-blue-300 hover:shadow-md"
+              onClick={() => navigate(`/interpreter/jobs/${offer.id}`, {
+                state: { returnTo: '/interpreter/offers', returnLabel: 'Job Offers' }
+              })}
+            >
               <div className="absolute top-0 right-0 bg-blue-500 text-white text-xs px-3 py-1 rounded-bl-lg font-bold">
                 {offer._isDirect ? 'DIRECT OFFER' : 'NEW OFFER'}
               </div>
@@ -90,7 +98,7 @@ export const InterpreterOffers = () => {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   disabled={processing === offer.id}
-                  onClick={() => handleDecline(offer)}
+                  onClick={(e) => { e.stopPropagation(); handleDecline(offer); }}
                   className="flex items-center justify-center py-2 px-4 border border-red-200 text-red-700 rounded-lg hover:bg-red-50 font-medium transition-colors disabled:opacity-50"
                 >
                   <XCircle size={18} className="mr-2" />
@@ -98,7 +106,7 @@ export const InterpreterOffers = () => {
                 </button>
                 <button
                   disabled={processing === offer.id}
-                  onClick={() => handleAccept(offer)}
+                  onClick={(e) => { e.stopPropagation(); handleAccept(offer); }}
                   className="flex items-center justify-center py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-colors disabled:opacity-50"
                 >
                   {processing === offer.id ? <Spinner size="sm" /> : <CheckCircle size={18} className="mr-2" />}

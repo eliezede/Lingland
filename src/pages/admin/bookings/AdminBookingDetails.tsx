@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowUpRight,
   Building2,
   CalendarDays,
   ChevronLeft,
+  CheckCircle2,
   Clock,
   CreditCard,
   Download,
@@ -25,6 +26,7 @@ import {
   UserCheck,
   UserPlus,
   Video,
+  XCircle,
 } from 'lucide-react';
 import { BookingService } from '../../../services/bookingService';
 import { BillingService } from '../../../services/billingService';
@@ -117,6 +119,7 @@ const MetricCell = ({ icon: Icon, label, value, tone = 'default' }: { icon: Reac
 export const AdminBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
   const { openThread } = useChat();
@@ -133,6 +136,19 @@ export const AdminBookingDetails = () => {
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+  const returnLabel = routeState?.returnLabel || 'Previous page';
+  const goBackToContext = () => {
+    if (routeState?.returnTo) {
+      navigate(routeState.returnTo);
+      return;
+    }
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/admin/bookings');
+  };
 
   const loadBooking = async () => {
     try {
@@ -200,6 +216,123 @@ export const AdminBookingDetails = () => {
     }
   };
 
+  const handleRecordInterpreterResponse = async (accepted: boolean) => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: accepted ? 'Record Interpreter Acceptance' : 'Record Interpreter Decline',
+      message: accepted
+        ? 'Use this when the interpreter accepted outside the app, for example in Airtable, WhatsApp, email or by phone.'
+        : 'Use this when the interpreter declined outside the app. The job will return to the assignment queue.',
+      confirmLabel: accepted ? 'Record Accepted' : 'Record Declined',
+      variant: accepted ? 'primary' : 'warning',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BookingService.recordInterpreterResponseByStaff(id, accepted);
+      showToast(accepted ? 'Interpreter acceptance recorded' : 'Interpreter decline recorded', 'success');
+      await loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record interpreter response', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRecordManualTimesheet = async () => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: 'Record Timesheet Received',
+      message: 'Use this when the interpreter sent the timesheet outside the app. A draft claim will be created for finance review.',
+      confirmLabel: 'Record Timesheet',
+      variant: 'primary',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BillingService.recordManualTimesheetReceived(id);
+      showToast('Timesheet recorded for review', 'success');
+      await loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record timesheet', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRecordSessionCompleted = async () => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: 'Record Session Completed',
+      message: 'Use this when staff confirmed the session was delivered outside the interpreter app.',
+      confirmLabel: 'Mark Completed',
+      variant: 'primary',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BookingService.recordSessionCompletedByStaff(id);
+      showToast('Session marked as completed', 'success');
+      await loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to mark session completed', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRecordInvoiceIssued = async () => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: 'Record Invoice Issued',
+      message: 'Use this when finance created or sent the invoice outside the platform.',
+      confirmLabel: 'Mark Invoiced',
+      variant: 'primary',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BillingService.recordManualInvoiceIssued(id);
+      showToast('Invoice issued recorded', 'success');
+      await loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record invoice', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRecordPaymentReceived = async () => {
+    if (!booking || !id) return;
+    const ok = await confirm({
+      title: 'Record Payment Received',
+      message: 'Use this when finance confirmed payment outside the platform.',
+      confirmLabel: 'Mark Paid',
+      variant: 'primary',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BillingService.recordManualPaymentReceived(id);
+      showToast('Payment received recorded', 'success');
+      await loadBooking();
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record payment', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleMarkNotExecuted = async () => {
     if (!booking || !id) return;
     const ok = await confirm({
@@ -251,7 +384,7 @@ export const AdminBookingDetails = () => {
         booking.id,
         user,
         { ...interpreterUser, displayName: booking.interpreterName || interpreterUser.displayName },
-        { name: booking.bookingRef || booking.id }
+        { name: booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id }
       );
       openThread(threadId);
     } catch {
@@ -274,13 +407,13 @@ export const AdminBookingDetails = () => {
           <AlertCircle size={34} className="mx-auto mb-4 text-slate-400" />
           <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Booking not found</h2>
           <p className="mt-2 text-sm text-slate-500">The booking may have been removed or the URL is invalid.</p>
-          <Button onClick={() => navigate('/admin/bookings')} icon={ChevronLeft} variant="secondary" className="mt-6">Back to Jobs Board</Button>
+          <Button onClick={goBackToContext} icon={ChevronLeft} variant="secondary" className="mt-6">Back</Button>
         </div>
       </div>
     );
   }
 
-  const reference = booking.bookingRef || booking.id;
+  const reference = booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id;
   const companyName = getClientCompany(booking.clientId, booking.guestContact?.organisation || booking.clientName);
   const contactName = booking.guestContact?.name || (booking as any).contactName || 'No contact';
   const contactEmail = booking.guestContact?.email || (booking as any).contactEmail;
@@ -304,11 +437,23 @@ export const AdminBookingDetails = () => {
     if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) {
       return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
     }
+    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && booking.interpreterId) {
+      return <Button variant="secondary" onClick={() => handleRecordInterpreterResponse(true)} isLoading={isActionLoading} icon={CheckCircle2}>Record accepted</Button>;
+    }
+    if (booking.status === BookingStatus.BOOKED) {
+      return <Button variant="secondary" onClick={handleRecordSessionCompleted} isLoading={isActionLoading} icon={CheckCircle2}>Mark completed</Button>;
+    }
+    if (booking.status === BookingStatus.SESSION_COMPLETED) {
+      return <Button variant="secondary" onClick={handleRecordManualTimesheet} isLoading={isActionLoading} icon={FileText}>Record timesheet</Button>;
+    }
     if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) {
       return <Button variant="secondary" onClick={handleVerifyTimesheet} isLoading={isActionLoading} icon={FileText}>Verify timesheet</Button>;
     }
     if (booking.status === BookingStatus.READY_FOR_INVOICE) {
-      return <Button variant="secondary" onClick={() => navigate('/admin/operations/timesheets')} icon={Receipt}>Invoice review</Button>;
+      return <Button variant="secondary" onClick={handleRecordInvoiceIssued} isLoading={isActionLoading} icon={Receipt}>Mark invoiced</Button>;
+    }
+    if (booking.status === BookingStatus.INVOICED) {
+      return <Button variant="secondary" onClick={handleRecordPaymentReceived} isLoading={isActionLoading} icon={Receipt}>Mark paid</Button>;
     }
     return null;
   };
@@ -319,9 +464,10 @@ export const AdminBookingDetails = () => {
         <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => navigate('/admin/bookings')}
+              onClick={goBackToContext}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
-              aria-label="Back to jobs board"
+              aria-label={`Back to ${returnLabel}`}
+              title={`Back to ${returnLabel}`}
             >
               <ChevronLeft size={18} />
             </button>
@@ -338,7 +484,16 @@ export const AdminBookingDetails = () => {
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-            <Button onClick={() => navigate(`/admin/bookings/edit/${id}`)} icon={Edit2}>Edit</Button>
+            <Button
+              onClick={() => navigate(`/admin/bookings/edit/${id}`, {
+                state: routeState?.returnTo
+                  ? routeState
+                  : { returnTo: `/admin/bookings/${id}`, returnLabel: 'Booking record' },
+              })}
+              icon={Edit2}
+            >
+              Edit
+            </Button>
             {primaryAction()}
             <Button variant="secondary" icon={Download} onClick={handleExportPdf} isLoading={isExporting}>Export</Button>
             <Button variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Message</Button>
@@ -346,6 +501,54 @@ export const AdminBookingDetails = () => {
               <Button variant="ghost" icon={MoreVertical} onClick={() => setIsActionsOpen(!isActionsOpen)} className="w-full sm:w-auto" />
               {isActionsOpen && (
                 <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                  {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && booking.interpreterId && (
+                    <>
+                      <button
+                        onClick={() => { handleRecordInterpreterResponse(true); setIsActionsOpen(false); }}
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                      >
+                        <CheckCircle2 size={15} /> Record accepted
+                      </button>
+                      <button
+                        onClick={() => { handleRecordInterpreterResponse(false); setIsActionsOpen(false); }}
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                      >
+                        <XCircle size={15} /> Record declined
+                      </button>
+                    </>
+                  )}
+                  {booking.status === BookingStatus.BOOKED && (
+                    <button
+                      onClick={() => { handleRecordSessionCompleted(); setIsActionsOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                    >
+                      <CheckCircle2 size={15} /> Mark completed
+                    </button>
+                  )}
+                  {booking.status === BookingStatus.SESSION_COMPLETED && (
+                    <button
+                      onClick={() => { handleRecordManualTimesheet(); setIsActionsOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                    >
+                      <FileText size={15} /> Record timesheet
+                    </button>
+                  )}
+                  {booking.status === BookingStatus.READY_FOR_INVOICE && (
+                    <button
+                      onClick={() => { handleRecordInvoiceIssued(); setIsActionsOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                    >
+                      <Receipt size={15} /> Mark invoiced
+                    </button>
+                  )}
+                  {booking.status === BookingStatus.INVOICED && (
+                    <button
+                      onClick={() => { handleRecordPaymentReceived(); setIsActionsOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                    >
+                      <Receipt size={15} /> Mark paid
+                    </button>
+                  )}
                   {booking.status === BookingStatus.BOOKED && (
                     <button
                       onClick={() => { handleMarkNotExecuted(); setIsActionsOpen(false); }}

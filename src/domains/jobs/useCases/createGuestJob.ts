@@ -5,11 +5,11 @@ import { Job } from '../types';
 import { ClientService } from '../../../services/clientService';
 import { NotificationService } from '../../../services/notificationService';
 import { EmailService } from '../../../services/emailService';
+import { JobNumberService } from '../../../services/jobNumberService';
 import { MOCK_USERS, MOCK_BOOKINGS, saveMockData } from '../../../services/mockData';
 import { NotificationType } from '../../../types';
 
 export const createGuestJob = async (input: any): Promise<Job> => {
-    const bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
     const start = new Date(`2000-01-01T${input.startTime}`);
     const end = new Date(start.getTime() + input.durationMinutes * 60000);
     const expectedEndTime = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -27,11 +27,14 @@ export const createGuestJob = async (input: any): Promise<Job> => {
         }
     }
 
+    const referencedJob = await JobNumberService.ensureBookingReference(input);
     const newJob = {
         ...input,
+        ...referencedJob,
         clientId,
-        bookingRef,
         status: JobStatus.INCOMING,
+        sourceSystem: input.sourceSystem || 'CLIENT_PORTAL',
+        syncStatus: input.syncStatus || 'LOCAL_ONLY',
         expectedEndTime,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -46,7 +49,7 @@ export const createGuestJob = async (input: any): Promise<Job> => {
             NotificationService.notify(
                 admin.id,
                 'New Guest Job',
-                `Reference ${bookingRef}: New request for ${input.languageTo}.`,
+                `Reference ${(newJob as any).bookingRef}: New request for ${input.languageTo}.`,
                 NotificationType.URGENT,
                 `/admin/bookings/${docRef.id}`
             );

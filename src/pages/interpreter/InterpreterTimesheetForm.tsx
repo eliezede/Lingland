@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { BookingService, StorageService } from '../../services/api';
-import { Booking, ServiceCategory, SessionMode } from '../../types';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { BillingService, BookingService, StorageService } from '../../services/api';
+import { Booking, BookingStatus, ServiceCategory, SessionMode } from '../../types';
 import { useInterpreterTimesheets } from '../../hooks/useInterpreterTimesheets';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -12,6 +12,7 @@ import { SignaturePad } from '../../components/ui/SignaturePad';
 export const InterpreterTimesheetForm = () => {
   const { bookingId } = useParams<{ bookingId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { showToast } = useToast();
   const [job, setJob] = useState<Booking | null>(null);
@@ -38,24 +39,66 @@ export const InterpreterTimesheetForm = () => {
   });
 
   const [uploading, setUploading] = useState(false);
+  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+
+  const goBackToContext = () => {
+    if (routeState?.returnTo) {
+      navigate(routeState.returnTo);
+      return;
+    }
+    navigate('/interpreter/timesheets');
+  };
 
   useEffect(() => {
     if (bookingId) {
-      BookingService.getById(bookingId).then(b => {
-        setJob(b || null);
-        if (b) {
-          const mode = b.locationType === 'ONLINE' ? SessionMode.VIDEO : SessionMode.F2F;
-          setFormData(prev => ({ 
-            ...prev, 
-            sessionMode: b.sessionMode || mode,
-            start: b.startTime || '',
-            // Estimate end time if possible
-            end: b.startTime ? calculateDefaultEnd(b.startTime, b.durationMinutes) : ''
-          }));
+      const interpreterId = user?.profileId;
+      if (!interpreterId) {
+        navigate('/interpreter/timesheets');
+        return;
+      }
+      BookingService.getById(bookingId).then(async b => {
+        if (!b) {
+          showToast('Job not found', 'error');
+          navigate('/interpreter/timesheets');
+          return;
         }
+        if (b.interpreterId !== interpreterId) {
+          showToast('This job is not assigned to your interpreter profile', 'error');
+          navigate('/interpreter/timesheets');
+          return;
+        }
+        if (b.status !== BookingStatus.BOOKED) {
+          showToast('Timesheets can only be submitted for confirmed jobs', 'error');
+          navigate('/interpreter/timesheets');
+          return;
+        }
+        const existingTimesheets = await BillingService.getInterpreterTimesheets(interpreterId);
+        if (existingTimesheets.some(ts => ts.bookingId === b.id)) {
+          showToast('A timesheet has already been submitted for this job', 'info');
+          navigate('/interpreter/timesheets');
+          return;
+        }
+        const scheduledEnd = new Date(`${b.date}T${b.endTime || b.expectedEndTime || b.startTime || '23:59'}`);
+        const completed = b.serviceCategory === ServiceCategory.TRANSLATION
+          ? new Date(`${b.date}T23:59:00`) <= new Date()
+          : scheduledEnd <= new Date();
+        if (!completed) {
+          showToast('This job is not ready for timesheet submission yet', 'info');
+          navigate('/interpreter/jobs');
+          return;
+        }
+
+        setJob(b || null);
+        const mode = b.locationType === 'ONLINE' ? SessionMode.VIDEO : SessionMode.F2F;
+        setFormData(prev => ({
+          ...prev,
+          sessionMode: b.sessionMode || mode,
+          start: b.startTime || '',
+          end: b.startTime ? calculateDefaultEnd(b.startTime, b.durationMinutes) : ''
+        }));
       });
     }
-  }, [bookingId]);
+  }, [bookingId, user?.profileId]);
 
   const calculateDefaultEnd = (start: string, duration: number) => {
     try {
@@ -93,7 +136,7 @@ export const InterpreterTimesheetForm = () => {
       duration: billableMins,
       earnings: total
     };
-  }, [formData]);
+  }, [formData, job]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -135,8 +178,11 @@ export const InterpreterTimesheetForm = () => {
 
       // 2. Construct ISO dates
       const baseDate = job.date;
-      const startISO = `${baseDate}T${formData.start}:00`;
-      const endISO = `${baseDate}T${formData.end}:00`;
+      const startDate = new Date(`${baseDate}T${formData.start || '00:00'}:00`);
+      const endDate = new Date(`${baseDate}T${formData.end || formData.start || '00:00'}:00`);
+      if (endDate <= startDate) endDate.setDate(endDate.getDate() + 1);
+      const startISO = startDate.toISOString();
+      const endISO = endDate.toISOString();
 
       // 3. Submit
       const claimedTotal = job.serviceCategory === ServiceCategory.TRANSLATION
@@ -191,7 +237,7 @@ export const InterpreterTimesheetForm = () => {
     <div className="bg-slate-50 min-h-screen pb-20">
       {/* Header */}
       <div className="px-4 py-6 bg-white border-b border-slate-200 flex items-center sticky top-0 z-20 shadow-sm">
-        <button onClick={() => navigate(-1)} className="mr-4 p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-600">
+        <button onClick={goBackToContext} className="mr-4 p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-600">
           <ChevronLeft size={24} />
         </button>
         <div>

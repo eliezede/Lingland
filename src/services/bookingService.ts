@@ -9,6 +9,7 @@ import { ClientService } from './clientService';
 import { MOCK_INTERPRETERS, MOCK_ASSIGNMENTS, saveMockData, MOCK_BOOKINGS, MOCK_USERS } from './mockData';
 import { NotificationService } from './notificationService';
 import { EmailService } from './emailService';
+import { JobNumberService } from './jobNumberService';
 import { JobEventType } from '../domains/jobs/jobEvents';
 import { getAssignmentPendingStatus, getNeedsAssignmentStatus, validateWorkflowTransition } from '../domains/jobs/workflow';
 
@@ -26,6 +27,7 @@ const addJobEvent = async (
       organizationId: booking.organizationId || 'lingland-main',
       type,
       source: 'system',
+      ...(typeof metadata.description === 'string' ? { description: metadata.description } : {}),
       metadata,
       createdAt: new Date().toISOString()
     });
@@ -106,7 +108,7 @@ export const BookingService = {
 
   getJobEvents: async (jobId: string): Promise<any[]> => {
     try {
-      const q = query(collection(db, 'jobEvents'), where('jobId', '==', jobId), orderBy('createdAt', 'asc'));
+      const q = query(collection(db, 'jobEvents'), where('jobId', '==', jobId), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
       return snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
     } catch {
@@ -126,10 +128,14 @@ export const BookingService = {
   },
 
   create: async (bookingData: any): Promise<Booking> => {
+    const referencedBooking = await JobNumberService.ensureBookingReference(bookingData);
     const newBooking = { 
-      ...bookingData, 
+      ...bookingData,
+      ...referencedBooking,
       status: bookingData.status || BookingStatus.INCOMING,
       organizationId: bookingData.organizationId || 'lingland-main',
+      sourceSystem: bookingData.sourceSystem || 'STAFF_MANUAL',
+      syncStatus: bookingData.syncStatus || 'LOCAL_ONLY',
       createdAt: serverTimestamp(), 
       updatedAt: serverTimestamp() 
     };
@@ -139,7 +145,7 @@ export const BookingService = {
       // Notify Admin
       const admins = await getAdminUsers();
       admins.forEach(admin => {
-        NotificationService.notify(admin.id, 'New Booking Request', `Client ${bookingData.clientName} requested a ${bookingData.languageTo} interpreter for ${bookingData.date}.`, NotificationType.INFO, `/admin/bookings/${docRef.id}`);
+        NotificationService.notify(admin.id, 'New Booking Request', `Reference ${newBooking.bookingRef}: ${bookingData.clientName} requested a ${bookingData.languageTo} interpreter for ${bookingData.date}.`, NotificationType.INFO, `/admin/bookings/${docRef.id}`);
       });
 
       // Email System
@@ -155,8 +161,6 @@ export const BookingService = {
   },
 
   createGuestBooking: async (input: any): Promise<Booking> => {
-    const bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
-    
     let expectedEndTime = '';
     if (input.startTime && input.durationMinutes) {
       const start = new Date(`2000-01-01T${input.startTime}`);
@@ -177,12 +181,15 @@ export const BookingService = {
       }
     }
 
+    const referencedBooking = await JobNumberService.ensureBookingReference(input);
     const newBooking = {
       ...input,
+      ...referencedBooking,
       guestContact: input.guestContact ? { ...input.guestContact, email } : input.guestContact,
       clientId, // Linked to the new or existing GUEST client
-      bookingRef,
       status: BookingStatus.INCOMING,
+      sourceSystem: input.sourceSystem || 'CLIENT_PORTAL',
+      syncStatus: input.syncStatus || 'LOCAL_ONLY',
       expectedEndTime,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
@@ -194,7 +201,7 @@ export const BookingService = {
       // Notify Admin
       const admins = await getAdminUsers();
       admins.forEach(admin => {
-        NotificationService.notify(admin.id, 'New Guest Booking', `Reference ${bookingRef}: New request for ${input.languageTo}.`, NotificationType.URGENT, `/admin/bookings/${docRef.id}`);
+        NotificationService.notify(admin.id, 'New Guest Booking', `Reference ${newBooking.bookingRef}: New request for ${input.languageTo}.`, NotificationType.URGENT, `/admin/bookings/${docRef.id}`);
       });
 
       // Email System
@@ -413,6 +420,38 @@ export const BookingService = {
     }
   },
 
+  ensureInterpreterAssignment: async (bookingId: string, interpreterId: string): Promise<BookingAssignment> => {
+    const existing = await BookingService.getAssignmentsByBookingId(bookingId);
+    const match = existing.find(a => a.interpreterId === interpreterId && [AssignmentStatus.OFFERED, AssignmentStatus.ACCEPTED].includes(a.status));
+    if (match) return match;
+
+    const newAssignment = {
+      bookingId,
+      interpreterId,
+      status: AssignmentStatus.OFFERED,
+      offeredAt: new Date().toISOString(),
+      assignmentType: 'DIRECT'
+    } as BookingAssignment & { assignmentType?: string };
+
+    try {
+      const docRef = await addDoc(collection(db, ASSIGNMENTS_COLLECTION), newAssignment);
+      const booking = await BookingService.getById(bookingId);
+      if (booking) {
+        await addJobEvent(booking, 'DIRECT_ASSIGNMENT_SENT', {
+          interpreterId,
+          assignmentId: docRef.id,
+          recoveredFromLegacyDirectAssignment: true
+        });
+      }
+      return { ...newAssignment, id: docRef.id } as BookingAssignment;
+    } catch {
+      const mockAssignment = { ...newAssignment, id: `a-${Date.now()}` } as BookingAssignment;
+      MOCK_ASSIGNMENTS.push(mockAssignment);
+      saveMockData();
+      return mockAssignment;
+    }
+  },
+
   createAssignment: async (bookingId: string, interpreterId: string): Promise<BookingAssignment> => {
     const newAssignment = { bookingId, interpreterId, status: AssignmentStatus.OFFERED, offeredAt: new Date().toISOString() };
     try {
@@ -514,6 +553,120 @@ export const BookingService = {
     } catch (error) {
       console.error('Failed to get interpreter schedule', error);
       return [];
+    }
+  },
+
+  recordInterpreterResponseByStaff: async (bookingId: string, accepted: boolean): Promise<void> => {
+    try {
+      const bookingRef = doc(db, COLLECTION_NAME, bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+
+      const bookingData = { id: bookingId, ...bookingSnap.data() } as Booking;
+      if (!bookingData.interpreterId) throw new Error('No interpreter assigned to this booking');
+
+      const intSnap = await getDoc(doc(db, 'interpreters', bookingData.interpreterId));
+      const intData = intSnap.exists() ? (intSnap.data() as Interpreter) : undefined;
+      const intName = bookingData.interpreterName || intData?.name || 'Interpreter';
+
+      const assignmentsQuery = query(
+        collection(db, ASSIGNMENTS_COLLECTION),
+        where('bookingId', '==', bookingId),
+        where('interpreterId', '==', bookingData.interpreterId)
+      );
+      const assignmentsSnap = await getDocs(assignmentsQuery);
+      const batch = writeBatch(db);
+      const responseAt = new Date().toISOString();
+
+      if (assignmentsSnap.empty) {
+        const assignmentRef = doc(collection(db, ASSIGNMENTS_COLLECTION));
+        batch.set(assignmentRef, {
+          bookingId,
+          interpreterId: bookingData.interpreterId,
+          status: accepted ? AssignmentStatus.ACCEPTED : AssignmentStatus.DECLINED,
+          offeredAt: responseAt,
+          respondedAt: responseAt,
+          assignmentType: 'STAFF_MANUAL',
+          recordedByStaff: true
+        });
+      } else {
+        assignmentsSnap.docs.forEach(d => {
+          batch.update(d.ref, {
+            status: accepted ? AssignmentStatus.ACCEPTED : AssignmentStatus.DECLINED,
+            respondedAt: responseAt,
+            recordedByStaff: true
+          });
+        });
+      }
+
+      if (accepted) {
+        batch.update(bookingRef, {
+          status: BookingStatus.BOOKED,
+          interpreterName: intName,
+          interpreterPhotoUrl: intData?.photoUrl || bookingData.interpreterPhotoUrl || null,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        batch.update(bookingRef, {
+          status: getNeedsAssignmentStatus(),
+          interpreterId: null,
+          interpreterName: null,
+          interpreterPhotoUrl: null,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      await batch.commit();
+
+      if (accepted) {
+        const intUser = await getInterpreterUser(bookingData.interpreterId);
+        const intEmail = intData?.email || intUser?.email || '';
+        await EmailService.sendStatusEmail({ ...bookingData, status: BookingStatus.BOOKED }, BookingStatus.BOOKED, {
+          interpreterId: bookingData.interpreterId,
+          interpreterName: intName,
+          interpreterEmail: intEmail
+        });
+      }
+
+      await addJobEvent({ ...bookingData, status: accepted ? BookingStatus.BOOKED : getNeedsAssignmentStatus() }, accepted ? 'ASSIGNMENT_ACCEPTED' : 'ASSIGNMENT_DECLINED', {
+        fromStatus: bookingData.status,
+        toStatus: accepted ? BookingStatus.BOOKED : getNeedsAssignmentStatus(),
+        interpreterId: bookingData.interpreterId,
+        description: accepted ? 'Interpreter acceptance was recorded manually by staff.' : 'Interpreter decline was recorded manually by staff.',
+        recordedByStaff: true,
+        source: 'manual_staff'
+      });
+    } catch (e) {
+      console.error('Failed to record interpreter response by staff', e);
+      throw e;
+    }
+  },
+
+  recordSessionCompletedByStaff: async (bookingId: string): Promise<void> => {
+    try {
+      const bookingRef = doc(db, COLLECTION_NAME, bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+
+      const bookingData = { id: bookingId, ...bookingSnap.data() } as Booking;
+      validateWorkflowTransition(bookingData.status, BookingStatus.SESSION_COMPLETED, { adminOverride: true });
+
+      await updateDoc(bookingRef, {
+        status: BookingStatus.SESSION_COMPLETED,
+        updatedAt: serverTimestamp()
+      });
+
+      await addJobEvent({ ...bookingData, status: BookingStatus.SESSION_COMPLETED }, 'SESSION_COMPLETED', {
+        fromStatus: bookingData.status,
+        toStatus: BookingStatus.SESSION_COMPLETED,
+        interpreterId: bookingData.interpreterId || null,
+        description: 'Session completion was recorded manually by staff.',
+        recordedByStaff: true,
+        source: 'manual_staff'
+      });
+    } catch (e) {
+      console.error('Failed to record session completion by staff', e);
+      throw e;
     }
   },
 
