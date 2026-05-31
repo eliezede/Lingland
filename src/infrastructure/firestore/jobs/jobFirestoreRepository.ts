@@ -5,6 +5,7 @@ import { Job, JobAssignment } from '../../../domains/jobs/types';
 import { JobStatus } from '../../../domains/jobs/status';
 import { AssignmentStatus } from '../../../shared/types/common';
 import { MOCK_BOOKINGS, MOCK_ASSIGNMENTS, saveMockData } from '../../../services/mockData';
+import { validateWorkflowTransition } from '../../../domains/jobs/workflow';
 
 export const createJobFirestoreRepository = (tenantId: string): JobRepository => ({
     async getById(id: string): Promise<Job | null> {
@@ -49,10 +50,20 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
     },
 
     async updateStatus(id, newStatus): Promise<void> {
-        if (newStatus === JobStatus.CANCELLED) {
-            const job = await this.getById(id);
-            if (!job) throw new Error('Job not found or unauthorized');
+        const job = await this.getById(id);
+        if (!job) throw new Error('Job not found or unauthorized');
+        let hasTimesheet = false;
+        if (newStatus === JobStatus.READY_FOR_INVOICE) {
+            try {
+                const tsQuery = query(collection(db, 'timesheets'), where('bookingId', '==', id));
+                hasTimesheet = !(await getDocs(tsQuery)).empty;
+            } catch {
+                hasTimesheet = false;
+            }
+        }
+        validateWorkflowTransition(job.status, newStatus, { hasTimesheet });
 
+        if (newStatus === JobStatus.CANCELLED) {
             try {
                 const batch = writeBatch(db);
                 batch.update(doc(db, 'bookings', id), { status: newStatus as any, updatedAt: serverTimestamp() });

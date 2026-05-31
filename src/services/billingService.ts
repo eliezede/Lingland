@@ -534,7 +534,7 @@ export const BillingService = {
       await batch.commit();
 
       const booking = await getBookingForBillingComms(ts.bookingId, BookingStatus.READY_FOR_INVOICE);
-      if (booking) await dispatchReadyForInvoiceComms(booking, { id, ...ts } as Timesheet);
+      if (booking) await dispatchReadyForInvoiceComms(booking, { ...ts, id } as Timesheet);
 
     } catch (e) {
       console.error("Error approving timesheet:", e);
@@ -560,20 +560,14 @@ export const BillingService = {
       if (!snap.empty) {
         await BillingService.approveTimesheet(snap.docs[0].id);
       } else {
-        await updateDoc(doc(db, 'bookings', bookingId), {
-          status: BookingStatus.READY_FOR_INVOICE,
-          updatedAt: serverTimestamp()
-        });
-        const booking = await getBookingForBillingComms(bookingId, BookingStatus.READY_FOR_INVOICE);
-        if (booking) await dispatchReadyForInvoiceComms(booking);
+        throw new Error('Timesheet required before verification. Create a timesheet or exception claim first.');
       }
     } catch (e) {
       // Mock fallback
       const ts = MOCK_TIMESHEETS.find(t => t.bookingId === bookingId);
       if (ts) await BillingService.approveTimesheet(ts.id);
       else {
-        const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-        if (b) { b.status = BookingStatus.READY_FOR_INVOICE; saveMockData(); }
+        throw new Error('Timesheet required before verification. Create a timesheet or exception claim first.');
       }
     }
   },

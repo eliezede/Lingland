@@ -358,7 +358,7 @@ export const AdminNewBooking = () => {
                 notes: formData.notes,
                 genderPreference: formData.genderPreference,
                 organizationId: organizationId || (user as any)?.organizationId || 'lingland-main',
-                status: isEditMode ? originalBooking?.status || BookingStatus.INCOMING : selectedInterpreter ? BookingStatus.OPENED : BookingStatus.INCOMING,
+                status: isEditMode ? originalBooking?.status || BookingStatus.INCOMING : selectedInterpreter ? BookingStatus.ASSIGNMENT_PENDING : BookingStatus.INCOMING,
                 requestedByUserId: originalBooking?.requestedByUserId || user?.id || 'admin',
                 updatedAt: new Date().toISOString(),
                 translationFormat: formData.translationFormat,
@@ -405,7 +405,10 @@ export const AdminNewBooking = () => {
             } else {
                 bookingData.bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
                 bookingData.createdAt = new Date().toISOString();
-                await BookingService.create(bookingData);
+                const createdBooking = await BookingService.create(bookingData);
+                if (selectedInterpreter) {
+                    await BookingService.createAssignment(createdBooking.id, selectedInterpreter.id);
+                }
                 showToast('Booking created successfully', 'success');
                 navigate('/admin/bookings');
             }

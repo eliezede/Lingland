@@ -59,8 +59,9 @@ const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string =>
 const formatMoney = (amount?: number) => `GBP ${(amount || 0).toFixed(2)}`;
 
 const getNextAction = (booking: Booking) => {
-  if (booking.status === BookingStatus.INCOMING) return 'Assign interpreter';
-  if (booking.status === BookingStatus.OPENED && !booking.interpreterId) return 'Assign interpreter';
+  if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) return 'Assign interpreter';
+  if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) return 'Assign interpreter';
+  if (booking.status === BookingStatus.ASSIGNMENT_PENDING) return 'Await interpreter response';
   if (booking.status === BookingStatus.BOOKED) return 'Monitor delivery';
   if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
   if (booking.status === BookingStatus.READY_FOR_INVOICE) return 'Send to invoicing';
@@ -137,7 +138,7 @@ export const AdminBookingDetails = () => {
     try {
       if (!id) return;
       const data = await BookingService.getById(id);
-      setBooking(data);
+      setBooking(data || null);
     } catch {
       showToast('Failed to load booking details', 'error');
     } finally {
@@ -297,10 +298,10 @@ export const AdminBookingDetails = () => {
   const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
 
   const primaryAction = () => {
-    if (booking.status === BookingStatus.INCOMING) {
+    if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) {
       return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
     }
-    if (booking.status === BookingStatus.OPENED && !booking.interpreterId) {
+    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) {
       return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
     }
     if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) {

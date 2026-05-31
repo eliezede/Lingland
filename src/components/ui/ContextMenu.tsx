@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
-interface ContextMenuItem {
+interface ContextMenuActionItem {
     label: string;
     icon?: React.ElementType;
     onClick: () => void;
     variant?: 'default' | 'danger';
-    divider?: boolean;
 }
+
+interface ContextMenuDividerItem {
+    divider: true;
+}
+
+export type ContextMenuItem = ContextMenuActionItem | ContextMenuDividerItem;
 
 interface ContextMenuProps {
     children: React.ReactElement;
@@ -52,22 +57,25 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ children, items }) => 
                 >
                     {items.map((item, index) => (
                         <React.Fragment key={index}>
-                            {item.divider && <div className="my-1 border-t border-slate-100 dark:border-slate-800" />}
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    item.onClick();
-                                    closeMenu();
-                                }}
-                                className={`w-full flex items-center space-x-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-left
-                  ${item.variant === 'danger'
-                                        ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
-                                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
-                                    }`}
-                            >
-                                {item.icon && <item.icon size={16} className="shrink-0" />}
-                                <span>{item.label}</span>
-                            </button>
+                            {'divider' in item ? (
+                                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                            ) : (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        item.onClick();
+                                        closeMenu();
+                                    }}
+                                    className={`w-full flex items-center space-x-3 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-left
+                    ${item.variant === 'danger'
+                                            ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
+                                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {item.icon && <item.icon size={16} className="shrink-0" />}
+                                    <span>{item.label}</span>
+                                </button>
+                            )}
                         </React.Fragment>
                     ))}
                 </div>,

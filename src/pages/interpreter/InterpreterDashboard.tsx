@@ -149,7 +149,7 @@ export const InterpreterDashboard = () => {
       ]);
 
       // Categorize
-      const isPending = (s: string) => s === BookingStatus.OPENED || s === 'PENDING_ASSIGNMENT';
+      const isPending = (s: string) => s === BookingStatus.OPENED || s === BookingStatus.ASSIGNMENT_PENDING || s === 'PENDING_ASSIGNMENT';
       const confirmed = schedule.filter((b: Booking) => !isPending(b.status as string));
       // We tag these as "direct" so the UI knows they use Booking ID
       const directPending = schedule.filter((b: Booking) => isPending(b.status as string)).map(b => ({ ...b, _isDirect: true }));
@@ -434,7 +434,7 @@ export const InterpreterDashboard = () => {
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex flex-col">
                         <h4 className="font-black text-xs text-slate-900">{offer.serviceType}</h4>
-                        {offer.status === BookingStatus.OPENED && <span className="text-[9px] font-black text-blue-600 flex items-center gap-1 mt-0.5"><ShieldCheck size={10} /> Direct Assignment</span>}
+                        {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(offer.status) && <span className="text-[9px] font-black text-blue-600 flex items-center gap-1 mt-0.5"><ShieldCheck size={10} /> Direct Assignment</span>}
                       </div>
                       <span className="text-[9px] font-black bg-blue-900 text-white px-2 py-0.5 rounded-full uppercase tracking-tighter shadow-sm group-hover:scale-110 transition-transform">Live</span>
                     </div>

@@ -9,9 +9,40 @@ import { ClientService } from './clientService';
 import { MOCK_INTERPRETERS, MOCK_ASSIGNMENTS, saveMockData, MOCK_BOOKINGS, MOCK_USERS } from './mockData';
 import { NotificationService } from './notificationService';
 import { EmailService } from './emailService';
+import { JobEventType } from '../domains/jobs/jobEvents';
+import { getAssignmentPendingStatus, getNeedsAssignmentStatus, validateWorkflowTransition } from '../domains/jobs/workflow';
 
 const COLLECTION_NAME = 'bookings';
 const ASSIGNMENTS_COLLECTION = 'assignments';
+
+const addJobEvent = async (
+  booking: Pick<Booking, 'id' | 'organizationId' | 'status'>,
+  type: JobEventType,
+  metadata: Record<string, unknown> = {}
+) => {
+  try {
+    await addDoc(collection(db, 'jobEvents'), {
+      jobId: booking.id,
+      organizationId: booking.organizationId || 'lingland-main',
+      type,
+      source: 'system',
+      metadata,
+      createdAt: new Date().toISOString()
+    });
+  } catch (e) {
+    console.warn('[BookingService] Failed to write job event', e);
+  }
+};
+
+const hasTimesheetForBooking = async (bookingId: string): Promise<boolean> => {
+  try {
+    const q = query(collection(db, 'timesheets'), where('bookingId', '==', bookingId));
+    const snap = await getDocs(q);
+    return !snap.empty;
+  } catch {
+    return false;
+  }
+};
 
 // Helper: find the Firebase Auth user document for an interpreter by their profile ID.
 // Falls back to MOCK_USERS for local dev.
@@ -112,7 +143,9 @@ export const BookingService = {
       });
 
       // Email System
-      await EmailService.sendStatusEmail({ ...newBooking, id: docRef.id } as Booking, BookingStatus.INCOMING);
+      if (newBooking.status === BookingStatus.INCOMING) {
+        await EmailService.sendStatusEmail({ ...newBooking, id: docRef.id } as Booking, BookingStatus.INCOMING);
+      }
 
       return { id: docRef.id, ...newBooking } as unknown as Booking;
     } catch (e) {
@@ -176,6 +209,11 @@ export const BookingService = {
 
   updateStatus: async (id: string, status: BookingStatus): Promise<void> => {
     try {
+      const currentBooking = await BookingService.getById(id);
+      if (!currentBooking) throw new Error('Booking not found');
+      const hasTimesheet = await hasTimesheetForBooking(id);
+      validateWorkflowTransition(currentBooking.status, status, { hasTimesheet });
+
       if (status === BookingStatus.CANCELLED) {
         const batch = writeBatch(db);
         batch.update(doc(db, COLLECTION_NAME, id), { status, updatedAt: serverTimestamp() });
@@ -189,6 +227,10 @@ export const BookingService = {
 
       const booking = await BookingService.getById(id);
       if (booking) {
+        await addJobEvent(booking, status === BookingStatus.CANCELLED ? 'BOOKING_CANCELLED' : 'STATUS_CHANGED', {
+          fromStatus: currentBooking.status,
+          toStatus: status
+        });
         let intEmail = '';
         if (booking.interpreterId) {
           const intUser = await getInterpreterUser(booking.interpreterId);
@@ -229,9 +271,12 @@ export const BookingService = {
       const intName = intData?.name || 'Unknown';
       const intEmail = intData?.email || '';
 
-      // Update booking to OPENED (Pending Interpreter Verification/Acceptance)
+      const pendingStatus = getAssignmentPendingStatus();
+      validateWorkflowTransition(bookingData.status, pendingStatus, { adminOverride: true });
+
+      // Direct assignment still requires interpreter acceptance before BOOKED.
       await updateDoc(bookingRef, {
-        status: BookingStatus.OPENED,
+        status: pendingStatus,
         interpreterId: interpreterId,
         interpreterName: intName,
         interpreterPhotoUrl: intData?.photoUrl || null,
@@ -245,26 +290,37 @@ export const BookingService = {
       );
       const assignmentsSnap = await getDocs(assignmentsQuery);
       const batch = writeBatch(db);
+      let hasDirectAssignment = false;
       assignmentsSnap.docs.forEach(d => {
         if (d.data().interpreterId !== interpreterId) {
           batch.update(d.ref, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() });
         } else {
-          batch.update(d.ref, { status: AssignmentStatus.ACCEPTED, respondedAt: new Date().toISOString() });
+          hasDirectAssignment = true;
+          batch.update(d.ref, { status: AssignmentStatus.OFFERED, offeredAt: new Date().toISOString() });
         }
       });
+      if (!hasDirectAssignment) {
+        const assignmentRef = doc(collection(db, ASSIGNMENTS_COLLECTION));
+        batch.set(assignmentRef, { bookingId, interpreterId, status: AssignmentStatus.OFFERED, offeredAt: new Date().toISOString(), assignmentType: 'DIRECT' });
+      }
       await batch.commit();
 
       // Notify Interpreter (real Firestore user lookup)
       const interpreterUser = await getInterpreterUser(interpreterId);
       if (interpreterUser) {
-        NotificationService.notify(interpreterUser.id, 'Job Confirmed', `Your assignment for ${bookingData?.languageTo || 'Job'} on ${bookingData?.date} is officially confirmed.`, NotificationType.SUCCESS, `/interpreter/jobs/${bookingId}`);
+        NotificationService.notify(interpreterUser.id, 'New Direct Assignment', `Please review the assignment for ${bookingData?.languageTo || 'Job'} on ${bookingData?.date}.`, NotificationType.INFO, `/interpreter/jobs/${bookingId}`);
       }
 
       // Email to Interpreter
-      await EmailService.sendStatusEmail(bookingData, BookingStatus.OPENED, {
+      await EmailService.sendStatusEmail({ ...bookingData, status: pendingStatus }, pendingStatus, {
         interpreterId: interpreterId,
         interpreterName: intName,
         interpreterEmail: intEmail || interpreterUser?.email
+      });
+      await addJobEvent({ ...bookingData, status: pendingStatus }, 'DIRECT_ASSIGNMENT_SENT', {
+        fromStatus: bookingData.status,
+        toStatus: pendingStatus,
+        interpreterId
       });
 
     } catch (e) {
@@ -282,16 +338,18 @@ export const BookingService = {
       const bookingData = { id: bookingId, ...bookingSnap.data() } as Booking;
       const interpreterId = bookingData.interpreterId;
 
-      // Update booking: reset status to INCOMING so admin can re-allocate
+      const nextStatus = getNeedsAssignmentStatus();
+
+      // Update booking without treating assignment removal as cancellation.
       await updateDoc(bookingRef, {
-        status: BookingStatus.INCOMING,
+        status: nextStatus,
         interpreterId: null,
         interpreterName: null,
         interpreterPhotoUrl: null,
         updatedAt: serverTimestamp()
       });
 
-      // Update assignment: mark as DECLINED or CANCELLED if exists
+      // Assignment status describes the interpreter relationship separately.
       if (interpreterId) {
         const assignmentsQuery = query(collection(db, ASSIGNMENTS_COLLECTION),
           where('bookingId', '==', bookingId),
@@ -300,7 +358,7 @@ export const BookingService = {
         const assignmentsSnap = await getDocs(assignmentsQuery);
         const batch = writeBatch(db);
         assignmentsSnap.docs.forEach(d => {
-          batch.update(d.ref, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() });
+          batch.update(d.ref, { status: AssignmentStatus.REMOVED, respondedAt: new Date().toISOString(), removalReason: reason || null });
         });
         await batch.commit();
 
@@ -314,16 +372,20 @@ export const BookingService = {
             NotificationType.URGENT,
             '/interpreter/jobs'
           );
-
-          // Send Email
-          await EmailService.sendStatusEmail({ ...bookingData, status: BookingStatus.CANCELLED }, BookingStatus.CANCELLED, {
+          await EmailService.sendAssignmentRemovedEmail({ ...bookingData, status: nextStatus }, {
             interpreterId: interpreterId,
             interpreterName: bookingData.interpreterName || 'Interpreter',
             interpreterEmail: interpreterUser.email,
-            cancelReason: reason || 'Administrative reshuffling or client request'
+            removalReason: reason || 'Administrative reassignment'
           });
         }
       }
+      await addJobEvent({ ...bookingData, status: nextStatus }, 'ASSIGNMENT_REMOVED', {
+        fromStatus: bookingData.status,
+        toStatus: nextStatus,
+        interpreterId,
+        reason: reason || null
+      });
     } catch (e) {
       console.error('Failed to unassign interpreter', e);
       throw e;
@@ -355,7 +417,8 @@ export const BookingService = {
     const newAssignment = { bookingId, interpreterId, status: AssignmentStatus.OFFERED, offeredAt: new Date().toISOString() };
     try {
       const docRef = await addDoc(collection(db, ASSIGNMENTS_COLLECTION), newAssignment);
-      await updateDoc(doc(db, COLLECTION_NAME, bookingId), { status: BookingStatus.OPENED });
+      const pendingStatus = getAssignmentPendingStatus();
+      await updateDoc(doc(db, COLLECTION_NAME, bookingId), { status: pendingStatus, updatedAt: serverTimestamp() });
 
       // Fetch interpreter info from Firestore
       const intSnap = await getDoc(doc(db, 'interpreters', interpreterId));
@@ -373,10 +436,15 @@ export const BookingService = {
         NotificationService.notify(interpreterUser.id, 'New Job Offer', 'You have a new interpreting request matching your profile.', NotificationType.INFO, '/interpreter/jobs');
       }
 
-      await EmailService.sendStatusEmail(bookingData, BookingStatus.OPENED, {
+      await EmailService.sendStatusEmail({ ...bookingData, status: pendingStatus }, pendingStatus, {
         interpreterId,
         interpreterName: intName,
         interpreterEmail: intEmail || interpreterUser?.email
+      });
+      await addJobEvent({ ...bookingData, status: pendingStatus }, 'JOB_OFFER_SENT', {
+        fromStatus: bookingData.status,
+        toStatus: pendingStatus,
+        interpreterId
       });
 
       return { id: docRef.id, ...newAssignment } as BookingAssignment;
@@ -384,7 +452,7 @@ export const BookingService = {
       const mockAssignment = { id: `a-${Date.now()}`, ...newAssignment } as BookingAssignment;
       MOCK_ASSIGNMENTS.push(mockAssignment);
       const b = MOCK_BOOKINGS.find(book => book.id === bookingId);
-      if (b && (b.status === BookingStatus.INCOMING || b.status === BookingStatus.OPENED)) b.status = BookingStatus.OPENED;
+      if (b && [BookingStatus.INCOMING, BookingStatus.OPENED, BookingStatus.NEEDS_ASSIGNMENT].includes(b.status)) b.status = BookingStatus.ASSIGNMENT_PENDING;
       saveMockData();
       return mockAssignment;
     }
@@ -403,14 +471,12 @@ export const BookingService = {
 
   checkScheduleConflict: async (interpreterId: string, date: string, startTime: string, durationMinutes: number, excludeBookingId?: string): Promise<Booking | null> => {
     try {
-      const q = query(
-        collection(db, COLLECTION_NAME),
-        where('interpreterId', '==', interpreterId),
-        where('date', '==', date),
-        where('status', '==', BookingStatus.BOOKED)
-      );
+      const q = query(collection(db, COLLECTION_NAME), where('interpreterId', '==', interpreterId), where('date', '==', date));
       const snap = await getDocs(q);
-      const bookings = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
+      const nonConflictStatuses = new Set<string>([BookingStatus.CANCELLED]);
+      const bookings = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Booking))
+        .filter(b => !nonConflictStatuses.has(String(b.status)));
 
       const targetStart = new Date(`${date}T${startTime}`);
       const targetEnd = new Date(targetStart.getTime() + durationMinutes * 60000);
@@ -444,7 +510,7 @@ export const BookingService = {
       const q = query(collection(db, COLLECTION_NAME), where('interpreterId', '==', interpreterId));
       const snap = await getDocs(q);
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking));
-      return all.filter(b => [BookingStatus.OPENED, 'PENDING_ASSIGNMENT' as any, BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).sort((a, b) => a.date.localeCompare(b.date));
+      return all.filter(b => [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any, BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).sort((a, b) => a.date.localeCompare(b.date));
     } catch (error) {
       console.error('Failed to get interpreter schedule', error);
       return [];
@@ -463,7 +529,7 @@ export const BookingService = {
         const bookingSnap = await getDoc(bookingRef);
         const bookingData = bookingSnap.data() as Booking;
 
-        if (bookingData.status !== BookingStatus.OPENED) {
+        if (![BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(bookingData.status)) {
           throw new Error('This job is no longer available.');
         }
 
@@ -478,7 +544,8 @@ export const BookingService = {
           status: BookingStatus.BOOKED,
           interpreterId: data.interpreterId,
           interpreterName: intName,
-          interpreterPhotoUrl: (intSnap.data() as Interpreter).photoUrl || null
+          interpreterPhotoUrl: intSnap.exists() ? (intSnap.data() as Interpreter).photoUrl || null : null,
+          updatedAt: serverTimestamp()
         });
 
         // NT-03: Notify real Firestore admins (not mock users)
@@ -495,6 +562,12 @@ export const BookingService = {
           interpreterId: data.interpreterId,
           interpreterName: intName,
           interpreterEmail: intEmailDirect || intUserForEmail?.email
+        });
+        await addJobEvent({ ...bookingData, id: data.bookingId, status: BookingStatus.BOOKED }, 'ASSIGNMENT_ACCEPTED', {
+          fromStatus: bookingData.status,
+          toStatus: BookingStatus.BOOKED,
+          interpreterId: data.interpreterId,
+          assignmentId
         });
 
       }
@@ -525,11 +598,19 @@ export const BookingService = {
         if (remainingSnap.empty) {
           // No more open offers — revert booking to INCOMING so admin can re-allocate
           await updateDoc(doc(db, COLLECTION_NAME, assignment.bookingId), {
-            status: BookingStatus.INCOMING,
+            status: getNeedsAssignmentStatus(),
             interpreterId: null,
             interpreterName: null,
             updatedAt: serverTimestamp()
           });
+          const booking = await BookingService.getById(assignment.bookingId);
+          if (booking) {
+            await addJobEvent(booking, 'ASSIGNMENT_DECLINED', {
+              toStatus: getNeedsAssignmentStatus(),
+              interpreterId: assignment.interpreterId,
+              assignmentId
+            });
+          }
 
           // Alert admins that re-assignment is needed
           const admins = await getAdminUsers();

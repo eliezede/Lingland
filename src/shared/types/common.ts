@@ -9,7 +9,9 @@ export enum ServiceType {
 export enum AssignmentStatus {
     OFFERED = 'OFFERED',
     ACCEPTED = 'ACCEPTED',
-    DECLINED = 'DECLINED'
+    DECLINED = 'DECLINED',
+    REMOVED = 'REMOVED',
+    EXPIRED = 'EXPIRED'
 }
 
 export interface GuestContact {

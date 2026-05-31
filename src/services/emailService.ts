@@ -60,6 +60,34 @@ export const DEFAULT_TEMPLATES: EmailTemplate[] = [
         isActive: true
     },
     {
+        id: 'ASSIGNMENT_PENDING_INTERPRETER',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'BOOKINGS',
+        triggerStatus: BookingStatus.ASSIGNMENT_PENDING,
+        recipientType: 'INTERPRETER',
+        name: 'Assignment Pending Interpreter Response',
+        subject: 'Lingland assignment awaiting your response: {{bookingRef}}',
+        body: `Dear {{interpreterName}},<br><br>A Lingland assignment is awaiting your response.<br><br><strong>Assignment Details:</strong><br>- <strong>Language:</strong> {{languageFrom}} to {{languageTo}}<br>- <strong>Date:</strong> {{date}} at {{time}}<br>- <strong>Location:</strong> {{location}}<br><br>Please log in to your interpreter portal to accept or decline this assignment.<br><br>Kind regards,<br>The Lingland Team`,
+        allowedVariables: EMAIL_VARIABLES.INTERPRETER,
+        isActive: true
+    },
+    {
+        id: 'ASSIGNMENT_REMOVED_INTERPRETER',
+        organizationId: 'SYSTEM',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        category: 'BOOKINGS',
+        triggerStatus: 'ASSIGNMENT_REMOVED',
+        recipientType: 'INTERPRETER',
+        name: 'Assignment Removed',
+        subject: 'Assignment removed: {{bookingRef}}',
+        body: `Dear {{interpreterName}},<br><br>You have been removed from assignment {{bookingRef}} scheduled for {{date}} at {{time}}.<br><br>This is not a booking cancellation notice. The job may be reassigned internally by Lingland.<br><br><strong>Reason:</strong> {{removalReason}}<br><br>Kind regards,<br>The Lingland Team`,
+        allowedVariables: [...EMAIL_VARIABLES.INTERPRETER, '{{removalReason}}'],
+        isActive: true
+    },
+    {
         id: 'CANCELLED_CLIENT',
         organizationId: 'SYSTEM',
         createdAt: new Date().toISOString(),
@@ -366,6 +394,7 @@ export const EmailService = {
             dictionary['{{status}}'] = booking.status || '';
             // EM-02: Support for Cancellation Emails with reason
             if (extraData.cancelReason) dictionary['{{cancelReason}}'] = extraData.cancelReason;
+            if (extraData.removalReason) dictionary['{{removalReason}}'] = extraData.removalReason;
         } else {
             const app = entity as InterpreterApplication;
             dictionary['{{applicantName}}'] = app.name || extraData.interpreterName || '';
@@ -397,7 +426,7 @@ export const EmailService = {
     // In a real production app, this writes to an 'emails' collection that a Firebase Extension (Trigger Email) listens to.
     sendStatusEmail: async (
         booking: Booking,
-        newStatus: BookingStatus,
+        newStatus: BookingStatus | string,
         extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; clientEmail?: string; adminEmail?: string; cancelReason?: string } = {}
     ) => {
         console.log(`[EmailService] Triggered for status: ${newStatus}, bookingId: ${booking.id}`);
@@ -470,6 +499,45 @@ export const EmailService = {
             }
         } catch (e) {
             console.error("[EmailService] Failed to process status email trigger", e);
+        }
+    },
+
+    sendAssignmentRemovedEmail: async (
+        booking: Booking,
+        extraData: { interpreterId?: string; interpreterName?: string; interpreterEmail?: string; removalReason?: string } = {}
+    ) => {
+        try {
+            const templates = await EmailService.getTemplates();
+            const matchingTemplates = templates.filter(t => t.triggerStatus === 'ASSIGNMENT_REMOVED' && t.isActive);
+
+            for (const template of matchingTemplates) {
+                if (template.recipientType !== 'INTERPRETER') continue;
+
+                let recipientEmail = extraData.interpreterEmail || '';
+                if (!recipientEmail && extraData.interpreterId) {
+                    try {
+                        const iDoc = await getDoc(doc(db, 'interpreters', extraData.interpreterId));
+                        if (iDoc.exists()) recipientEmail = iDoc.data()?.email || '';
+                    } catch (e) {
+                        console.error('[EmailService] Failed to fetch assignment removal interpreter email', e);
+                    }
+                }
+
+                if (!recipientEmail) continue;
+
+                await addDoc(collection(db, 'mail'), {
+                    to: [recipientEmail],
+                    message: {
+                        subject: EmailService.parseTemplate(template.subject, booking, extraData),
+                        html: EmailService.parseTemplate(template.body, booking, extraData)
+                    },
+                    statusTrigger: 'ASSIGNMENT_REMOVED',
+                    bookingId: booking.id,
+                    createdAt: new Date().toISOString()
+                });
+            }
+        } catch (e) {
+            console.error("[EmailService] Failed to process assignment removal email", e);
         }
     },
 

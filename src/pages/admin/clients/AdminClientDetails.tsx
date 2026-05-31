@@ -127,7 +127,7 @@ export const AdminClientDetails = () => {
 
     const stats = [
         { label: 'Total Volume', value: jobs.length, icon: Briefcase, color: 'blue' },
-        { label: 'Active Service', value: jobs.filter(j => ['INCOMING', 'PENDING_ASSIGNMENT', 'BOOKED'].includes(String(j.status))).length, icon: Clock, color: 'emerald' },
+        { label: 'Active Service', value: jobs.filter(j => ['INCOMING', 'NEEDS_ASSIGNMENT', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT', 'BOOKED'].includes(String(j.status))).length, icon: Clock, color: 'emerald' },
         { label: 'Net Terms', value: `${client.paymentTermsDays || 30} Days`, icon: CreditCard, color: 'indigo' }
     ];
 

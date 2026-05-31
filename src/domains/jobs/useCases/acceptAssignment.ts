@@ -27,12 +27,12 @@ export const acceptAssignment = async (assignmentId: string): Promise<void> => {
         if (snap.exists()) {
             const data = snap.data() as any;
 
-            // Check if job is still available (PENDING_ASSIGNMENT or OPENED in legacy)
+            // Check if job is still available.
             const jobRef = doc(db, 'bookings', data.bookingId);
             const jobSnap = await getDoc(jobRef);
             const jobData = jobSnap.data() as Job;
 
-            if (jobData.status !== JobStatus.PENDING_ASSIGNMENT && jobData.status !== 'OPENED' as any) {
+            if (![JobStatus.ASSIGNMENT_PENDING, JobStatus.PENDING_ASSIGNMENT, 'OPENED' as any].includes(jobData.status)) {
                 throw new Error('This job is no longer available.');
             }
 

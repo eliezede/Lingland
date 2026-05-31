@@ -5,11 +5,17 @@ import { BookingStatus, JobStatus } from '../types';
 // Human-readable display labels for status values
 const DISPLAY_LABELS: Record<string, string> = {
   'INCOMING': 'Incoming',
+  'NEEDS_ASSIGNMENT': 'Needs Assignment',
+  'ASSIGNMENT_PENDING': 'Assignment Pending',
   'OPENED': 'Opened',
+  'QUOTE_PENDING': 'Quote Pending',
   'BOOKED': 'Booked',
   'ADMIN': 'Admin Hold',
+  'ADMIN_HOLD': 'Admin Hold',
   'CANCELLED': 'Cancelled',
+  'SESSION_COMPLETED': 'Session Completed',
   'TIMESHEET_SUBMITTED': 'Timesheet Submitted',
+  'TIMESHEET_VERIFIED': 'Timesheet Verified',
   'READY_FOR_INVOICE': 'Ready to Invoice',
   'INVOICED': 'Invoiced',
   'PAID': 'Paid',
@@ -44,16 +50,24 @@ export const StatusBadge: React.FC<{ status: BookingStatus | JobStatus | string 
         return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800/50';
       case BookingStatus.INCOMING:
       case 'INCOMING':
+      case BookingStatus.NEEDS_ASSIGNMENT:
+      case 'NEEDS_ASSIGNMENT':
         return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800/50';
       case 'ONBOARDING':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800/50';
       case BookingStatus.OPENED:
+      case BookingStatus.ASSIGNMENT_PENDING:
+      case 'ASSIGNMENT_PENDING':
       case 'PENDING_ASSIGNMENT':
         return 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800/50';
       case BookingStatus.ADMIN:
+      case BookingStatus.ADMIN_HOLD:
       case 'ADMIN':
+      case 'ADMIN_HOLD':
         return 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800/50';
       case BookingStatus.READY_FOR_INVOICE:
+      case BookingStatus.TIMESHEET_VERIFIED:
+      case 'TIMESHEET_VERIFIED':
       case 'TIMESHEET_SUBMITTED':
         return 'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800/50';
       case BookingStatus.CANCELLED:

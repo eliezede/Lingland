@@ -31,7 +31,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
 
     if (!job) return null;
 
-    const isOffer = job.status === BookingStatus.INCOMING || job.status === BookingStatus.OPENED || job.status === 'PENDING_ASSIGNMENT';
+    const isOffer = job.status === BookingStatus.INCOMING || job.status === BookingStatus.OPENED || job.status === BookingStatus.ASSIGNMENT_PENDING || job.status === 'PENDING_ASSIGNMENT';
 
     const handleAction = async (action: () => Promise<void> | undefined) => {
         if (!action) return;
@@ -108,7 +108,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
         <Modal
             isOpen={isOpen}
             onClose={onClose}
-            title={job._isDirect || job.status === BookingStatus.OPENED ? "Direct Assignment" : "Job Opportunity"}
+            title={job._isDirect || [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status) ? "Direct Assignment" : "Job Opportunity"}
             footer={footer}
             type="drawer"
         >
@@ -121,7 +121,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                                 {job.languageFrom} → {job.languageTo}
                             </span>
                             <StatusBadge status={job.status} />
-                            {(job._isDirect || job.status === BookingStatus.OPENED) && (
+                            {(job._isDirect || [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) && (
                                 <span className="flex items-center gap-1 text-[9px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-1 rounded-lg border border-blue-100">
                                     <ShieldCheck size={12} strokeWidth={3} /> Direct
                                 </span>

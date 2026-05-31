@@ -26,7 +26,7 @@ export const InterpreterJobDetails = () => {
         BookingService.getInterpreterOffers(user.profileId)
       ]).then(([res, offers]) => {
         setJob(res || null);
-        setIsDirectOffer(!!res?.interpreterId && res.interpreterId === user.profileId && res.status === BookingStatus.OPENED);
+        setIsDirectOffer(!!res?.interpreterId && res.interpreterId === user.profileId && [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(res.status));
         const matchingOffer = offers.find(o => o.bookingId === id);
         setAssignmentId(matchingOffer?.id || null);
       }).finally(() => setLoading(false));
@@ -62,11 +62,11 @@ export const InterpreterJobDetails = () => {
     if (!job) return;
     setProcessing(true);
     try {
-      if (isDirectOffer || job.status === 'PENDING_ASSIGNMENT' as any) {
-        await BookingService.updateStatus(job.id, BookingStatus.BOOKED);
-      } else if (assignmentId) {
+      if (assignmentId) {
         // Fallback for broadcast offers if they ever route here
         await BookingService.acceptOffer(assignmentId);
+      } else if (isDirectOffer || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) {
+        await BookingService.updateStatus(job.id, BookingStatus.BOOKED);
       } else {
         throw new Error('This job is not currently available to accept.');
       }
@@ -83,7 +83,7 @@ export const InterpreterJobDetails = () => {
     if (!job) return;
     setProcessing(true);
     try {
-      if (isDirectOffer || job.status === 'PENDING_ASSIGNMENT' as any) {
+      if (isDirectOffer || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) {
         await BookingService.unassignInterpreterFromBooking(job.id);
       } else if (assignmentId) {
         await BookingService.declineOffer(assignmentId);
@@ -103,7 +103,7 @@ export const InterpreterJobDetails = () => {
   if (!job) return <div className="p-8 text-center text-red-500">Job not found.</div>;
 
   const isOnline = job.locationType === 'ONLINE';
-  const canRespondToOffer = isDirectOffer || !!assignmentId || job.status === ('PENDING_ASSIGNMENT' as any);
+  const canRespondToOffer = isDirectOffer || !!assignmentId || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status);
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">

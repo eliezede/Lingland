@@ -1,52 +1,109 @@
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
-import { Interpreter } from '../../types';
+import { Booking, Interpreter } from '../../types';
 import { Job } from '../jobs/types';
 import { MOCK_INTERPRETERS } from '../../services/mockData';
 
-export const calculateInterpreterScore = (interpreter: Interpreter, job: Job): number => {
+export interface InterpreterMatchResult {
+    interpreter: Interpreter;
+    score: number;
+    reasons: string[];
+    warnings: string[];
+}
+
+const normalize = (value?: string) => (value || '').toLowerCase().trim();
+
+const getLanguagePriority = (interpreter: Interpreter, languageTo?: string): number | null => {
+    const target = normalize(languageTo);
+    if (!target) return null;
+
+    const proficiency = interpreter.languageProficiencies?.find(p => normalize(p.language) === target);
+    if (proficiency) return proficiency.l1 ?? 18;
+
+    const legacyMatch = interpreter.languages?.some(l => normalize(l) === target);
+    return legacyMatch ? 18 : null;
+};
+
+export const rankInterpreterForBooking = (interpreter: Interpreter, job: Pick<Booking | Job, 'languageTo' | 'date' | 'postcode' | 'locationType'>): InterpreterMatchResult => {
     let score = 0;
+    const reasons: string[] = [];
+    const warnings: string[] = [];
 
-    // 1. Language Match (Required)
-    const speaksLanguage = interpreter.languages.some(
-        l => l.toLowerCase().trim() === job.languageTo.toLowerCase().trim()
-    );
-    if (!speaksLanguage) return 0; // Deal breaker
-    score += 50;
+    const priority = getLanguagePriority(interpreter, job.languageTo);
+    if (priority === null) {
+        return { interpreter, score: 0, reasons, warnings: [`Does not cover ${job.languageTo}`] };
+    }
 
-    // 2. Status
-    if (interpreter.status !== 'ACTIVE') return 0;
+    score += Math.max(35, 65 - Math.min(priority, 18) * 2);
+    reasons.push(priority <= 1 ? `${job.languageTo} priority language` : `${job.languageTo} configured`);
 
-    // 3. Availability Flag
-    if (!interpreter.isAvailable) return 0;
+    if (interpreter.status !== 'ACTIVE') {
+        return { interpreter, score: 0, reasons, warnings: [`Interpreter status is ${interpreter.status}`] };
+    }
+    reasons.push('Active interpreter');
 
-    // 4. DBS Validity
-    if (interpreter.dbsExpiry) {
-        const dbsDate = new Date(interpreter.dbsExpiry);
+    if (!interpreter.isAvailable) {
+        return { interpreter, score: 0, reasons, warnings: ['Marked unavailable'] };
+    }
+    reasons.push('Available');
+
+    const dbsExpiry = interpreter.dbs?.renewDate || interpreter.dbsExpiry;
+    if (dbsExpiry) {
+        const dbsDate = new Date(dbsExpiry);
         const jobDate = new Date(job.date);
         if (dbsDate > jobDate) {
             score += 10;
+            reasons.push('DBS valid on job date');
+        } else {
+            warnings.push('DBS may be expired by job date');
         }
+    } else if (interpreter.dbs?.level && interpreter.dbs.level !== 'N/A' && interpreter.dbs.level !== 'FAILED') {
+        score += 5;
+        reasons.push(`${interpreter.dbs.level} recorded`);
+    } else {
+        warnings.push('No valid DBS evidence recorded');
     }
 
-    // 5. Direct Assignment Preference
     if (interpreter.acceptsDirectAssignment) {
         score += 5;
+        reasons.push('Accepts direct assignment');
+    } else {
+        warnings.push('Does not explicitly accept direct assignment');
     }
 
-    // 6. Postcode Proximity (Naive check for now)
-    if (interpreter.postcode && job.postcode) {
-        const intPrefix = interpreter.postcode.split(' ')[0].toUpperCase();
+    const interpreterPostcode = interpreter.address?.postcode || interpreter.postcode;
+    if (interpreterPostcode && job.postcode) {
+        const intPrefix = interpreterPostcode.split(' ')[0].toUpperCase();
         const jobPrefix = job.postcode.split(' ')[0].toUpperCase();
         if (intPrefix === jobPrefix) {
             score += 20;
+            reasons.push('Same postcode area');
+        } else {
+            score += 4;
+            reasons.push('Has postcode for travel estimate');
         }
     }
 
-    // 7. Reliability (Placeholder: assign generic score, later fetch from ratings)
-    score += 10;
+    if (job.locationType === 'ONSITE' && interpreter.hasCar) {
+        score += 6;
+        reasons.push('Has car for onsite work');
+    }
 
-    return score;
+    if (interpreter.keyInterpreter) {
+        score += 6;
+        reasons.push('Key interpreter');
+    }
+
+    return {
+        interpreter,
+        score: Math.min(100, Math.round(score)),
+        reasons,
+        warnings
+    };
+};
+
+export const calculateInterpreterScore = (interpreter: Interpreter, job: Job): number => {
+    return rankInterpreterForBooking(interpreter, job).score;
 };
 
 export const findBestInterpreters = async (job: Job, limitCount: number = 5): Promise<Interpreter[]> => {
@@ -60,10 +117,7 @@ export const findBestInterpreters = async (job: Job, limitCount: number = 5): Pr
     }
 
     const scored = allInterpreters
-        .map(interpreter => ({
-            interpreter,
-            score: calculateInterpreterScore(interpreter, job)
-        }))
+        .map(interpreter => rankInterpreterForBooking(interpreter, job))
         .filter(result => result.score > 0)
         .sort((a, b) => b.score - a.score);
 

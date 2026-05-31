@@ -37,7 +37,7 @@ export const SYSTEM_VIEWS: BookingView[] = [
         isSystem: true,
         filters: {
             hasInterpreter: false,
-            statuses: [BookingStatus.INCOMING, BookingStatus.OPENED]
+            statuses: [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.ASSIGNMENT_PENDING, BookingStatus.OPENED]
         },
         sortBy: 'dateAsc'
     },

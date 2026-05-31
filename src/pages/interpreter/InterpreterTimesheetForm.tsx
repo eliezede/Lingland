@@ -83,9 +83,9 @@ export const InterpreterTimesheetForm = () => {
     const durationH = billableMins / 60;
     
     // Basic estimate (using fallback rate of £25 if not available on job)
-    const sessionEarnings = durationH * (job?.interpreterRate || 25);
-    const travelEarnings = (formData.travelTime / 60) * (job?.travelRate || 12); 
-    const mileageEarnings = formData.mileage * (job?.mileageRate || 0.45);
+    const sessionEarnings = durationH * ((job as any)?.interpreterRate || 25);
+    const travelEarnings = (formData.travelTime / 60) * ((job as any)?.travelRate || 12);
+    const mileageEarnings = formData.mileage * ((job as any)?.mileageRate || 0.45);
     
     const total = sessionEarnings + travelEarnings + mileageEarnings + formData.parking + formData.transport;
     

@@ -9,6 +9,7 @@ import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { assignInterpreterAction, createDependencies } from '../../ui/actions';
 import { LocationService } from '../../services/locationService';
+import { InterpreterMatchResult, rankInterpreterForBooking } from '../../domains/interpreters/matchingEngine';
 
 interface InterpreterAllocationDrawerProps {
     isOpen: boolean;
@@ -25,7 +26,7 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
 }) => {
     const { user } = useAuth();
     const { showToast } = useToast();
-    const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
+    const [matches, setMatches] = useState<InterpreterMatchResult[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [distances, setDistances] = useState<Record<string, { distance: number, duration: number }>>({});
@@ -43,11 +44,11 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
         setIsLoading(true);
         try {
             const allInts = await InterpreterService.getAll();
-            // Filter by language and status
-            setInterpreters(allInts.filter(i =>
-                i.status === 'ACTIVE' &&
-                i.languages.includes(job?.languageTo || '')
-            ));
+            const ranked = allInts
+                .map(interpreter => rankInterpreterForBooking(interpreter, job!))
+                .filter(result => result.score > 0)
+                .sort((a, b) => b.score - a.score);
+            setMatches(ranked);
         } catch (e) {
             console.error("Failed to load interpreters", e);
             showToast("Failed to load interpreters", "error");
@@ -57,10 +58,10 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
     };
 
     useEffect(() => {
-        if (interpreters.length > 0 && job?.lat && job?.lng) {
+        if (matches.length > 0 && job?.lat && job?.lng) {
             calculateAllDistances();
         }
-    }, [interpreters, job]);
+    }, [matches, job]);
 
     const calculateAllDistances = async () => {
         if (!job?.lat || !job?.lng) return;
@@ -68,12 +69,12 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
         setIsCalculatingDistances(true);
         try {
             // Filter interpreters that have coordinates
-            const intsWithCoords = interpreters
-                .filter(i => i.address?.lat && i.address?.lng)
-                .map(i => ({
-                    id: i.id,
-                    lat: i.address!.lat!,
-                    lng: i.address!.lng!
+            const intsWithCoords = matches
+                .filter(match => match.interpreter.address?.lat && match.interpreter.address?.lng)
+                .map(match => ({
+                    id: match.interpreter.id,
+                    lat: match.interpreter.address!.lat!,
+                    lng: match.interpreter.address!.lng!
                 }));
 
             if (intsWithCoords.length > 0) {
@@ -102,8 +103,8 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
         }
     };
 
-    const filteredInterpreters = interpreters.filter(i =>
-        i.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const filteredMatches = matches.filter(match =>
+        match.interpreter.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -167,12 +168,14 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
                                 <div className="space-y-2">
                                     {[1, 2, 3].map(i => <div key={i} className="h-20 bg-slate-50 dark:bg-slate-800/50 rounded-xl animate-pulse" />)}
                                 </div>
-                            ) : filteredInterpreters.length === 0 ? (
+                            ) : filteredMatches.length === 0 ? (
                                 <div className="text-center py-12 border-2 border-dashed border-slate-100 rounded-2xl">
                                     <p className="text-sm text-slate-400 italic font-medium">No specialized interpreters found for this path.</p>
                                 </div>
                             ) : (
-                                filteredInterpreters.map((interp, idx) => (
+                                filteredMatches.map((match, idx) => {
+                                    const { interpreter: interp } = match;
+                                    return (
                                     <div
                                         key={interp.id}
                                         className="group flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:border-blue-500 dark:hover:border-blue-400 transition-all hover:shadow-lg hover:shadow-blue-500/5 cursor-pointer"
@@ -205,27 +208,35 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
                                                     {distances[interp.id] && (
                                                         <div className="flex items-center space-x-1">
                                                             <MapPin size={10} className="text-blue-500" />
-                                                            <span className="text-[10px] text-blue-600 font-bold">{distances[interp.id].distance.toFixed(1)} miles</span>
-                                                        </div>
-                                                    )}
-                                                    <div className="flex items-center space-x-1">
-                                                        <CheckCircle2 size={10} className="text-green-500" />
-                                                        <span className="text-[10px] text-slate-500">DBS Valid</span>
+                                                        <span className="text-[10px] text-blue-600 font-bold">{distances[interp.id].distance.toFixed(1)} miles</span>
                                                     </div>
+                                                )}
+                                                    <div className="flex items-center space-x-1">
+                                                        <CheckCircle2 size={10} className={match.warnings.some(w => w.includes('DBS')) ? 'text-amber-500' : 'text-green-500'} />
+                                                        <span className="text-[10px] text-slate-500">{match.reasons.find(r => r.includes('DBS')) || match.warnings.find(w => w.includes('DBS')) || 'Checks pending'}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-2 flex flex-wrap gap-1">
+                                                    {match.reasons.slice(0, 3).map(reason => (
+                                                        <span key={reason} className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">{reason}</span>
+                                                    ))}
+                                                    {match.warnings.slice(0, 2).map(warning => (
+                                                        <span key={warning} className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{warning}</span>
+                                                    ))}
                                                 </div>
                                             </div>
                                         </div>
                                         <div className="flex items-center space-x-3">
                                             <div className="text-right mr-2">
                                                 <p className="text-xs font-black text-slate-900 dark:text-white">Rank #{idx + 1}</p>
-                                                <p className="text-[10px] text-green-600 font-bold uppercase tracking-tighter">{98 - idx}% Match</p>
+                                                <p className="text-[10px] text-green-600 font-bold uppercase tracking-tighter">{match.score}% Match</p>
                                             </div>
                                             <button className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 opacity-0 group-hover:opacity-100 transition-all hover:scale-105 active:scale-95">
                                                 <UserPlus size={18} />
                                             </button>
                                         </div>
                                     </div>
-                                ))
+                                )})
                             )}
                         </div>
                     </div>

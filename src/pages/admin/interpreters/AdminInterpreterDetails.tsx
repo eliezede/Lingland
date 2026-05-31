@@ -77,7 +77,7 @@ export const AdminInterpreterDetails = () => {
         .map(o => ({
           ...o.bookingSnapshot,
           id: o.bookingId,
-          status: 'PENDING_ASSIGNMENT' as any
+          status: BookingStatus.ASSIGNMENT_PENDING
         } as Booking));
 
       const mergedJobs = [...schedule];
@@ -299,7 +299,7 @@ export const AdminInterpreterDetails = () => {
   if (!interpreter) return <div className="p-12 text-center text-red-500 font-bold">Interpreter not found.</div>;
 
   const earningsTotal = invoices.reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
-  const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && ['BOOKED', 'PENDING_ASSIGNMENT'].includes(String(j.status))).length;
+  const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && ['BOOKED', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT'].includes(String(j.status))).length;
   const completedJobsCount = jobs.filter(j => ['TIMESHEET_SUBMITTED', 'VERIFIED', 'INVOICING', 'INVOICED', 'PAID'].includes(String(j.status))).length;
   return (
     <>

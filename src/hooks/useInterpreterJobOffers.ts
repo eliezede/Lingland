@@ -22,7 +22,7 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
         BookingService.getInterpreterSchedule(interpreterId)
       ]);
 
-      const isPending = (s: string) => s === 'OPENED' || s === 'PENDING_ASSIGNMENT';
+      const isPending = (s: string) => s === 'OPENED' || s === 'PENDING_ASSIGNMENT' || s === 'ASSIGNMENT_PENDING';
       const directPending = schedule.filter((b: any) => isPending(b.status as string)).map(b => ({ ...b, _isDirect: true }));
 
       // Enrol broadcast offers (fetching full booking details if missing)
@@ -55,7 +55,13 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
   const acceptOffer = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        await BookingService.updateStatus(id, 'BOOKED' as any);
+        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === interpreterId && assignment.status === 'OFFERED');
+        if (directAssignment?.id) {
+          await BookingService.acceptOffer(directAssignment.id);
+        } else {
+          await BookingService.updateStatus(id, 'BOOKED' as any);
+        }
       } else {
         await BookingService.acceptOffer(assignmentId || id);
       }

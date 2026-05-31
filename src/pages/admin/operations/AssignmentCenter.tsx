@@ -26,7 +26,7 @@ export const AssignmentCenter = () => {
     const actionsDeps = createDependencies((user as any)?.organizationId || 'lingland-main');
 
     // Filter only unassigned jobs that are in actionable states
-    const unassignedJobs = bookings.filter(b => !b.interpreterId && (b.status === 'INCOMING' || b.status === 'OPENED'));
+    const unassignedJobs = bookings.filter(b => !b.interpreterId && [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(b.status));
 
     const [selectedJob, setSelectedJob] = useState<Booking | null>(null);
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -43,7 +43,7 @@ export const AssignmentCenter = () => {
         let done = 0;
         await Promise.allSettled(ids.map(async id => {
             try {
-                await updateJobStatusAction(id, BookingStatus.OPENED, actionsDeps);
+                await updateJobStatusAction(id, BookingStatus.ASSIGNMENT_PENDING, actionsDeps);
                 done++;
             } catch { /* silent */ }
         }));

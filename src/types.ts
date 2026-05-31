@@ -118,12 +118,19 @@ export enum SageCode {
 }
 
 export enum BookingStatus {
+  DRAFT = 'DRAFT',
   INCOMING = 'INCOMING', // Initial state
+  NEEDS_ASSIGNMENT = 'NEEDS_ASSIGNMENT',
+  ASSIGNMENT_PENDING = 'ASSIGNMENT_PENDING',
   OPENED = 'OPENED', // Interpreter assigned but hasn't accepted
+  QUOTE_PENDING = 'QUOTE_PENDING',
   BOOKED = 'BOOKED', // Interpreter accepted
+  SESSION_COMPLETED = 'SESSION_COMPLETED',
   ADMIN = 'ADMIN', // Manual standby by admin
+  ADMIN_HOLD = 'ADMIN_HOLD',
   CANCELLED = 'CANCELLED',
   TIMESHEET_SUBMITTED = 'TIMESHEET_SUBMITTED', // Job done, timesheet submitted, awaiting admin verification
+  TIMESHEET_VERIFIED = 'TIMESHEET_VERIFIED',
   READY_FOR_INVOICE = 'READY_FOR_INVOICE', // Verified, ready for invoicing
   INVOICED = 'INVOICED', // Invoice generated
   PAID = 'PAID' // Invoice paid

@@ -4,6 +4,7 @@ import { ClientInvoice, InterpreterInvoice } from '../../types';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
 import { Eye } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { UserAvatar } from '../ui/UserAvatar';
 
 interface Props {
   invoices: (ClientInvoice | InterpreterInvoice)[];

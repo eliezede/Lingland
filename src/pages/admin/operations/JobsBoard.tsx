@@ -45,7 +45,7 @@ import { Button } from '../../../components/ui/Button';
 import { Modal } from '../../../components/ui/Modal';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
-import { ContextMenu } from '../../../components/ui/ContextMenu';
+import { ContextMenu, ContextMenuItem } from '../../../components/ui/ContextMenu';
 import { Booking, BookingStatus } from '../../../types';
 import { useToast } from '../../../context/ToastContext';
 import { BillingService, BookingService } from '../../../services/api';
@@ -104,8 +104,9 @@ const getTimingMeta = (job: Booking) => {
 };
 
 const getNextAction = (job: Booking) => {
-    if (job.status === BookingStatus.INCOMING) return 'Assign interpreter';
-    if (job.status === BookingStatus.OPENED && !job.interpreterId) return 'Assign interpreter';
+    if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) return 'Assign interpreter';
+    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && !job.interpreterId) return 'Assign interpreter';
+    if (job.status === BookingStatus.ASSIGNMENT_PENDING) return 'Await interpreter';
     if (job.status === BookingStatus.BOOKED) return 'Monitor delivery';
     if (job.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
     if (job.status === BookingStatus.READY_FOR_INVOICE) return 'Invoice review';
@@ -122,7 +123,7 @@ const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
         case 'TODAY':
             return jobs.filter(job => getDayDiff(job.date) === 0 && !terminalStatuses.has(job.status));
         case 'UNASSIGNED':
-            return jobs.filter(job => [BookingStatus.INCOMING, BookingStatus.OPENED].includes(job.status) && !job.interpreterId);
+            return jobs.filter(job => [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && !job.interpreterId);
         case 'TIMESHEET':
             return jobs.filter(job => job.status === BookingStatus.TIMESHEET_SUBMITTED);
         case 'INVOICE_READY':
@@ -396,10 +397,10 @@ export const JobsBoard = () => {
             width: '116px',
             icon: ArrowUpRight,
             render: job => {
-                if (job.status === BookingStatus.INCOMING) {
+                if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) {
                     return <Button size="sm" variant="secondary" icon={UserPlus} onClick={(e) => handleAssignClick(e, job)}>Assign</Button>;
                 }
-                if (!job.interpreterId && [BookingStatus.OPENED, BookingStatus.INCOMING].includes(job.status)) {
+                if (!job.interpreterId && [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) {
                     return <Button size="sm" variant="secondary" icon={UserPlus} onClick={(e) => handleAssignClick(e, job)}>Assign</Button>;
                 }
                 if (job.status === BookingStatus.TIMESHEET_SUBMITTED) {
@@ -580,11 +581,11 @@ export const JobsBoard = () => {
         refresh();
     };
 
-    const renderContextMenu = (job: Booking) => [
+    const renderContextMenu = (job: Booking): ContextMenuItem[] => [
         { label: 'View Details', icon: Eye, onClick: () => navigate(`/admin/bookings/${job.id}`) },
         { label: 'Edit Job', icon: Pencil, onClick: () => navigate(`/admin/bookings/edit/${job.id}`) },
-        { divider: true },
-        ...(!job.interpreterId && [BookingStatus.INCOMING, BookingStatus.OPENED].includes(job.status)
+        { divider: true as const },
+        ...(!job.interpreterId && [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status)
             ? [{ label: 'Assign Interpreter', icon: UserPlus, onClick: () => { setSelectedJob(job); setIsAllocationOpen(true); } }]
             : []),
         ...(job.status === BookingStatus.TIMESHEET_SUBMITTED
@@ -1054,12 +1055,12 @@ export const JobsBoard = () => {
                                 <StatusBadge status={selectedJob.status} />
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                                {selectedJob.status === BookingStatus.INCOMING && (
-                                    <Button size="sm" onClick={() => setIsAllocationOpen(true)} icon={UserPlus}>Assign interpreter</Button>
-                                )}
-                                {selectedJob.status === BookingStatus.OPENED && (
-                                    <Button size="sm" onClick={(e) => handleAssignClick(e, selectedJob)} icon={UserPlus}>Assign</Button>
-                                )}
+                                {[BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(selectedJob.status) && (
+                                     <Button size="sm" onClick={() => setIsAllocationOpen(true)} icon={UserPlus}>Assign interpreter</Button>
+                                 )}
+                                {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(selectedJob.status) && !selectedJob.interpreterId && (
+                                     <Button size="sm" onClick={(e) => handleAssignClick(e, selectedJob)} icon={UserPlus}>Assign</Button>
+                                 )}
                                 {selectedJob.status === BookingStatus.BOOKED && (
                                     <Button variant="outline" size="sm" onClick={() => handleMarkNotExecuted(selectedJob)} icon={AlertCircle}>Not executed</Button>
                                 )}
