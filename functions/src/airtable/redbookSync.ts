@@ -467,6 +467,7 @@ const syncRecords = async (mode: SyncMode) => {
   const finishedAt = new Date().toISOString();
   const result = {
     success: stats.error === 0,
+    mappingVersion: 'redbook-client-interpreter-v2',
     dryRun: mode.dryRun || importMode === 'READ_ONLY',
     importMode,
     triggeredBy: mode.triggeredBy,

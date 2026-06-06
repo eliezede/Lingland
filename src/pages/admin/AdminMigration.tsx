@@ -109,6 +109,7 @@ export const AdminMigration = () => {
     if (!dryRun && !window.confirm('Run REDBOOK sync now? This will create/update bookings from Airtable.')) return;
 
     setRedbookLoading(true);
+    setRedbookResult(null);
     try {
       const result = await RedbookSyncService.run(dryRun, redbookLimit);
       setRedbookResult(result);
@@ -336,9 +337,20 @@ export const AdminMigration = () => {
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Dry Run reads Airtable and reports what would happen. Sync Now writes bookings and job events.
             </p>
+            {redbookLoading && (
+              <div className="mt-6 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+                <Loader2 size={16} className="animate-spin" />
+                REDBOOK sync is running...
+              </div>
+            )}
 
-            {latestStats ? (
+            {!redbookLoading && latestStats ? (
               <div className="mt-5 space-y-5">
+                {redbookResult?.mappingVersion && (
+                  <p className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    Mapping {redbookResult.mappingVersion}
+                  </p>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   {[
                     ['Created', latestStats.created, 'text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 dark:text-emerald-300'],
@@ -400,11 +412,11 @@ export const AdminMigration = () => {
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : !redbookLoading ? (
               <div className="mt-6 rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
                 No REDBOOK sync result yet. Run Dry Run to inspect Airtable without writing data.
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}

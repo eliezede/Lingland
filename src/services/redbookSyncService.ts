@@ -26,6 +26,7 @@ export type RedbookSyncDetail = {
 
 export type RedbookSyncResult = {
   success: boolean;
+  mappingVersion?: string;
   dryRun: boolean;
   importMode: string;
   triggeredBy?: string;
