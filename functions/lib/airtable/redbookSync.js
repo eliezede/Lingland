@@ -154,7 +154,7 @@ const assertAdmin = async (context) => {
     }
 };
 const fetchAirtableRecords = async (limitRecords) => {
-    const apiKey = process.env.AIRTABLE_API_KEY;
+    const apiKey = (process.env.AIRTABLE_API_KEY || '').trim();
     const baseId = process.env.AIRTABLE_REDBOOK_BASE_ID || DEFAULT_BASE_ID;
     const tableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
     if (!apiKey) {
