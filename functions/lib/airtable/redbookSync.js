@@ -139,6 +139,67 @@ const stableHash = (value) => {
     }
     return String(hash);
 };
+const titleCase = (value) => {
+    return value
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(part => part.length <= 3 && part === part.toUpperCase()
+        ? part
+        : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+        .join(' ');
+};
+const cleanEmail = (value) => value.trim().toLowerCase();
+const resolveInterpreter = async (email, name) => {
+    const normalizedEmail = cleanEmail(email);
+    if (normalizedEmail) {
+        const userByEmail = await db.collection('users')
+            .where('email', '==', normalizedEmail)
+            .limit(1)
+            .get();
+        if (!userByEmail.empty) {
+            const user = userByEmail.docs[0].data();
+            if (user.profileId) {
+                const profile = await db.collection('interpreters').doc(user.profileId).get();
+                return {
+                    id: user.profileId,
+                    name: profile.data()?.name || user.displayName || name,
+                    email: user.email || normalizedEmail,
+                    photoUrl: profile.data()?.photoUrl || ''
+                };
+            }
+        }
+        const interpreterByEmail = await db.collection('interpreters')
+            .where('email', '==', normalizedEmail)
+            .limit(1)
+            .get();
+        if (!interpreterByEmail.empty) {
+            const profile = interpreterByEmail.docs[0].data();
+            return {
+                id: interpreterByEmail.docs[0].id,
+                name: profile.name || name,
+                email: profile.email || normalizedEmail,
+                photoUrl: profile.photoUrl || ''
+            };
+        }
+    }
+    const normalizedName = name.trim();
+    if (normalizedName) {
+        const interpreterByName = await db.collection('interpreters')
+            .where('name', '==', normalizedName)
+            .limit(1)
+            .get();
+        if (!interpreterByName.empty) {
+            const profile = interpreterByName.docs[0].data();
+            return {
+                id: interpreterByName.docs[0].id,
+                name: profile.name || normalizedName,
+                email: profile.email || normalizedEmail,
+                photoUrl: profile.photoUrl || ''
+            };
+        }
+    }
+    return null;
+};
 const getPlatformMode = async () => {
     const settings = await db.collection('system').doc('settings').get();
     return settings.data()?.platformMode || {};
@@ -198,7 +259,7 @@ const findExistingBooking = async (record, jobNumber, legacyRef) => {
     }
     return db.collection('bookings').doc(`airtable_${record.id}`);
 };
-const mapRecordToBooking = (record) => {
+const mapRecordToBooking = async (record) => {
     const fields = record.fields;
     const legacyRef = pick(fields, ['Job Number', 'Job Number / Language', 'Job ID', 'Reference', 'Booking Ref', 'REDBOOK ID']);
     const jobNumber = parseJobNumber(legacyRef) || `AIRTABLE-${record.id}`;
@@ -207,12 +268,31 @@ const mapRecordToBooking = (record) => {
     const sessionType = pick(fields, ['Session Type', 'Type', 'Method', 'Service Mode']);
     const location = pick(fields, ['Session Location', 'Location', 'Address', 'Venue']);
     const status = mapStatus(pick(fields, ['Status', 'Job Status', 'Booking Status']));
+    const patientName = pick(fields, ['Name of your client', 'Patient Name', 'Client Name', 'Service User']);
+    const uniqueClientKey = pick(fields, ['Unique Client Key']);
+    const agency = pick(fields, ['Agency, institution or company  ', 'Agency, institution or company', 'Organisation / Department', 'Organisation', 'Organization', 'Department']);
+    const clientName = agency || (uniqueClientKey ? titleCase(uniqueClientKey) : '') || patientName || 'Airtable Client';
+    const bookingAgent = pick(fields, ['Booking Agent', 'Booking By', 'Requester', 'Requested By']);
+    const caseworker = pick(fields, ['Name of Caseworker', 'Caseworker', 'Professional', 'Contact Name']);
+    const contactName = bookingAgent || caseworker || patientName || clientName;
+    const contactEmail = cleanEmail(pick(fields, ['Booking Email', 'Contact Email', 'Email', 'Requester Email']));
+    const contactPhone = pick(fields, ['Booking phone contact number', 'Contact Phone', 'Phone']);
+    const interpreterName = pick(fields, ['full name', 'NAME MASTER (from assign to)', 'Interpreter', 'Interpreter Name', 'Assigned Interpreter']);
+    const interpreterEmail = cleanEmail(pick(fields, ['INT EMAIL', 'EMAIL (from assign to)', 'Interpreter Email']));
+    const interpreterPhone = pick(fields, ['PHONE (from assign to)', 'Interpreter Phone']);
+    const interpreterAirtableRecordId = pick(fields, ['assign to']);
+    const resolvedInterpreter = await resolveInterpreter(interpreterEmail, interpreterName);
     const sourceSnapshot = {
         legacyRef,
         jobNumber,
-        clientName: pick(fields, ['Organisation / Department', 'Organisation', 'Organization', 'Client', 'Customer', 'Department']) || 'Airtable Client',
-        professionalName: pick(fields, ['Booking By', 'Professional', 'Contact Name', 'Requester', 'Requested By']),
-        contactEmail: pick(fields, ['Contact Email', 'Email', 'Requester Email']).toLowerCase(),
+        clientName,
+        patientName,
+        uniqueClientKey,
+        bookingAgent,
+        caseworker,
+        professionalName: contactName,
+        contactEmail,
+        contactPhone,
         languageFrom: pick(fields, ['Language From', 'Source Language']) || 'English',
         languageTo,
         date: schedule.date,
@@ -225,7 +305,11 @@ const mapRecordToBooking = (record) => {
         costCode: pick(fields, ['Cost Code', 'Cost Code...', 'PO', 'Purchase Order']),
         notes: pick(fields, ['Notes', 'Special Instructions', 'Comments']),
         status,
-        interpreterName: pick(fields, ['Interpreter', 'Interpreter Name', 'Assigned Interpreter'])
+        interpreterName,
+        interpreterEmail,
+        interpreterPhone,
+        interpreterAirtableRecordId,
+        interpreterResolved: Boolean(resolvedInterpreter?.id)
     };
     return {
         booking: {
@@ -249,7 +333,12 @@ const mapRecordToBooking = (record) => {
             costCode: sourceSnapshot.costCode,
             notes: sourceSnapshot.notes,
             professionalName: sourceSnapshot.professionalName,
-            interpreterName: sourceSnapshot.interpreterName,
+            patientName: sourceSnapshot.patientName,
+            interpreterId: resolvedInterpreter?.id || '',
+            interpreterName: resolvedInterpreter?.name || sourceSnapshot.interpreterName,
+            interpreterPhotoUrl: resolvedInterpreter?.photoUrl || '',
+            interpreterEmail: resolvedInterpreter?.email || sourceSnapshot.interpreterEmail,
+            interpreterAirtableRecordId: sourceSnapshot.interpreterAirtableRecordId,
             bookingRef: sourceSnapshot.jobNumber,
             jobNumber: sourceSnapshot.jobNumber,
             displayRef: legacyRef || sourceSnapshot.jobNumber,
@@ -263,7 +352,8 @@ const mapRecordToBooking = (record) => {
             guestContact: sourceSnapshot.contactEmail ? {
                 name: sourceSnapshot.professionalName,
                 organisation: sourceSnapshot.clientName,
-                email: sourceSnapshot.contactEmail
+                email: sourceSnapshot.contactEmail,
+                phone: sourceSnapshot.contactPhone
             } : undefined,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         },
@@ -296,7 +386,7 @@ const syncRecords = async (mode) => {
     }
     for (const record of records) {
         try {
-            const mapped = mapRecordToBooking(record);
+            const mapped = await mapRecordToBooking(record);
             let existingRef = null;
             let existingSnap = null;
             let existing = null;
@@ -350,6 +440,10 @@ const syncRecords = async (mode) => {
                     jobNumber: mapped.booking.jobNumber,
                     displayRef: mapped.booking.displayRef,
                     clientName: mapped.booking.clientName,
+                    patientName: mapped.booking.patientName,
+                    interpreterName: mapped.booking.interpreterName,
+                    interpreterId: mapped.booking.interpreterId,
+                    interpreterResolved: Boolean(mapped.booking.interpreterId),
                     status: mapped.booking.status
                 });
             }

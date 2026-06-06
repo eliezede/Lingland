@@ -368,6 +368,7 @@ export const AdminMigration = () => {
                           <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Action</th>
                           <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Job</th>
                           <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Client</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Interpreter</th>
                           <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Status</th>
                         </tr>
                       </thead>
@@ -379,7 +380,18 @@ export const AdminMigration = () => {
                               <p className="font-semibold text-slate-900 dark:text-white">{detail.displayRef || detail.jobNumber || detail.sourceRecordId}</p>
                               <p className="text-xs text-slate-500">{detail.sourceRecordId}</p>
                             </td>
-                            <td className="px-4 py-3">{detail.clientName || detail.message || '-'}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium">{detail.clientName || detail.message || '-'}</p>
+                              {detail.patientName && <p className="text-xs text-slate-500">{detail.patientName}</p>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium">{detail.interpreterName || '-'}</p>
+                              {detail.interpreterName && (
+                                <p className={`text-xs font-bold ${detail.interpreterResolved ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}`}>
+                                  {detail.interpreterResolved ? 'Matched profile' : 'Name only'}
+                                </p>
+                              )}
+                            </td>
                             <td className="px-4 py-3">{detail.status || '-'}</td>
                           </tr>
                         ))}
