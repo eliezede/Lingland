@@ -44,6 +44,7 @@ __exportStar(require("./billing/generateInterpreterInvoices"), exports);
 __exportStar(require("./mail/onEmailCreated"), exports);
 __exportStar(require("./auth/onUserCreated"), exports);
 __exportStar(require("./airtable/onAirtableFormSubmit"), exports);
+__exportStar(require("./airtable/redbookSync"), exports);
 __exportStar(require("./notifications/onNotificationCreated"), exports);
 __exportStar(require("./notifications/onTimesheetSubmit"), exports); // NT-05: Notify admins + interpreter on timesheet creation
 __exportStar(require("./notifications/onBookingOffer"), exports);

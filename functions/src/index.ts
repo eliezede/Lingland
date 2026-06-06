@@ -9,6 +9,7 @@ export * from './billing/generateInterpreterInvoices';
 export * from './mail/onEmailCreated';
 export * from './auth/onUserCreated';
 export * from './airtable/onAirtableFormSubmit';
+export * from './airtable/redbookSync';
 export * from './notifications/onNotificationCreated';
 export * from './notifications/onTimesheetSubmit'; // NT-05: Notify admins + interpreter on timesheet creation
 export * from './notifications/onBookingOffer';

@@ -1,0 +1,55 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebaseConfig';
+
+export type RedbookSyncStats = {
+  created: number;
+  updated: number;
+  skipped: number;
+  conflict: number;
+  error: number;
+};
+
+export type RedbookSyncDetail = {
+  action: 'created' | 'updated' | 'skipped' | 'conflict' | 'error';
+  sourceRecordId: string;
+  jobNumber?: string;
+  displayRef?: string;
+  clientName?: string;
+  status?: string;
+  message?: string;
+};
+
+export type RedbookSyncResult = {
+  success: boolean;
+  dryRun: boolean;
+  importMode: string;
+  triggeredBy?: string;
+  totalRecords?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  message?: string;
+  stats: RedbookSyncStats;
+  details: RedbookSyncDetail[];
+};
+
+export type RedbookSyncCheckpoint = {
+  lastRunId?: string;
+  lastRunAt?: string;
+  lastTotalRecords?: number;
+  lastStats?: RedbookSyncStats;
+  scheduleEnabled?: boolean;
+};
+
+export const RedbookSyncService = {
+  run: async (dryRun: boolean, limitRecords = 500): Promise<RedbookSyncResult> => {
+    const syncFn = httpsCallable(functions, 'syncRedbookJobs');
+    const response = await syncFn({ dryRun, limitRecords });
+    return response.data as RedbookSyncResult;
+  },
+
+  getCheckpoint: async (): Promise<RedbookSyncCheckpoint | null> => {
+    const snap = await getDoc(doc(db, 'system', 'airtableRedbookSync'));
+    return snap.exists() ? snap.data() as RedbookSyncCheckpoint : null;
+  }
+};
