@@ -20,7 +20,28 @@ type SyncMode = {
 const db = admin.firestore();
 const DEFAULT_BASE_ID = 'appF50EzH7zVQdwAv';
 const DEFAULT_TABLE_NAME = 'REDBOOK';
+const CLIENT_INVOICES_TABLE = 'Invoices';
+const INTERPRETER_INVOICES_TABLE = 'INV interp';
 const MAX_DETAILS = 50;
+
+const STATUS_RANK: Record<string, number> = {
+  DRAFT: 0,
+  INCOMING: 1,
+  NEEDS_ASSIGNMENT: 2,
+  ASSIGNMENT_PENDING: 3,
+  OPENED: 3,
+  QUOTE_PENDING: 3,
+  BOOKED: 4,
+  SESSION_COMPLETED: 5,
+  TIMESHEET_SUBMITTED: 6,
+  TIMESHEET_VERIFIED: 7,
+  READY_FOR_INVOICE: 8,
+  INVOICED: 9,
+  PAID: 10,
+  CANCELLED: 99,
+  ADMIN: 50,
+  ADMIN_HOLD: 50
+};
 
 const normalize = (value: unknown): string => {
   if (Array.isArray(value)) return normalize(value[0]);
@@ -47,6 +68,55 @@ const pick = (fields: Record<string, unknown>, names: string[]): string => {
   }
 
   return '';
+};
+
+const pickRaw = (fields: Record<string, unknown>, names: string[]): unknown => {
+  for (const name of names) {
+    if (fields[name] !== undefined && fields[name] !== null) return fields[name];
+  }
+
+  const normalizedMap = new Map<string, unknown>();
+  Object.entries(fields).forEach(([key, value]) => {
+    normalizedMap.set(key.toLowerCase().replace(/[^a-z0-9]/g, ''), value);
+  });
+
+  for (const name of names) {
+    const val = normalizedMap.get(name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (val !== undefined && val !== null) return val;
+  }
+
+  return undefined;
+};
+
+const asArray = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === '') return [];
+  return [value];
+};
+
+const pickLinkedIds = (fields: Record<string, unknown>, names: string[]): string[] => {
+  return asArray(pickRaw(fields, names))
+    .map(value => normalize(value))
+    .filter(Boolean);
+};
+
+const safeNumber = (value: unknown): number => {
+  if (Array.isArray(value)) return safeNumber(value[0]);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^\d.-]/g, '');
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const truthyField = (fields: Record<string, unknown>, names: string[]): boolean => {
+  const raw = pickRaw(fields, names);
+  if (Array.isArray(raw)) return raw.some(value => truthyField({ value }, ['value']));
+  if (typeof raw === 'boolean') return raw;
+  const value = normalize(raw).toLowerCase();
+  return ['true', 'yes', 'y', '1', 'paid', 'verified', 'sent'].includes(value);
 };
 
 const parseJobNumber = (value: string): string => {
@@ -90,16 +160,43 @@ const parseDuration = (value: string): number => {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : 60;
 };
 
-const mapStatus = (rawStatus: string): string => {
-  const status = rawStatus.toLowerCase();
-  if (status.includes('cancel')) return 'CANCELLED';
-  if (status.includes('paid')) return 'PAID';
-  if (status.includes('invoice')) return status.includes('ready') ? 'READY_FOR_INVOICE' : 'INVOICED';
-  if (status.includes('timesheet')) return 'TIMESHEET_SUBMITTED';
-  if (status.includes('complete') || status.includes('done')) return 'SESSION_COMPLETED';
-  if (status.includes('pending')) return 'ASSIGNMENT_PENDING';
-  if (status.includes('assign') || status.includes('book')) return 'OPENED';
-  return 'INCOMING';
+const mapStatus = (fields: Record<string, unknown>, hasInterpreter: boolean) => {
+  const rawStatus = pick(fields, ['Status', 'Job Status', 'Booking Status']);
+  const normalized = rawStatus.toLowerCase();
+  const invoiceStatus = pick(fields, ['Status (from invoices table)', 'Invocing Status']);
+  const invoiceNumber = pick(fields, ['Invoice Nbr (from 💷 Invoices)', 'INV ID (from 💷 Invoices)', 'Invoice Nbr', 'INV ID']);
+  const hasClientInvoice = Boolean(invoiceNumber || pick(fields, ['Invoiced on']) || safeNumber(pickRaw(fields, ['job invoice', 'Total invoiced', 'Invoiced + VAT'])));
+  const hasInterpreterInvoice = Boolean(pick(fields, ['INV interp', 'interpreter invoice form', 'Google timesheet']));
+  const timesheetReceived = truthyField(fields, ['timesheet']) || Boolean(pick(fields, ['timesheet link', 'Google timesheet']));
+  const verified = truthyField(fields, ['Verified', 'Verified (from Job Number from redbook)', 'Verified (from Job Number from redbook) 2'])
+    || Boolean(pick(fields, ['verification date']));
+  const paid = truthyField(fields, ['Paid']) || invoiceStatus.toLowerCase().includes('paid') || normalized.includes('paid');
+
+  let status = 'INCOMING';
+  if (normalized.includes('cancel')) status = 'CANCELLED';
+  else if (paid) status = 'PAID';
+  else if (hasClientInvoice || invoiceStatus.toLowerCase().includes('invoice')) status = 'INVOICED';
+  else if (verified) status = 'READY_FOR_INVOICE';
+  else if (timesheetReceived || hasInterpreterInvoice || normalized.includes('timesheet')) status = 'TIMESHEET_SUBMITTED';
+  else if (normalized.includes('complete') || normalized.includes('done')) status = 'SESSION_COMPLETED';
+  else if (normalized.includes('pending')) status = 'ASSIGNMENT_PENDING';
+  else if (normalized.includes('open')) status = hasInterpreter ? 'OPENED' : 'INCOMING';
+  else if (normalized.includes('assign')) status = hasInterpreter ? 'OPENED' : 'NEEDS_ASSIGNMENT';
+  else if (normalized.includes('book') || hasInterpreter) status = 'BOOKED';
+
+  return {
+    status,
+    rawStatus,
+    signals: {
+      invoiceStatus,
+      invoiceNumber,
+      hasClientInvoice,
+      hasInterpreterInvoice,
+      timesheetReceived,
+      verified,
+      paid
+    }
+  };
 };
 
 const mapLocationType = (sessionType: string, location: string): 'ONSITE' | 'ONLINE' => {
@@ -268,6 +365,7 @@ const resolveClient = async (
 };
 
 const clientCache = new Map<string, Promise<{ id: string; action: string; created: boolean }>>();
+const bookingByAirtableRecordCache = new Map<string, Promise<admin.firestore.DocumentSnapshot | null>>();
 
 const resolveClientCached = async (
   source: {
@@ -287,6 +385,80 @@ const resolveClientCached = async (
   return clientCache.get(key)!;
 };
 
+const getBookingByAirtableRecordId = async (sourceRecordId: string) => {
+  if (!sourceRecordId) return null;
+  if (!bookingByAirtableRecordCache.has(sourceRecordId)) {
+    bookingByAirtableRecordCache.set(sourceRecordId, db.collection('bookings')
+      .where('sourceRecordId', '==', sourceRecordId)
+      .limit(1)
+      .get()
+      .then(snap => snap.empty ? null : snap.docs[0]));
+  }
+  return bookingByAirtableRecordCache.get(sourceRecordId)!;
+};
+
+const getBookingsByAirtableRecordIds = async (sourceRecordIds: string[]) => {
+  const uniqueIds = Array.from(new Set(sourceRecordIds.filter(Boolean)));
+  const snaps = await Promise.all(uniqueIds.map(id => getBookingByAirtableRecordId(id)));
+  return snaps.filter((snap): snap is admin.firestore.DocumentSnapshot => Boolean(snap?.exists));
+};
+
+const preserveStatusIfLocalAhead = (
+  existingStatus: string | undefined,
+  incomingStatus: string,
+  sourceOfTruth: string | undefined
+) => {
+  if (!existingStatus || sourceOfTruth === 'AIRTABLE') return incomingStatus;
+  if (incomingStatus === 'CANCELLED' || incomingStatus === 'PAID') return incomingStatus;
+  return (STATUS_RANK[existingStatus] || 0) > (STATUS_RANK[incomingStatus] || 0)
+    ? existingStatus
+    : incomingStatus;
+};
+
+const mapClientInvoiceStatus = (fields: Record<string, unknown>): string => {
+  const raw = pick(fields, ['Invocing Status', 'Status', 'Payment Status']);
+  const rawLower = raw.toLowerCase();
+  if (truthyField(fields, ['Paid']) || rawLower.includes('paid')) return 'PAID';
+  if (truthyField(fields, ['Email']) || rawLower.includes('sent') || rawLower.includes('email')) return 'SENT';
+  if (rawLower.includes('cancel')) return 'CANCELLED';
+  return 'DRAFT';
+};
+
+const mapInterpreterInvoiceStatus = (fields: Record<string, unknown>): string => {
+  const raw = pick(fields, ['Status', 'Payment Status']).toLowerCase();
+  if (raw.includes('paid')) return 'PAID';
+  if (raw.includes('reject')) return 'REJECTED';
+  if (raw.includes('approv')) return 'APPROVED';
+  return 'SUBMITTED';
+};
+
+const dateOnly = (value: unknown): string => {
+  const normalizedValue = normalize(value);
+  const parsed = normalizedValue ? new Date(normalizedValue) : null;
+  if (parsed && !Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  return new Date().toISOString();
+};
+
+const summarizeInvoiceLine = (
+  booking: admin.firestore.DocumentSnapshot | null,
+  fallbackJob: string,
+  amount: number
+) => {
+  const bookingData = booking?.data() || {};
+  const units = Math.max(Number(bookingData.durationMinutes || 60) / 60, 1);
+  return {
+    bookingId: booking?.id || '',
+    timesheetId: '',
+    description: `Airtable REDBOOK job ${bookingData.jobNumber || bookingData.displayRef || fallbackJob || booking?.id || 'unknown'}`,
+    units,
+    rate: units > 0 ? Number((amount / units).toFixed(2)) : amount,
+    lineAmount: amount,
+    total: amount,
+    sourceSystem: 'AIRTABLE',
+    source: 'redbook_finance_sync'
+  };
+};
+
 const getPlatformMode = async () => {
   const settings = await db.collection('system').doc('settings').get();
   return settings.data()?.platformMode || {};
@@ -304,10 +476,12 @@ const assertAdmin = async (context: functions.https.CallableContext) => {
   }
 };
 
-const fetchAirtableRecords = async (limitRecords: number) => {
+const fetchAirtableRecords = async (limitRecords: number, tableName = DEFAULT_TABLE_NAME) => {
   const apiKey = (process.env.AIRTABLE_API_KEY || '').trim();
   const baseId = process.env.AIRTABLE_REDBOOK_BASE_ID || DEFAULT_BASE_ID;
-  const tableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
+  const resolvedTableName = tableName === DEFAULT_TABLE_NAME
+    ? (process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME)
+    : tableName;
 
   if (!apiKey) {
     throw new functions.https.HttpsError('failed-precondition', 'AIRTABLE_API_KEY secret is not configured.');
@@ -323,14 +497,34 @@ const fetchAirtableRecords = async (limitRecords: number) => {
     };
     if (offset) params.offset = offset;
 
-    const response = await axios.get<{ records: AirtableRecord[]; offset?: string }>(
-      `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        params,
-        timeout: 20000
+    let response: { data: { records: AirtableRecord[]; offset?: string } } | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        response = await axios.get<{ records: AirtableRecord[]; offset?: string }>(
+          `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(resolvedTableName)}`,
+          {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            params,
+            timeout: 30000
+          }
+        );
+        break;
+      } catch (error) {
+        const isFinalAttempt = attempt === 3;
+        console.warn(`[REDBOOK Sync] Airtable fetch failed for ${resolvedTableName} attempt ${attempt}.`);
+        if (isFinalAttempt) {
+          throw new functions.https.HttpsError(
+            'deadline-exceeded',
+            `Airtable did not respond in time while fetching ${resolvedTableName}. Please retry the sync.`
+          );
+        }
+        await new Promise(resolve => setTimeout(resolve, attempt * 750));
       }
-    );
+    }
+
+    if (!response) {
+      throw new functions.https.HttpsError('internal', `Airtable fetch failed for ${resolvedTableName}.`);
+    }
 
     records.push(...response.data.records);
     offset = response.data.offset || '';
@@ -367,7 +561,6 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   const schedule = parseDateTime(fields);
   const sessionType = pick(fields, ['Session Type', 'Type', 'Method', 'Service Mode']);
   const location = pick(fields, ['Session Location', 'Location', 'Address', 'Venue']);
-  const status = mapStatus(pick(fields, ['Status', 'Job Status', 'Booking Status']));
   const patientName = pick(fields, ['Name of your client', 'Patient Name', 'Client Name', 'Service User']);
   const uniqueClientKey = pick(fields, ['Unique Client Key']);
   const agency = pick(fields, ['Agency, institution or company  ', 'Agency, institution or company', 'Organisation / Department', 'Organisation', 'Organization', 'Department']);
@@ -382,6 +575,7 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   const interpreterPhone = pick(fields, ['PHONE (from assign to)', 'Interpreter Phone']);
   const interpreterAirtableRecordId = pick(fields, ['assign to']);
   const resolvedInterpreter = await resolveInterpreterCached(interpreterEmail, interpreterName);
+  const statusMapping = mapStatus(fields, Boolean(resolvedInterpreter?.id || interpreterName || interpreterEmail || interpreterAirtableRecordId));
 
   const sourceSnapshot = {
     legacyRef,
@@ -406,7 +600,7 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
     onlineLink: pick(fields, ['Online Link', 'Video Link', 'Meeting Link']),
     costCode: pick(fields, ['Cost Code', 'Cost Code...', 'PO', 'Purchase Order']),
     notes: pick(fields, ['Notes', 'Special Instructions', 'Comments']),
-    status,
+    status: statusMapping.status,
     interpreterName,
     interpreterEmail,
     interpreterPhone,
@@ -452,6 +646,9 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
       lastSyncedAt: new Date().toISOString(),
       airtableCreatedTime: record.createdTime || '',
       airtableSnapshotHash: stableHash(sourceSnapshot),
+      airtableOperationalStatus: statusMapping.rawStatus,
+      airtableFinancialStatus: statusMapping.signals.invoiceStatus,
+      airtableStatusSignals: statusMapping.signals,
       guestContact: sourceSnapshot.contactEmail ? {
         name: sourceSnapshot.contactName,
         organisation: sourceSnapshot.clientName,
@@ -464,12 +661,323 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   };
 };
 
+const cleanData = (data: Record<string, unknown>) => {
+  return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+};
+
+const emptyActionStats = () => ({
+  created: 0,
+  updated: 0,
+  skipped: 0,
+  conflict: 0,
+  error: 0
+});
+
+const syncClientInvoices = async (
+  records: AirtableRecord[],
+  mode: SyncMode,
+  sourceOfTruth: string | undefined
+) => {
+  const stats: Record<SyncAction, number> = emptyActionStats();
+  const details: Array<Record<string, unknown>> = [];
+  let batch = db.batch();
+  let batchOps = 0;
+
+  const commitIfNeeded = async (force = false) => {
+    if (mode.dryRun || batchOps === 0 || (!force && batchOps < 450)) return;
+    await batch.commit();
+    batch = db.batch();
+    batchOps = 0;
+  };
+
+  for (const record of records) {
+    try {
+      const fields = record.fields;
+      const invoiceNumber = pick(fields, ['Invoice Nbr', 'INV ID', 'Name']) || `AIRTABLE-INV-${record.id}`;
+      const invoiceId = `airtable_client_invoice_${slugify(invoiceNumber || record.id)}`;
+      const linkedRedbookIds = pickLinkedIds(fields, ['Job Number from redbook', '🖥️ REDBOOK', 'Redbook ID (from Job Number from redbook)']);
+      const bookings = mode.dryRun ? [] : await getBookingsByAirtableRecordIds(linkedRedbookIds);
+      const firstBooking = bookings[0]?.data() || {};
+      const invoiceTotal = safeNumber(pickRaw(fields, ['SAGE Invoice + VAT', 'SAGE Invoice total', 'Total invoiced']));
+      const subtotal = safeNumber(pickRaw(fields, ['SAGE Invoice total'])) || invoiceTotal;
+      const status = mapClientInvoiceStatus(fields);
+      const clientName = pick(fields, ['Agency, institution or company  (from feed from redbook)', 'Account (from invoice to)', 'invoice to'])
+        || firstBooking.clientName
+        || 'Airtable Client';
+      const clientId = firstBooking.clientId || `airtable_client_${slugify(clientName)}`;
+      const issueDate = dateOnly(pickRaw(fields, ['Last Modified']));
+      const existing = await db.collection('clientInvoices').doc(invoiceId).get();
+      const snapshotHash = stableHash({
+        invoiceNumber,
+        status,
+        invoiceTotal,
+        subtotal,
+        clientId,
+        clientName,
+        linkedRedbookIds
+      });
+      const action: SyncAction = existing.exists
+        ? (existing.data()?.airtableSnapshotHash === snapshotHash ? 'skipped' : 'updated')
+        : 'created';
+
+      stats[action] += 1;
+
+      if (!mode.dryRun && action !== 'skipped') {
+        const invoiceRef = db.collection('clientInvoices').doc(invoiceId);
+        batch.set(invoiceRef, cleanData({
+          id: invoiceId,
+          organizationId: 'lingland-main',
+          clientId,
+          clientName,
+          reference: invoiceNumber,
+          invoiceNumber,
+          status,
+          issueDate,
+          dueDate: issueDate,
+          periodStart: issueDate,
+          periodEnd: issueDate,
+          subtotal,
+          vatRate: invoiceTotal && subtotal ? Number(((invoiceTotal - subtotal) / subtotal).toFixed(4)) : 0,
+          vatAmount: invoiceTotal && subtotal ? Number((invoiceTotal - subtotal).toFixed(2)) : 0,
+          totalAmount: invoiceTotal || subtotal,
+          currency: 'GBP',
+          items: [],
+          sourceSystem: 'AIRTABLE',
+          sourceRecordId: record.id,
+          sourceTable: CLIENT_INVOICES_TABLE,
+          linkedRedbookRecordIds: linkedRedbookIds,
+          airtableSnapshotHash: snapshotHash,
+          airtableStatus: pick(fields, ['Invocing Status']),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: existing.exists ? existing.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp()
+        }), { merge: true });
+        batchOps += 1;
+
+        const lineBookings = bookings.length ? bookings : [null];
+        const amountPerLine = lineBookings.length > 1
+          ? Number(((invoiceTotal || subtotal) / lineBookings.length).toFixed(2))
+          : (invoiceTotal || subtotal);
+
+        lineBookings.forEach((booking, index) => {
+          const lineId = `${invoiceId}_${booking?.id || record.id}_${index}`;
+          const line = summarizeInvoiceLine(booking, invoiceNumber, amountPerLine);
+          batch.set(db.collection('clientInvoiceLines').doc(lineId), cleanData({
+            ...line,
+            id: lineId,
+            invoiceId,
+            clientInvoiceId: invoiceId,
+            clientId,
+            sourceRecordId: record.id,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          }), { merge: true });
+          batchOps += 1;
+
+          if (booking?.exists) {
+            const bookingData = booking.data() || {};
+            batch.update(booking.ref, cleanData({
+              clientInvoiceId: invoiceId,
+              clientInvoiceNumber: invoiceNumber,
+              totalAmount: invoiceTotal || bookingData.totalAmount || subtotal,
+              status: preserveStatusIfLocalAhead(bookingData.status, status === 'PAID' ? 'PAID' : 'INVOICED', sourceOfTruth),
+              invoicedAt: issueDate,
+              paidAt: status === 'PAID' ? issueDate : bookingData.paidAt,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }));
+            batchOps += 1;
+          }
+        });
+      }
+
+      if (details.length < MAX_DETAILS) {
+        details.push({
+          action,
+          sourceRecordId: record.id,
+          invoiceNumber,
+          clientName,
+          linkedJobs: linkedRedbookIds.length,
+          matchedBookings: bookings.length,
+          status,
+          totalAmount: invoiceTotal || subtotal
+        });
+      }
+
+      await commitIfNeeded();
+    } catch (error) {
+      stats.error += 1;
+      if (details.length < MAX_DETAILS) {
+        details.push({
+          action: 'error',
+          sourceRecordId: record.id,
+          message: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+  }
+
+  await commitIfNeeded(true);
+  return { stats, details };
+};
+
+const syncInterpreterInvoices = async (
+  records: AirtableRecord[],
+  mode: SyncMode,
+  sourceOfTruth: string | undefined
+) => {
+  const stats: Record<SyncAction, number> = emptyActionStats();
+  const details: Array<Record<string, unknown>> = [];
+  let batch = db.batch();
+  let batchOps = 0;
+
+  const commitIfNeeded = async (force = false) => {
+    if (mode.dryRun || batchOps === 0 || (!force && batchOps < 450)) return;
+    await batch.commit();
+    batch = db.batch();
+    batchOps = 0;
+  };
+
+  for (const record of records) {
+    try {
+      const fields = record.fields;
+      const linkedRedbookIds = pickLinkedIds(fields, ['🖥️ REDBOOK', 'Redbook ID (from 🖥️ REDBOOK)']);
+      const bookings = mode.dryRun ? [] : await getBookingsByAirtableRecordIds(linkedRedbookIds);
+      const firstBooking = bookings[0]?.data() || {};
+      const invoiceRefText = pick(fields, ['Name', 'INV name']) || `AIRTABLE-INT-${record.id}`;
+      const interpreterEmail = cleanEmail(pick(fields, ['INT EMAIL (from 🖥️ REDBOOK)']));
+      const interpreterName = pick(fields, ['INV name', 'assign to (from 🖥️ REDBOOK)']) || firstBooking.interpreterName || 'Interpreter';
+      const resolvedInterpreter = mode.dryRun
+        ? null
+        : firstBooking.interpreterId
+        ? {
+          id: firstBooking.interpreterId,
+          name: firstBooking.interpreterName || interpreterName,
+          email: firstBooking.interpreterEmail || interpreterEmail,
+          photoUrl: firstBooking.interpreterPhotoUrl || ''
+        }
+        : await resolveInterpreterCached(interpreterEmail, interpreterName);
+      const interpreterId = resolvedInterpreter?.id || `airtable_interpreter_${slugify(interpreterEmail || interpreterName || record.id)}`;
+      const invoiceId = `airtable_interpreter_invoice_${record.id}`;
+      const totalAmount = safeNumber(pickRaw(fields, ['INV Total', 'INV Session fees']));
+      const status = mapInterpreterInvoiceStatus(fields);
+      const issueDate = dateOnly(record.createdTime || pickRaw(fields, ['Last Modified']));
+      const existing = await db.collection('interpreterInvoices').doc(invoiceId).get();
+      const snapshotHash = stableHash({
+        invoiceRefText,
+        status,
+        totalAmount,
+        interpreterId,
+        linkedRedbookIds
+      });
+      const action: SyncAction = existing.exists
+        ? (existing.data()?.airtableSnapshotHash === snapshotHash ? 'skipped' : 'updated')
+        : 'created';
+
+      stats[action] += 1;
+
+      if (!mode.dryRun && action !== 'skipped') {
+        batch.set(db.collection('interpreterInvoices').doc(invoiceId), cleanData({
+          id: invoiceId,
+          organizationId: 'lingland-main',
+          interpreterId,
+          interpreterName: resolvedInterpreter?.name || interpreterName,
+          interpreterEmail: resolvedInterpreter?.email || interpreterEmail,
+          model: 'UPLOAD',
+          status,
+          externalInvoiceReference: invoiceRefText,
+          totalAmount,
+          issueDate,
+          items: [],
+          currency: 'GBP',
+          sourceSystem: 'AIRTABLE',
+          sourceRecordId: record.id,
+          sourceTable: INTERPRETER_INVOICES_TABLE,
+          linkedRedbookRecordIds: linkedRedbookIds,
+          airtableSnapshotHash: snapshotHash,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: existing.exists ? existing.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp()
+        }), { merge: true });
+        batchOps += 1;
+
+        const lineBookings = bookings.length ? bookings : [null];
+        const amountPerLine = lineBookings.length > 1
+          ? Number((totalAmount / lineBookings.length).toFixed(2))
+          : totalAmount;
+        lineBookings.forEach((booking, index) => {
+          const lineId = `${invoiceId}_${booking?.id || record.id}_${index}`;
+          const line = summarizeInvoiceLine(booking, invoiceRefText, amountPerLine);
+          batch.set(db.collection('interpreterInvoiceLines').doc(lineId), cleanData({
+            ...line,
+            id: lineId,
+            invoiceId,
+            interpreterInvoiceId: invoiceId,
+            interpreterId,
+            sourceRecordId: record.id,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          }), { merge: true });
+          batchOps += 1;
+
+          if (booking?.exists) {
+            const bookingData = booking.data() || {};
+            const nextStatus = preserveStatusIfLocalAhead(
+              bookingData.status,
+              STATUS_RANK[bookingData.status] >= STATUS_RANK.INVOICED ? bookingData.status : 'TIMESHEET_SUBMITTED',
+              sourceOfTruth
+            );
+            batch.update(booking.ref, cleanData({
+              interpreterInvoiceId: invoiceId,
+              interpreterInvoiceNumber: invoiceRefText,
+              interpreterInvoiceTotal: totalAmount || bookingData.interpreterInvoiceTotal,
+              status: nextStatus,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }));
+            batchOps += 1;
+          }
+        });
+      }
+
+      if (details.length < MAX_DETAILS) {
+        details.push({
+          action,
+          sourceRecordId: record.id,
+          invoiceNumber: invoiceRefText,
+          interpreterName: resolvedInterpreter?.name || interpreterName,
+          interpreterId,
+          linkedJobs: linkedRedbookIds.length,
+          matchedBookings: bookings.length,
+          status,
+          totalAmount
+        });
+      }
+
+      await commitIfNeeded();
+    } catch (error) {
+      stats.error += 1;
+      if (details.length < MAX_DETAILS) {
+        details.push({
+          action: 'error',
+          sourceRecordId: record.id,
+          message: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+  }
+
+  await commitIfNeeded(true);
+  return { stats, details };
+};
+
 const syncRecords = async (mode: SyncMode) => {
   interpreterCache.clear();
   clientCache.clear();
+  bookingByAirtableRecordCache.clear();
   const platformMode = await getPlatformMode();
   const importMode = platformMode.airtableImportMode || 'ON';
-  const records = await fetchAirtableRecords(mode.limitRecords);
+  const [records, clientInvoiceRecords, interpreterInvoiceRecords] = await Promise.all([
+    fetchAirtableRecords(mode.limitRecords),
+    fetchAirtableRecords(mode.limitRecords, CLIENT_INVOICES_TABLE),
+    fetchAirtableRecords(mode.limitRecords, INTERPRETER_INVOICES_TABLE)
+  ]);
   const runRef = db.collection('syncRuns').doc();
   const startedAt = new Date().toISOString();
 
@@ -519,6 +1027,10 @@ const syncRecords = async (mode: SyncMode) => {
         existingRef = await findExistingBooking(record, mapped.booking.jobNumber, mapped.booking.legacyAirtableRef);
         existingSnap = await existingRef.get();
         existing = existingSnap.exists ? existingSnap.data() || null : null;
+      }
+      mapped.booking.status = preserveStatusIfLocalAhead(existing?.status, mapped.booking.status, platformMode.sourceOfTruth);
+      if (existing?.status && existing.status !== mapped.booking.status && platformMode.sourceOfTruth !== 'AIRTABLE') {
+        mapped.booking.syncStatus = 'CONFLICT';
       }
       const previousHash = existing?.airtableSnapshotHash;
       const action: SyncAction = existingSnap?.exists ? (previousHash === mapped.booking.airtableSnapshotHash ? 'skipped' : 'updated') : 'created';
@@ -579,18 +1091,31 @@ const syncRecords = async (mode: SyncMode) => {
     }
   }
 
+  const [clientInvoiceSync, interpreterInvoiceSync] = await Promise.all([
+    syncClientInvoices(clientInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth),
+    syncInterpreterInvoices(interpreterInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth)
+  ]);
+
   const finishedAt = new Date().toISOString();
   const result = {
     success: stats.error === 0,
-    mappingVersion: 'redbook-client-interpreter-v2',
+    mappingVersion: 'redbook-status-finance-v3',
     dryRun: mode.dryRun || importMode === 'READ_ONLY',
     importMode,
     triggeredBy: mode.triggeredBy,
     userId: mode.userId || '',
     totalRecords: records.length,
+    financeRecords: {
+      clientInvoices: clientInvoiceRecords.length,
+      interpreterInvoices: interpreterInvoiceRecords.length
+    },
     startedAt,
     finishedAt,
     stats,
+    financeStats: {
+      clientInvoices: clientInvoiceSync.stats,
+      interpreterInvoices: interpreterInvoiceSync.stats
+    },
     details
   };
 

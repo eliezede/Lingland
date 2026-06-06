@@ -33,10 +33,18 @@ export type RedbookSyncResult = {
   importMode: string;
   triggeredBy?: string;
   totalRecords?: number;
+  financeRecords?: {
+    clientInvoices: number;
+    interpreterInvoices: number;
+  };
   startedAt?: string;
   finishedAt?: string;
   message?: string;
   stats: RedbookSyncStats;
+  financeStats?: {
+    clientInvoices: RedbookSyncStats;
+    interpreterInvoices: RedbookSyncStats;
+  };
   details: RedbookSyncDetail[];
 };
 

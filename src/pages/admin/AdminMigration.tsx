@@ -366,6 +366,34 @@ export const AdminMigration = () => {
                   ))}
                 </div>
 
+                {redbookResult?.financeStats && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {[
+                      ['Client invoices', redbookResult.financeRecords?.clientInvoices || 0, redbookResult.financeStats.clientInvoices],
+                      ['Interpreter invoices', redbookResult.financeRecords?.interpreterInvoices || 0, redbookResult.financeStats.interpreterInvoices]
+                    ].map(([label, inspected, invoiceStats]) => {
+                      const stats = invoiceStats as NonNullable<typeof redbookResult.financeStats>['clientInvoices'];
+                      return (
+                        <div key={label as string} className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">{label as string}</p>
+                            <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                              {inspected as number} inspected
+                            </span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-5 gap-2 text-center text-xs font-bold">
+                            <span className="rounded bg-emerald-100 px-2 py-1 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{stats.created} new</span>
+                            <span className="rounded bg-blue-100 px-2 py-1 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">{stats.updated} upd</span>
+                            <span className="rounded bg-slate-200 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{stats.skipped} skip</span>
+                            <span className="rounded bg-amber-100 px-2 py-1 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{stats.conflict} conf</span>
+                            <span className="rounded bg-red-100 px-2 py-1 text-red-700 dark:bg-red-950/40 dark:text-red-300">{stats.error} err</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {redbookResult?.message && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
                     {redbookResult.message}
