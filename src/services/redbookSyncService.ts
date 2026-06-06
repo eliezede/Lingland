@@ -16,6 +16,8 @@ export type RedbookSyncDetail = {
   jobNumber?: string;
   displayRef?: string;
   clientName?: string;
+  clientId?: string;
+  clientAction?: string;
   patientName?: string;
   interpreterName?: string;
   interpreterId?: string;

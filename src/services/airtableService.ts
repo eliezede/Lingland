@@ -72,8 +72,11 @@ export const AirtableService = {
 
         if (mergedMap.has(nameMaster)) {
           // Merge language if existing
-          const existing = mergedMap.get(nameMaster)!;
-          if (language && !existing.languages?.some(l => l.toLowerCase() === language.toLowerCase())) {
+          const existing = mergedMap.get(nameMaster)! as any;
+          existing.airtableRecordIds = Array.from(new Set([...(existing.airtableRecordIds || []), record.id]));
+          existing.sourceRecordId = existing.sourceRecordId || record.id;
+          existing.sourceSystem = 'AIRTABLE';
+          if (language && !existing.languages?.some((l: string) => l.toLowerCase() === language.toLowerCase())) {
             existing.languages = [...(existing.languages || []), language];
             existing.languageProficiencies = [
               ...(existing.languageProficiencies || []),
@@ -108,9 +111,12 @@ export const AirtableService = {
             nrpsi: { registered: false },
             badge: { idStatus: 'Not made yet' },
             organizationId: 'org1', // Default org
+            sourceSystem: 'AIRTABLE',
+            sourceRecordId: record.id,
+            airtableRecordIds: [record.id],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
-          };
+          } as any;
           mergedMap.set(nameMaster, interpreter);
         }
       });

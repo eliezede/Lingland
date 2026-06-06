@@ -186,6 +186,72 @@ const resolveInterpreter = async (email: string, name: string) => {
   return null;
 };
 
+const slugify = (value: string): string => {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return slug || 'unknown';
+};
+
+const resolveClient = async (
+  source: {
+    clientName: string;
+    uniqueClientKey: string;
+    contactName: string;
+    contactEmail: string;
+    contactPhone: string;
+    location: string;
+  },
+  dryRun: boolean
+) => {
+  const sourceKey = slugify(source.uniqueClientKey || source.clientName);
+  const clientId = `airtable_client_${sourceKey}`;
+  const existingById = await db.collection('clients').doc(clientId).get();
+  if (existingById.exists) {
+    return { id: existingById.id, action: 'matched', created: false };
+  }
+
+  if (source.contactEmail) {
+    const byEmail = await db.collection('clients')
+      .where('email', '==', source.contactEmail)
+      .limit(1)
+      .get();
+    if (!byEmail.empty) {
+      if (!dryRun) {
+        await byEmail.docs[0].ref.set({
+          sourceSystem: 'AIRTABLE',
+          sourceKey,
+          airtableClientKey: source.uniqueClientKey || source.clientName,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+      return { id: byEmail.docs[0].id, action: 'matched-email', created: false };
+    }
+  }
+
+  const clientData = {
+    id: clientId,
+    organizationId: 'lingland-main',
+    companyName: source.clientName,
+    contactPerson: source.contactName || source.clientName,
+    email: source.contactEmail || '',
+    phone: source.contactPhone || '',
+    status: 'ACTIVE',
+    billingAddress: source.location || 'Address Pending Update',
+    paymentTermsDays: 30,
+    defaultCostCodeType: 'PO',
+    sourceSystem: 'AIRTABLE',
+    sourceKey,
+    airtableClientKey: source.uniqueClientKey || source.clientName,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+
+  if (!dryRun) {
+    await db.collection('clients').doc(clientId).set(clientData, { merge: true });
+  }
+
+  return { id: clientId, action: dryRun ? 'would-create' : 'created', created: true };
+};
+
 const getPlatformMode = async () => {
   const settings = await db.collection('system').doc('settings').get();
   return settings.data()?.platformMode || {};
@@ -285,11 +351,12 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   const sourceSnapshot = {
     legacyRef,
     jobNumber,
-    clientName,
-    patientName,
-    uniqueClientKey,
-    bookingAgent,
-    caseworker,
+      clientName,
+      patientName,
+      uniqueClientKey,
+      contactName,
+      bookingAgent,
+      caseworker,
     professionalName: contactName,
     contactEmail,
     contactPhone,
@@ -351,7 +418,7 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
       airtableCreatedTime: record.createdTime || '',
       airtableSnapshotHash: stableHash(sourceSnapshot),
       guestContact: sourceSnapshot.contactEmail ? {
-        name: sourceSnapshot.professionalName,
+        name: sourceSnapshot.contactName,
         organisation: sourceSnapshot.clientName,
         email: sourceSnapshot.contactEmail,
         phone: sourceSnapshot.contactPhone
@@ -392,6 +459,15 @@ const syncRecords = async (mode: SyncMode) => {
   for (const record of records) {
     try {
       const mapped = await mapRecordToBooking(record);
+      const clientResolution = await resolveClient({
+        clientName: mapped.sourceSnapshot.clientName,
+        uniqueClientKey: mapped.sourceSnapshot.uniqueClientKey,
+        contactName: mapped.sourceSnapshot.contactName,
+        contactEmail: mapped.sourceSnapshot.contactEmail,
+        contactPhone: mapped.sourceSnapshot.contactPhone,
+        location: mapped.sourceSnapshot.location
+      }, mode.dryRun || importMode === 'READ_ONLY');
+      mapped.booking.clientId = clientResolution.id;
       let existingRef: admin.firestore.DocumentReference | null = null;
       let existingSnap: admin.firestore.DocumentSnapshot | null = null;
       let existing: admin.firestore.DocumentData | null = null;
@@ -446,6 +522,8 @@ const syncRecords = async (mode: SyncMode) => {
           displayRef: mapped.booking.displayRef,
           clientName: mapped.booking.clientName,
           patientName: mapped.booking.patientName,
+          clientId: mapped.booking.clientId,
+          clientAction: clientResolution.action,
           interpreterName: mapped.booking.interpreterName,
           interpreterId: mapped.booking.interpreterId,
           interpreterResolved: Boolean(mapped.booking.interpreterId),

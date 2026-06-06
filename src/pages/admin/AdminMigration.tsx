@@ -395,6 +395,11 @@ export const AdminMigration = () => {
                             <td className="px-4 py-3">
                               <p className="font-medium">{detail.clientName || detail.message || '-'}</p>
                               {detail.patientName && <p className="text-xs text-slate-500">{detail.patientName}</p>}
+                              {detail.clientAction && (
+                                <p className={`text-xs font-bold ${detail.clientAction.includes('create') ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>
+                                  Client {detail.clientAction}
+                                </p>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <p className="font-medium">{detail.interpreterName || '-'}</p>
