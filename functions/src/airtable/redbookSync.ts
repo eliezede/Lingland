@@ -186,6 +186,21 @@ const resolveInterpreter = async (email: string, name: string) => {
   return null;
 };
 
+const interpreterCache = new Map<string, Promise<{
+  id: string;
+  name: string;
+  email: string;
+  photoUrl: string;
+} | null>>();
+
+const resolveInterpreterCached = async (email: string, name: string) => {
+  const key = `${cleanEmail(email)}|${name.trim().toLowerCase()}`;
+  if (!interpreterCache.has(key)) {
+    interpreterCache.set(key, resolveInterpreter(email, name));
+  }
+  return interpreterCache.get(key)!;
+};
+
 const slugify = (value: string): string => {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return slug || 'unknown';
@@ -250,6 +265,26 @@ const resolveClient = async (
   }
 
   return { id: clientId, action: dryRun ? 'would-create' : 'created', created: true };
+};
+
+const clientCache = new Map<string, Promise<{ id: string; action: string; created: boolean }>>();
+
+const resolveClientCached = async (
+  source: {
+    clientName: string;
+    uniqueClientKey: string;
+    contactName: string;
+    contactEmail: string;
+    contactPhone: string;
+    location: string;
+  },
+  dryRun: boolean
+) => {
+  const key = `${dryRun ? 'dry' : 'write'}|${slugify(source.uniqueClientKey || source.clientName)}|${source.contactEmail}`;
+  if (!clientCache.has(key)) {
+    clientCache.set(key, resolveClient(source, dryRun));
+  }
+  return clientCache.get(key)!;
 };
 
 const getPlatformMode = async () => {
@@ -346,7 +381,7 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   const interpreterEmail = cleanEmail(pick(fields, ['INT EMAIL', 'EMAIL (from assign to)', 'Interpreter Email']));
   const interpreterPhone = pick(fields, ['PHONE (from assign to)', 'Interpreter Phone']);
   const interpreterAirtableRecordId = pick(fields, ['assign to']);
-  const resolvedInterpreter = await resolveInterpreter(interpreterEmail, interpreterName);
+  const resolvedInterpreter = await resolveInterpreterCached(interpreterEmail, interpreterName);
 
   const sourceSnapshot = {
     legacyRef,
@@ -430,6 +465,8 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
 };
 
 const syncRecords = async (mode: SyncMode) => {
+  interpreterCache.clear();
+  clientCache.clear();
   const platformMode = await getPlatformMode();
   const importMode = platformMode.airtableImportMode || 'ON';
   const records = await fetchAirtableRecords(mode.limitRecords);
@@ -459,7 +496,7 @@ const syncRecords = async (mode: SyncMode) => {
   for (const record of records) {
     try {
       const mapped = await mapRecordToBooking(record);
-      const clientResolution = await resolveClient({
+      const clientResolution = await resolveClientCached({
         clientName: mapped.sourceSnapshot.clientName,
         uniqueClientKey: mapped.sourceSnapshot.uniqueClientKey,
         contactName: mapped.sourceSnapshot.contactName,
