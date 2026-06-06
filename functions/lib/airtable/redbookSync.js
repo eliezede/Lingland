@@ -163,12 +163,16 @@ const fetchAirtableRecords = async (limitRecords) => {
     const records = [];
     let offset = '';
     do {
-        const params = { pageSize: 100 };
+        const params = {
+            pageSize: Math.min(100, limitRecords),
+            maxRecords: limitRecords
+        };
         if (offset)
             params.offset = offset;
         const response = await axios_1.default.get(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`, {
             headers: { Authorization: `Bearer ${apiKey}` },
-            params
+            params,
+            timeout: 20000
         });
         records.push(...response.data.records);
         offset = response.data.offset || '';
@@ -293,11 +297,24 @@ const syncRecords = async (mode) => {
     for (const record of records) {
         try {
             const mapped = mapRecordToBooking(record);
-            const existingRef = await findExistingBooking(record, mapped.booking.jobNumber, mapped.booking.legacyAirtableRef);
-            const existingSnap = await existingRef.get();
-            const existing = existingSnap.exists ? existingSnap.data() : null;
+            let existingRef = null;
+            let existingSnap = null;
+            let existing = null;
+            if (mode.dryRun) {
+                const bySource = await db.collection('bookings')
+                    .where('sourceRecordId', '==', record.id)
+                    .limit(1)
+                    .get();
+                existingSnap = bySource.empty ? null : bySource.docs[0];
+                existing = existingSnap?.exists ? existingSnap.data() || null : null;
+            }
+            else {
+                existingRef = await findExistingBooking(record, mapped.booking.jobNumber, mapped.booking.legacyAirtableRef);
+                existingSnap = await existingRef.get();
+                existing = existingSnap.exists ? existingSnap.data() || null : null;
+            }
             const previousHash = existing?.airtableSnapshotHash;
-            const action = existingSnap.exists ? (previousHash === mapped.booking.airtableSnapshotHash ? 'skipped' : 'updated') : 'created';
+            const action = existingSnap?.exists ? (previousHash === mapped.booking.airtableSnapshotHash ? 'skipped' : 'updated') : 'created';
             if (mode.dryRun || importMode === 'READ_ONLY') {
                 stats[action] += 1;
             }
@@ -305,6 +322,8 @@ const syncRecords = async (mode) => {
                 stats.skipped += 1;
             }
             else {
+                if (!existingRef || !existingSnap)
+                    throw new Error('Missing booking reference for REDBOOK sync write.');
                 await existingRef.set({
                     ...mapped.booking,
                     createdAt: existing?.createdAt || admin.firestore.FieldValue.serverTimestamp()
