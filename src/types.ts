@@ -625,15 +625,16 @@ export interface ViewFilter {
   dateRange?: 'TODAY' | 'TOMORROW' | 'NEXT_7_DAYS' | 'THIS_MONTH' | 'ALL';
   interpreterId?: string;
   hasInterpreter?: boolean;
+  serviceCategory?: ServiceCategory;
 }
 
-export type SortableField = 'date' | 'status' | 'client' | 'interpreter' | 'languageTo' | 'duration' | 'amount';
-export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'locationType' | 'interpreterId' | 'date';
-export type GroupableField = 'status' | 'languageTo' | 'serviceType' | 'locationType' | 'date';
+export type SortableField = 'date' | 'status' | 'client' | 'interpreter' | 'languageTo' | 'duration' | 'amount' | 'serviceCategory';
+export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'interpreterId' | 'date';
+export type GroupableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'date';
 
 export type BookingColumnField =
   | 'ref' | 'date' | 'time' | 'client' | 'languageFrom' | 'languageTo'
-  | 'serviceType' | 'duration' | 'location' | 'interpreter' | 'status' | 'amount';
+  | 'serviceType' | 'serviceCategory' | 'wordCount' | 'duration' | 'location' | 'interpreter' | 'status' | 'amount';
 
 export const ALL_BOOKING_COLUMNS: { field: BookingColumnField; label: string }[] = [
   { field: 'ref', label: 'Reference' },
@@ -642,7 +643,9 @@ export const ALL_BOOKING_COLUMNS: { field: BookingColumnField; label: string }[]
   { field: 'client', label: 'Client' },
   { field: 'languageFrom', label: 'From Language' },
   { field: 'languageTo', label: 'To Language' },
+  { field: 'serviceCategory', label: 'Service' },
   { field: 'serviceType', label: 'Service Type' },
+  { field: 'wordCount', label: 'Word Count' },
   { field: 'duration', label: 'Duration' },
   { field: 'location', label: 'Location' },
   { field: 'interpreter', label: 'Interpreter' },

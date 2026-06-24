@@ -47,7 +47,7 @@ import { Modal } from '../../../components/ui/Modal';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
 import { ContextMenu, ContextMenuItem } from '../../../components/ui/ContextMenu';
-import { Booking, BookingStatus } from '../../../types';
+import { Booking, BookingStatus, ServiceCategory } from '../../../types';
 import { useToast } from '../../../context/ToastContext';
 import { BillingService, BookingService } from '../../../services/api';
 import { createDependencies } from '../../../ui/actions';
@@ -58,9 +58,9 @@ import { ViewManagerDrawer } from '../../../components/operations/ViewManagerDra
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { useConfirm } from '../../../context/ConfirmContext';
 
-type QuickFilter = 'ALL' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'COMPLETED' | 'TIMESHEET' | 'INVOICE_READY' | 'AWAITING_PAYMENT' | 'CANCELLED';
-type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter';
-type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter';
+type QuickFilter = 'ALL' | 'INTERPRETING' | 'TRANSLATIONS' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'COMPLETED' | 'TIMESHEET' | 'INVOICE_READY' | 'AWAITING_PAYMENT' | 'CANCELLED';
+type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
+type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter' | 'serviceCategory';
 type ToolPanel = 'hide' | 'filter' | 'group' | 'sort' | null;
 
 interface GridColumn {
@@ -118,8 +118,16 @@ const getNextAction = (job: Booking) => {
     return 'Review';
 };
 
+const isTranslationJob = (job: Booking) => job.serviceCategory === ServiceCategory.TRANSLATION;
+
+const getProfessionalLabel = (job: Booking) => isTranslationJob(job) ? 'Translator' : 'Interpreter';
+
 const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
     switch (filter) {
+        case 'INTERPRETING':
+            return jobs.filter(job => job.serviceCategory !== ServiceCategory.TRANSLATION);
+        case 'TRANSLATIONS':
+            return jobs.filter(job => job.serviceCategory === ServiceCategory.TRANSLATION);
         case 'OVERDUE':
             return jobs.filter(job => getDayDiff(job.date) < 0 && !terminalStatuses.has(job.status));
         case 'TODAY':
@@ -219,7 +227,7 @@ export const JobsBoard = () => {
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
     const [groupField, setGroupField] = useState<GroupField>('view');
-    const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set(['duration', 'contact', 'service']));
+    const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set(['contact']));
     const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel>(null);
     const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
     const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -347,7 +355,7 @@ export const JobsBoard = () => {
         },
         {
             id: 'interpreter',
-            label: 'Interpreter',
+            label: 'Professional',
             width: 'minmax(150px, .9fr)',
             icon: UserCheck,
             getSortValue: job => job.interpreterName || '',
@@ -366,7 +374,7 @@ export const JobsBoard = () => {
                         className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
                     >
                         <UserPlus size={12} className="mr-1.5" />
-                        Assign
+                        Assign {isTranslationJob(job) ? 'TR' : ''}
                     </button>
                 )
             ),
@@ -391,16 +399,30 @@ export const JobsBoard = () => {
             label: 'Service',
             width: '140px',
             icon: SlidersHorizontal,
-            getSortValue: job => job.serviceType || job.serviceCategory || '',
-            render: job => <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{job.serviceType || job.serviceCategory}</span>,
+            getSortValue: job => `${job.serviceCategory || ''} ${job.serviceType || ''}`,
+            render: job => (
+                <div className="min-w-0">
+                    <span className={`inline-flex max-w-full rounded-full px-2 py-1 text-[10px] font-black uppercase ${isTranslationJob(job) ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'}`}>
+                        <span className="truncate">{isTranslationJob(job) ? 'Translation' : 'Interpreting'}</span>
+                    </span>
+                    <p className="mt-1 truncate text-xs text-slate-500">{job.serviceType || '-'}</p>
+                </div>
+            ),
         },
         {
             id: 'duration',
-            label: 'Duration',
-            width: '110px',
+            label: 'Volume',
+            width: '120px',
             icon: Clock,
-            getSortValue: job => job.durationMinutes || 0,
-            render: job => <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{job.durationMinutes || '-'} min</span>,
+            getSortValue: job => isTranslationJob(job) ? ((job as any).wordCount || 0) : (job.durationMinutes || 0),
+            render: job => (
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">
+                        {isTranslationJob(job) ? `${(job as any).wordCount || '-'} words` : `${job.durationMinutes || '-'} min`}
+                    </p>
+                    {isTranslationJob(job) && <p className="truncate text-xs text-slate-500">{(job as any).numberOfDocs || '-'} docs</p>}
+                </div>
+            ),
         },
         {
             id: 'contact',
@@ -429,7 +451,7 @@ export const JobsBoard = () => {
                     return <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={(e) => { e.stopPropagation(); handleRecordInterpreterResponse(job, true); }}>Accepted</Button>;
                 }
                 if (job.status === BookingStatus.BOOKED) {
-                    return <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={(e) => { e.stopPropagation(); handleRecordSessionCompleted(job); }}>Complete</Button>;
+                    return <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={(e) => { e.stopPropagation(); handleRecordSessionCompleted(job); }}>{isTranslationJob(job) ? 'Delivered' : 'Complete'}</Button>;
                 }
                 if (job.status === BookingStatus.SESSION_COMPLETED) {
                     return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleRecordManualTimesheet(job); }}>Timesheet</Button>;
@@ -461,6 +483,8 @@ export const JobsBoard = () => {
             b.guestContact?.name?.toLowerCase().includes(query) ||
             b.languageTo?.toLowerCase().includes(query) ||
             b.languageFrom?.toLowerCase().includes(query) ||
+            b.serviceCategory?.toLowerCase().includes(query) ||
+            b.serviceType?.toLowerCase().includes(query) ||
             b.interpreterName?.toLowerCase().includes(query) ||
             b.postcode?.toLowerCase().includes(query)
         ));
@@ -473,6 +497,8 @@ export const JobsBoard = () => {
 
     const quickCounts = useMemo(() => ({
         ALL: viewFilteredBookings.length,
+        INTERPRETING: applyQuickFilter(viewFilteredBookings, 'INTERPRETING').length,
+        TRANSLATIONS: applyQuickFilter(viewFilteredBookings, 'TRANSLATIONS').length,
         OVERDUE: applyQuickFilter(viewFilteredBookings, 'OVERDUE').length,
         TODAY: applyQuickFilter(viewFilteredBookings, 'TODAY').length,
         UNASSIGNED: applyQuickFilter(viewFilteredBookings, 'UNASSIGNED').length,
@@ -495,6 +521,7 @@ export const JobsBoard = () => {
             if (sortField === 'client') return c.id === 'client';
             if (sortField === 'language') return c.id === 'language';
             if (sortField === 'interpreter') return c.id === 'interpreter';
+            if (sortField === 'serviceCategory') return c.id === 'service';
             return c.id === sortField;
         });
         const getValue = column?.getSortValue || ((job: Booking) => String((job as any)[sortField] || ''));
@@ -532,7 +559,8 @@ export const JobsBoard = () => {
             if (resolvedGroup === 'status') key = job.status;
             if (resolvedGroup === 'date') key = formatDate(job.date, { weekday: 'long', day: 'numeric', month: 'long' });
             if (resolvedGroup === 'client') key = getCompanyName(job);
-            if (resolvedGroup === 'interpreter') key = job.interpreterName || 'No interpreter assigned';
+            if (resolvedGroup === 'interpreter') key = job.interpreterName || `No ${getProfessionalLabel(job).toLowerCase()} assigned`;
+            if (resolvedGroup === 'serviceCategory') key = isTranslationJob(job) ? 'Translation' : 'Interpreting';
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key)!.push(job);
         });
@@ -795,19 +823,19 @@ export const JobsBoard = () => {
             </button>
             <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
             <button
-                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id as SortField); setSortDirection('asc'); setActiveColumnMenu(null); }}
+                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('asc'); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <ArrowDownAZ size={15} /> Sort A to Z
             </button>
             <button
-                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id as SortField); setSortDirection('desc'); setActiveColumnMenu(null); }}
+                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('desc'); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <ArrowUpDown size={15} /> Sort Z to A
             </button>
             <button
-                onClick={() => { setGroupField(column.id === 'bookedFor' ? 'date' : column.id === 'jobNumber' ? 'none' : column.id as GroupField); setActiveColumnMenu(null); }}
+                onClick={() => { setGroupField(column.id === 'bookedFor' ? 'date' : column.id === 'jobNumber' ? 'none' : column.id === 'service' ? 'serviceCategory' : column.id as GroupField); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <Group size={15} /> Group by this field
@@ -924,9 +952,10 @@ export const JobsBoard = () => {
 
     const renderGridRow = (job: Booking, rowIndex: number) => {
         const selected = selectedIds.includes(job.id);
+        const translation = isTranslationJob(job);
         const row = (
             <div
-                className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${selected ? 'bg-blue-50 dark:bg-blue-950/30' : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60'}`}
+                className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${selected ? 'bg-blue-50 dark:bg-blue-950/30' : translation ? 'bg-violet-50/35 hover:bg-violet-50 dark:bg-violet-950/10 dark:hover:bg-violet-950/20' : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60'}`}
                 style={{ gridTemplateColumns }}
                 onClick={() => handleRowClick(job)}
                 onDoubleClick={() => openJobDetails(job)}
@@ -1093,6 +1122,8 @@ export const JobsBoard = () => {
 
                 <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-200 p-2 dark:border-slate-800">
                     <FilterChip label="All" count={quickCounts.ALL} active={quickFilter === 'ALL'} onClick={() => setQuickFilter('ALL')} />
+                    <FilterChip label="Interpreting" count={quickCounts.INTERPRETING} active={quickFilter === 'INTERPRETING'} onClick={() => setQuickFilter('INTERPRETING')} />
+                    <FilterChip label="Translations" count={quickCounts.TRANSLATIONS} active={quickFilter === 'TRANSLATIONS'} onClick={() => setQuickFilter('TRANSLATIONS')} />
                     <FilterChip label="Overdue" count={quickCounts.OVERDUE} active={quickFilter === 'OVERDUE'} onClick={() => setQuickFilter('OVERDUE')} />
                     <FilterChip label="Today" count={quickCounts.TODAY} active={quickFilter === 'TODAY'} onClick={() => setQuickFilter('TODAY')} />
                     <FilterChip label="Unassigned" count={quickCounts.UNASSIGNED} active={quickFilter === 'UNASSIGNED'} onClick={() => setQuickFilter('UNASSIGNED')} />

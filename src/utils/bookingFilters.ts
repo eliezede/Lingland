@@ -19,6 +19,10 @@ export const filterBookings = (bookings: Booking[], view: BookingView): Booking[
             result = result.filter(b => filters.hasInterpreter ? !!b.interpreterId : !b.interpreterId);
         }
 
+        if (filters.serviceCategory) {
+            result = result.filter(b => b.serviceCategory === filters.serviceCategory);
+        }
+
         if (filters.dateRange) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);

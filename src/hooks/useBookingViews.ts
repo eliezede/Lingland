@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BookingView, BookingStatus } from '../types';
+import { BookingView, BookingStatus, ServiceCategory } from '../types';
 
 const STORAGE_KEY_PREFIX = 'lingland_booking_views_';
 
@@ -40,6 +40,28 @@ export const SYSTEM_VIEWS: BookingView[] = [
             statuses: [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.ASSIGNMENT_PENDING, BookingStatus.OPENED]
         },
         sortBy: 'dateAsc'
+    },
+    {
+        id: 'sys-interpreting',
+        name: 'Interpreting',
+        icon: 'headphones',
+        isSystem: true,
+        filters: {
+            serviceCategory: ServiceCategory.INTERPRETATION
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'status'
+    },
+    {
+        id: 'sys-translations',
+        name: 'Translations',
+        icon: 'languages',
+        isSystem: true,
+        filters: {
+            serviceCategory: ServiceCategory.TRANSLATION
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'status'
     },
     {
         id: 'sys-today-tomorrow',
