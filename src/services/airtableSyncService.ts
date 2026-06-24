@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebaseConfig';
 import { RedbookSyncDetail, RedbookSyncStats } from './redbookSyncService';
@@ -49,7 +49,16 @@ export type AirtableSyncCheckpoint = {
   lastRunAt?: string;
   lastStats?: RedbookSyncStats;
   lastModules?: AirtableSyncModule[];
+  moduleCheckpoints?: Partial<Record<AirtableSyncModule, {
+    lastRunId?: string;
+    lastWriteAt?: string;
+    recordsRead?: number;
+    stats?: RedbookSyncStats;
+    success?: boolean;
+  }>>;
 };
+
+export type AirtableDependencyCounts = Partial<Record<AirtableSyncModule, number>>;
 
 export const AIRTABLE_SYNC_MODULES: Array<{
   id: AirtableSyncModule;
@@ -67,7 +76,7 @@ export const AIRTABLE_SYNC_MODULES: Array<{
   {
     id: 'redbook',
     label: 'Interpretation Jobs',
-    description: 'Mirrors REDBOOK jobs and their interpretation finance links.',
+    description: 'Mirrors REDBOOK interpretation jobs before finance is matched.',
     tables: ['REDBOOK'],
     dependency: 'clients'
   },
@@ -122,5 +131,28 @@ export const AirtableSyncService = {
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {
     const snap = await getDoc(doc(db, 'system', 'airtableSyncCenter'));
     return snap.exists() ? snap.data() as AirtableSyncCheckpoint : null;
+  },
+
+  getDependencyCounts: async (): Promise<AirtableDependencyCounts> => {
+    const [clients, redbook, translations] = await Promise.all([
+      getCountFromServer(query(
+        collection(db, 'clients'),
+        where('sourceSystem', '==', 'AIRTABLE')
+      )),
+      getCountFromServer(query(
+        collection(db, 'bookings'),
+        where('sourceTable', '==', 'REDBOOK')
+      )),
+      getCountFromServer(query(
+        collection(db, 'bookings'),
+        where('serviceCategory', '==', 'TRANSLATION')
+      ))
+    ]);
+
+    return {
+      clients: clients.data().count,
+      redbook: redbook.data().count,
+      translations: translations.data().count
+    };
   }
 };

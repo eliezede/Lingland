@@ -1,18 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   Building2,
   CheckCircle2,
   ClipboardList,
   Database,
   FileText,
+  Info,
   Languages,
   Loader2,
   Mail,
   PlayCircle,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
   UserCog,
   Users,
   Wallet
@@ -22,6 +25,8 @@ import { MigrationService } from '../../services/migrationService';
 import {
   AIRTABLE_SYNC_MODULES,
   AirtableModuleResult,
+  AirtableDependencyCounts,
+  AirtableSyncCheckpoint,
   AirtableSyncModule,
   AirtableSyncResult,
   AirtableSyncService
@@ -69,13 +74,18 @@ const StatPill = ({ label, value, className = '' }: { label: string; value: numb
 );
 
 export const AdminMigration = () => {
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('clients');
   const [loading, setLoading] = useState(false);
   const [interpreterLoading, setInterpreterLoading] = useState(false);
   const [stats, setStats] = useState<{ total: number; deduplicated: number } | null>(null);
   const [recordLimit, setRecordLimit] = useState(500);
   const [syncResult, setSyncResult] = useState<AirtableSyncResult | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
+  const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
+  const [dependencyCounts, setDependencyCounts] = useState<AirtableDependencyCounts>({});
+  const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
+  const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'unmatched' | 'changes'>('all');
+  const [showInfo, setShowInfo] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const { showToast } = useToast();
@@ -94,6 +104,23 @@ export const AdminMigration = () => {
 
   const activeModule = AIRTABLE_SYNC_MODULES.find(module => module.id === activeTab);
   const activeResult = activeModule ? moduleResults.get(activeModule.id) : null;
+  const activeDependency = activeModule?.dependency
+    ? AIRTABLE_SYNC_MODULES.find(item => item.id === activeModule.dependency)
+    : undefined;
+  const activeModuleCheckpoint = activeModule ? moduleCheckpoints?.[activeModule.id] : undefined;
+  const dependencyWritten = !activeModule?.dependency
+    || Boolean(moduleCheckpoints?.[activeModule.dependency]?.success && (dependencyCounts[activeModule.dependency] || 0) > 0);
+  const syncNowBlockedByDependency = Boolean(activeModule?.dependency && !dependencyWritten);
+  const fullRunKey = `full:${recordLimit}`;
+  const moduleRunKey = activeModule ? `${activeModule.id}:${recordLimit}` : fullRunKey;
+  const hasCleanDryRun = cleanDryRunKeys.has(moduleRunKey);
+  const hasCleanFullDryRun = cleanDryRunKeys.has(fullRunKey);
+  const writeBlockedByDryRun = activeModule ? !hasCleanDryRun : !hasCleanFullDryRun;
+  const activeModuleOptions = [
+    { id: 'overview' as WorkspaceTab, label: 'Overview' },
+    { id: 'interpreters' as WorkspaceTab, label: 'Interpreters' },
+    ...AIRTABLE_SYNC_MODULES.map(module => ({ id: module.id as WorkspaceTab, label: module.label }))
+  ];
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -114,8 +141,18 @@ export const AdminMigration = () => {
     try {
       const checkpoint = await AirtableSyncService.getCheckpoint();
       setLastRunAt(checkpoint?.lastRunAt);
+      setModuleCheckpoints(checkpoint?.moduleCheckpoints || {});
     } catch (err) {
       console.warn('Failed to load Airtable Sync Center checkpoint', err);
+    }
+  };
+
+  const loadDependencyCounts = async () => {
+    try {
+      setDependencyCounts(await AirtableSyncService.getDependencyCounts());
+    } catch (err) {
+      console.warn('Failed to load Airtable dependency counts', err);
+      setDependencyCounts({});
     }
   };
 
@@ -159,6 +196,30 @@ export const AdminMigration = () => {
       return;
     }
 
+    const requestedKey = modules === 'full'
+      ? `full:${recordLimit}`
+      : `${modules.join('+')}:${recordLimit}`;
+
+    if (!dryRun && !cleanDryRunKeys.has(requestedKey)) {
+      showToast('Run a clean Dry Run with the same module and record limit before writing data.', 'error');
+      return;
+    }
+
+    if (!dryRun && modules !== 'full') {
+      const missingDependency = modules
+        .map(module => AIRTABLE_SYNC_MODULES.find(item => item.id === module))
+        .find(module => module?.dependency && !(
+          moduleCheckpoints?.[module.dependency]?.success
+          && (dependencyCounts[module.dependency] || 0) > 0
+        ));
+
+      if (missingDependency?.dependency) {
+        const dependencyLabel = AIRTABLE_SYNC_MODULES.find(item => item.id === missingDependency.dependency)?.label || missingDependency.dependency;
+        showToast(`Run Sync Now for ${dependencyLabel} before writing ${missingDependency.label}. Dry Run is still available.`, 'error');
+        return;
+      }
+    }
+
     const moduleLabel = modules === 'full'
       ? 'Full Sync'
       : modules.map(module => AIRTABLE_SYNC_MODULES.find(item => item.id === module)?.label || module).join(', ');
@@ -170,6 +231,10 @@ export const AdminMigration = () => {
       const result = await AirtableSyncService.run(dryRun, modules, recordLimit);
       setSyncResult(result);
       await loadCheckpoint();
+      await loadDependencyCounts();
+      if (dryRun && result.success && result.stats.error === 0) {
+        setCleanDryRunKeys(prev => new Set(prev).add(requestedKey));
+      }
       showToast(
         dryRun
           ? `Dry Run complete: ${result.moduleResults.length} module(s) inspected.`
@@ -186,6 +251,7 @@ export const AdminMigration = () => {
   useEffect(() => {
     loadInterpreterStats();
     loadCheckpoint();
+    loadDependencyCounts();
   }, []);
 
   const renderStats = (result?: AirtableModuleResult | null) => {
@@ -210,57 +276,143 @@ export const AdminMigration = () => {
 
   const renderDetails = (result?: AirtableModuleResult | null) => {
     if (!result?.details?.length) return null;
+    const filteredDetails = result.details.filter((detail: any) => {
+      if (detailFilter === 'errors') return detail.action === 'error' || Boolean(detail.message);
+      if (detailFilter === 'unmatched') return detail.matchedBookings === 0 || detail.interpreterResolved === false || detail.clientAction === 'created';
+      if (detailFilter === 'changes') return ['created', 'updated', 'conflict'].includes(detail.action);
+      return true;
+    });
+    const filterOptions: Array<{ id: typeof detailFilter; label: string; count: number }> = [
+      { id: 'all', label: 'All', count: result.details.length },
+      { id: 'errors', label: 'Errors', count: result.details.filter((detail: any) => detail.action === 'error' || Boolean(detail.message)).length },
+      { id: 'unmatched', label: 'Unmatched', count: result.details.filter((detail: any) => detail.matchedBookings === 0 || detail.interpreterResolved === false || detail.clientAction === 'created').length },
+      { id: 'changes', label: 'Changes', count: result.details.filter((detail: any) => ['created', 'updated', 'conflict'].includes(detail.action)).length }
+    ];
 
     return (
-      <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
-        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-          <thead className="bg-slate-50 dark:bg-slate-950/60">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Action</th>
-              <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Reference</th>
-              <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Client</th>
-              <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Person</th>
-              <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {result.details.map((detail: any, index) => (
-              <tr key={`${detail.sourceRecordId}-${index}`} className="align-top dark:text-slate-200">
-                <td className="px-4 py-3">
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black uppercase text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                    {detail.action}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-semibold text-slate-950 dark:text-white">
-                    {detail.displayRef || detail.jobNumber || detail.invoiceNumber || detail.clientName || detail.sourceRecordId}
-                  </p>
-                  <p className="text-xs text-slate-500">{detail.sourceTable || result.tableNames.join(', ')} / {detail.sourceRecordId}</p>
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-medium">{detail.clientName || '-'}</p>
-                  {detail.clientAction && <p className="text-xs font-bold text-amber-600 dark:text-amber-300">Client {detail.clientAction}</p>}
-                  {detail.email && <p className="text-xs text-slate-500">{detail.email}</p>}
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-medium">{detail.interpreterName || '-'}</p>
-                  {detail.interpreterName && (
-                    <p className={`text-xs font-bold ${detail.interpreterResolved ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}`}>
-                      {detail.interpreterResolved ? 'Matched profile' : 'Name only'}
-                    </p>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-medium">{detail.status || '-'}</p>
-                  {detail.message && <p className="text-xs text-red-600 dark:text-red-300">{detail.message}</p>}
-                </td>
-              </tr>
+      <div className="rounded-lg border border-slate-200 dark:border-slate-800">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-3 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-black text-slate-950 dark:text-white">Audit rows</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{filteredDetails.length} of {result.details.length} shown</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {filterOptions.map(option => (
+              <button
+                key={option.id}
+                onClick={() => setDetailFilter(option.id)}
+                className={`h-8 rounded-lg border px-3 text-xs font-black ${
+                  detailFilter === option.id
+                    ? 'border-slate-950 bg-slate-950 text-white dark:border-blue-500 dark:bg-blue-600'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800'
+                }`}
+              >
+                {option.label} {option.count}
+              </button>
             ))}
-          </tbody>
-        </table>
+          </div>
+        </div>
+        <div className="overflow-auto">
+          <table className="min-w-[980px] divide-y divide-slate-200 text-sm dark:divide-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950/60">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Action</th>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Reference</th>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Client</th>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Person</th>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Match</th>
+                <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-500">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filteredDetails.map((detail: any, index) => (
+                <tr key={`${detail.sourceRecordId}-${index}`} className="align-top dark:text-slate-200">
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-1 text-xs font-black uppercase ${
+                      detail.action === 'error'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                        : detail.action === 'created'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : detail.action === 'updated'
+                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                    }`}>
+                      {detail.action}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-slate-950 dark:text-white">
+                      {detail.displayRef || detail.jobNumber || detail.invoiceNumber || detail.clientName || detail.sourceRecordId}
+                    </p>
+                    <p className="text-xs text-slate-500">{detail.sourceTable || result.tableNames.join(', ')} / {detail.sourceRecordId}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{detail.clientName || '-'}</p>
+                    {detail.clientAction && <p className={`text-xs font-bold ${detail.clientAction === 'created' ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>Client {detail.clientAction}</p>}
+                    {detail.email && <p className="text-xs text-slate-500">{detail.email}</p>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{detail.interpreterName || '-'}</p>
+                    {detail.interpreterName && (
+                      <p className={`text-xs font-bold ${detail.interpreterResolved ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}`}>
+                        {detail.interpreterResolved ? 'Matched profile' : 'Name only'}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {detail.matchedBookings !== undefined ? (
+                      <p className={`font-black ${detail.matchedBookings > 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
+                        {detail.matchedBookings} booking match{detail.matchedBookings === 1 ? '' : 'es'}
+                      </p>
+                    ) : (
+                      <p className="text-slate-500">-</p>
+                    )}
+                    {detail.linkedJobs !== undefined && <p className="text-xs text-slate-500">{detail.linkedJobs} linked source ref{detail.linkedJobs === 1 ? '' : 's'}</p>}
+                    {detail.workflowArtifacts?.assignment && (
+                      <p className="text-xs font-bold text-blue-600 dark:text-blue-300">Assignment {detail.workflowArtifacts.assignment}</p>
+                    )}
+                    {detail.workflowArtifacts?.timesheet && (
+                      <p className="text-xs font-bold text-purple-600 dark:text-purple-300">Timesheet {detail.workflowArtifacts.timesheet}</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{detail.status || '-'}</p>
+                    {detail.message && <p className="max-w-xs text-xs text-red-600 dark:text-red-300">{detail.message}</p>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!filteredDetails.length && (
+            <div className="p-8 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+              No rows match this filter.
+            </div>
+          )}
+        </div>
       </div>
     );
   };
+
+  const runActiveDryRun = () => {
+    if (activeModule) return runSync(true, [activeModule.id]);
+    return runSync(true, 'full');
+  };
+
+  const runActiveWrite = () => {
+    if (activeModule) return runSync(false, [activeModule.id]);
+    return runSync(false, 'full');
+  };
+
+  const activeTitle = activeModule?.label || (activeTab === 'interpreters' ? 'Interpreters' : 'Full Sync');
+  const activeSubtitle = activeModule?.description
+    || (activeTab === 'interpreters' ? 'Active team import and activation' : 'All modules in dependency order');
+  const activeWriteDisabled = loading
+    || importLocked
+    || activeTab === 'interpreters'
+    || syncNowBlockedByDependency
+    || writeBlockedByDryRun;
+  const activeWriteLabel = activeModule ? 'Write Sync' : 'Write Full Sync';
+  const activeDryRunLabel = activeModule ? 'Dry Run' : 'Full Dry Run';
 
   return (
     <div className="space-y-5">
@@ -272,6 +424,13 @@ export const AdminMigration = () => {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-black uppercase">
+          <button
+            onClick={() => setShowInfo(true)}
+            className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-blue-700 hover:bg-blue-100 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/60"
+          >
+            <Info size={14} />
+            Info
+          </button>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{operatingMode}</span>
           <span className={`rounded-full px-3 py-1 ${importMode === 'ON' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'}`}>
             Import {importMode}
@@ -282,52 +441,170 @@ export const AdminMigration = () => {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-slate-800 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <p className="text-sm font-bold text-slate-950 dark:text-white">Transition guard</p>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Last full write sync: {formatDateTime(lastRunAt)}. Dry Run is always safe; Sync Now respects Platform Mode.
-            </p>
+      {showInfo && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="my-8 w-full max-w-4xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 dark:border-slate-800">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-blue-600 dark:text-blue-300">Airtable Migration Info</p>
+                <h2 className="mt-1 text-xl font-black text-slate-950 dark:text-white">How this Sync Center works</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Use this page to mirror Airtable data into Lingland while keeping operations safe during transition.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowInfo(false)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-4 p-5 lg:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                <h3 className="font-black text-slate-950 dark:text-white">Safe operating rule</h3>
+                <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                  <li><strong>Dry Run</strong> reads Airtable and previews what would happen. It does not write data.</li>
+                  <li><strong>Write Sync</strong> writes to Firestore and is blocked until a clean Dry Run was run with the same module and record limit.</li>
+                  <li><strong>Import Mode</strong> controls whether writes are allowed. `READ_ONLY` and `OFF` prevent production writes.</li>
+                  <li><strong>Email Mode</strong> still controls communication. Mirror imports do not send client/interpreter emails by themselves.</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                <h3 className="font-black text-slate-950 dark:text-white">Required order</h3>
+                <ol className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                  <li>1. Import <strong>Clients</strong>.</li>
+                  <li>2. Import <strong>Interpretation Jobs</strong> and/or <strong>Translation Jobs</strong>.</li>
+                  <li>3. Import <strong>Client Invoices</strong> and <strong>Interpreter/Translator Invoices</strong>.</li>
+                  <li>4. Review unmatched rows before running higher limits.</li>
+                </ol>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                <h3 className="font-black text-slate-950 dark:text-white">What gets mirrored</h3>
+                <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                  <li>REDBOOK jobs become Lingland bookings with Airtable refs and job numbers.</li>
+                  <li>Translations become bookings with `serviceCategory: TRANSLATION`.</li>
+                  <li>Assigned interpreters/translators are linked to platform profiles when possible.</li>
+                  <li>Status is mapped into the Lingland job workflow: assignment, booked, timesheet, invoice and paid stages.</li>
+                  <li>Invoices create invoice documents and invoice lines linked back to matched bookings.</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                <h3 className="font-black text-slate-950 dark:text-white">Workflow artifacts</h3>
+                <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                  <li>Assigned jobs create mirrored `bookingAssignments`.</li>
+                  <li>Accepted/booked jobs create accepted assignment state.</li>
+                  <li>Timesheet/invoice/paid signals create mirrored `timesheets`.</li>
+                  <li>Invoice lines point to mirrored timesheets when a booking match exists.</li>
+                  <li>Job events are recorded for audit without triggering interpreter/client communication.</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200 lg:col-span-2">
+                <h3 className="font-black">Before writing real data</h3>
+                <p className="mt-2 text-sm">
+                  Start with 100 records, inspect `Errors` and `Unmatched`, then increase the limit. If invoices show zero booking matches, do not write finance yet: import or repair the related jobs first.
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={recordLimit}
-              onChange={e => setRecordLimit(Number(e.target.value))}
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-            >
-              <option value={100}>100 records</option>
-              <option value={500}>500 records</option>
-              <option value={1000}>1,000 records</option>
-              <option value={5000}>5,000 records</option>
-            </select>
-            <button
-              onClick={() => runSync(true, 'full')}
-              disabled={loading}
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-              Full Dry Run
-            </button>
-            <button
-              onClick={() => runSync(false, 'full')}
-              disabled={loading || importLocked}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
-              Full Sync
-            </button>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black uppercase text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                  <SlidersHorizontal size={14} />
+                  Active workspace
+                </span>
+                {activeDependency && (
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-black ${
+                    dependencyWritten
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                  }`}>
+                    {dependencyWritten ? 'Dependency ready' : `Requires ${activeDependency.label}`}
+                  </span>
+                )}
+                {activeModuleCheckpoint?.lastWriteAt && (
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    Last write {formatDateTime(activeModuleCheckpoint.lastWriteAt)}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate text-lg font-black text-slate-950 dark:text-white">{activeTitle}</h2>
+                  <p className="truncate text-sm text-slate-500 dark:text-slate-400">{activeSubtitle}</p>
+                </div>
+                <select
+                  value={activeTab}
+                  onChange={event => setActiveTab(event.target.value as WorkspaceTab)}
+                  className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 xl:hidden"
+                >
+                  {activeModuleOptions.map(option => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={recordLimit}
+                onChange={e => setRecordLimit(Number(e.target.value))}
+                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+              >
+                <option value={100}>100 records</option>
+                <option value={500}>500 records</option>
+                <option value={1000}>1,000 records</option>
+                <option value={5000}>5,000 records</option>
+              </select>
+              <button
+                onClick={runActiveDryRun}
+                disabled={loading || activeTab === 'interpreters'}
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                {activeDryRunLabel}
+              </button>
+              <button
+                onClick={runActiveWrite}
+                disabled={activeWriteDisabled}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
+                {activeWriteLabel}
+              </button>
+            </div>
           </div>
         </div>
 
         {importLocked && (
           <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            Import write actions are locked because Airtable Import Mode is {importMode}. Use Dry Run or change Platform Mode when ready.
+            <div className="flex gap-2">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+              <span>Import write actions are locked because Airtable Import Mode is {importMode}. Use Dry Run or change Platform Mode when ready.</span>
+            </div>
+          </div>
+        )}
+
+        {writeBlockedByDryRun && activeTab !== 'interpreters' && (
+          <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+            <div className="flex gap-2">
+              <ShieldCheck size={18} className="mt-0.5 shrink-0" />
+              <span>Run a clean {activeDryRunLabel} with the current {recordLimit} record limit before writing data.</span>
+            </div>
           </div>
         )}
 
         <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)]">
-          <aside className="border-b border-slate-200 p-4 dark:border-slate-800 xl:border-b-0 xl:border-r">
+          <aside className="hidden border-b border-slate-200 p-4 dark:border-slate-800 xl:block xl:border-b-0 xl:border-r">
             <div className="space-y-1">
               {([
                 { id: 'overview' as WorkspaceTab, label: 'Overview', description: 'Full workflow and dependency order' },
@@ -579,32 +856,24 @@ export const AdminMigration = () => {
                           {table}
                         </span>
                       ))}
-                      {activeModule.dependency && (
-                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                          depends on {AIRTABLE_SYNC_MODULES.find(item => item.id === activeModule.dependency)?.label}
+                      {activeDependency && (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-black ${
+                          dependencyWritten
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                        }`}>
+                          {dependencyWritten ? 'ready after' : 'requires'} {activeDependency.label}
                         </span>
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => runSync(true, [activeModule.id])}
-                      disabled={loading}
-                      className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-                      Dry Run
-                    </button>
-                    <button
-                      onClick={() => runSync(false, [activeModule.id])}
-                      disabled={loading || importLocked}
-                      className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {loading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
-                      Sync Now
-                    </button>
-                  </div>
                 </div>
+
+                {syncNowBlockedByDependency && activeDependency && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                    Sync Now is locked until {activeDependency.label} has been written at least once. Use Dry Run here, or run Sync Now on {activeDependency.label} first.
+                  </div>
+                )}
 
                 {renderStats(activeResult)}
                 {activeResult?.financeStats && (

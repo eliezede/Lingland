@@ -202,7 +202,13 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed lg:static inset-y-0 left-0 z-50 flex transform transition-all duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <aside
+        className={`fixed lg:static inset-y-0 left-0 z-50 transform transition-all duration-300 ${
+          isSidebarOpen
+            ? 'flex translate-x-0'
+            : 'hidden -translate-x-full lg:flex lg:translate-x-0'
+        }`}
+      >
         <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 lg:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
           <div className={`flex items-center ${isPrimaryExpanded ? 'px-4 space-x-3 justify-start' : 'justify-center'} w-full mb-8`}>
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
