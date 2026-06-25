@@ -1,6 +1,7 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import axios from 'axios';
+import { createHash } from 'crypto';
 
 type AirtableRecord = {
   id: string;
@@ -15,6 +16,7 @@ type SyncMode = {
   limitRecords: number;
   triggeredBy: 'manual' | 'schedule';
   userId?: string;
+  tableOffsets?: Record<string, string>;
 };
 
 const db = admin.firestore();
@@ -887,7 +889,7 @@ const assertAdmin = async (context: functions.https.CallableContext) => {
   }
 };
 
-const fetchAirtableRecords = async (limitRecords: number, tableName = DEFAULT_TABLE_NAME) => {
+const fetchAirtableRecordBatch = async (limitRecords: number, tableName = DEFAULT_TABLE_NAME, startOffset = '') => {
   const apiKey = (process.env.AIRTABLE_API_KEY || '').trim();
   const baseId = process.env.AIRTABLE_REDBOOK_BASE_ID || DEFAULT_BASE_ID;
   const resolvedTableName = tableName === DEFAULT_TABLE_NAME
@@ -899,12 +901,11 @@ const fetchAirtableRecords = async (limitRecords: number, tableName = DEFAULT_TA
   }
 
   const records: AirtableRecord[] = [];
-  let offset = '';
+  let offset = startOffset;
 
   do {
     const params: Record<string, string | number> = {
-      pageSize: Math.min(100, limitRecords),
-      maxRecords: limitRecords
+      pageSize: Math.min(100, Math.max(limitRecords - records.length, 1))
     };
     if (offset) params.offset = offset;
 
@@ -941,7 +942,16 @@ const fetchAirtableRecords = async (limitRecords: number, tableName = DEFAULT_TA
     offset = response.data.offset || '';
   } while (offset && records.length < limitRecords);
 
-  return records.slice(0, limitRecords);
+  return {
+    records: records.slice(0, limitRecords),
+    nextOffset: offset,
+    tableName: resolvedTableName
+  };
+};
+
+const fetchAirtableRecords = async (limitRecords: number, tableName = DEFAULT_TABLE_NAME) => {
+  const batch = await fetchAirtableRecordBatch(limitRecords, tableName);
+  return batch.records;
 };
 
 const findExistingBooking = async (record: AirtableRecord, jobNumber: string, legacyRef: string) => {
@@ -1203,6 +1213,50 @@ const cleanData = (data: Record<string, unknown>) => {
   return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
 };
 
+const cleanReportData = <T>(data: T): T => JSON.parse(JSON.stringify(data));
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value)
+  && typeof value === 'object'
+  && !Array.isArray(value)
+  && Object.getPrototypeOf(value) === Object.prototype
+);
+
+const cleanFirestoreValue = (value: unknown): unknown => {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map(cleanFirestoreValue)
+      .filter(item => item !== undefined);
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, child]) => [key, cleanFirestoreValue(child)] as const)
+        .filter(([, child]) => child !== undefined)
+    );
+  }
+  return value;
+};
+
+const cleanFirestoreData = (data: Record<string, unknown>) => cleanFirestoreValue(data) as Record<string, unknown>;
+
+const pushErrorDetail = (
+  details: Array<Record<string, unknown>>,
+  detail: Record<string, unknown>,
+  limit = MODULE_DETAIL_LIMIT
+) => {
+  const cleanDetail = cleanReportData(detail);
+  if (details.length < limit) {
+    details.push(cleanDetail);
+    return;
+  }
+  const firstNonErrorIndex = details.findIndex(item => item.action !== 'error');
+  if (firstNonErrorIndex >= 0) {
+    details[firstNonErrorIndex] = cleanDetail;
+  }
+};
+
 const emptyActionStats = () => ({
   created: 0,
   updated: 0,
@@ -1318,10 +1372,10 @@ const syncTranslationBookings = async (
 
       if (!mode.dryRun && action !== 'skipped') {
         if (!existingRef || !existingSnap) throw new Error('Missing booking reference for translation sync write.');
-        await existingRef.set({
+        await existingRef.set(cleanFirestoreData({
           ...mapped.booking,
           createdAt: existing?.createdAt || admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        }), { merge: true });
 
         await db.collection('jobEvents').add({
           jobId: existingRef.id,
@@ -1832,13 +1886,12 @@ const syncTranslationClientInvoices = async (
       await commitIfNeeded();
     } catch (error) {
       stats.error += 1;
-      if (details.length < MODULE_DETAIL_LIMIT) {
-        details.push({
-          action: 'error',
-          sourceRecordId: record.id,
-          message: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+      pushErrorDetail(details, {
+        action: 'error',
+        sourceRecordId: record.id,
+        sourceTable: TRANSLATION_CLIENT_INVOICES_TABLE,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   }
 
@@ -2018,13 +2071,29 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
   bookingByAirtableRecordCache.clear();
   const platformMode = await getPlatformMode();
   const importMode = platformMode.airtableImportMode || 'ON';
-  const records = await fetchAirtableRecords(mode.limitRecords);
+  const redbookBatch = await fetchAirtableRecordBatch(
+    mode.limitRecords,
+    DEFAULT_TABLE_NAME,
+    mode.tableOffsets?.[DEFAULT_TABLE_NAME] || ''
+  );
+  const records = redbookBatch.records;
   const [clientInvoiceRecords, interpreterInvoiceRecords] = includeFinance
     ? await Promise.all([
-      fetchAirtableRecords(mode.limitRecords, CLIENT_INVOICES_TABLE),
-      fetchAirtableRecords(mode.limitRecords, INTERPRETER_INVOICES_TABLE)
+      fetchAirtableRecordBatch(
+        mode.limitRecords,
+        CLIENT_INVOICES_TABLE,
+        mode.tableOffsets?.[CLIENT_INVOICES_TABLE] || ''
+      ).then(batch => batch.records),
+      fetchAirtableRecordBatch(
+        mode.limitRecords,
+        INTERPRETER_INVOICES_TABLE,
+        mode.tableOffsets?.[INTERPRETER_INVOICES_TABLE] || ''
+      ).then(batch => batch.records)
     ])
     : [[], []];
+  const nextOffsets: Record<string, string> = {
+    [DEFAULT_TABLE_NAME]: redbookBatch.nextOffset || ''
+  };
   const runRef = db.collection('syncRuns').doc();
   const startedAt = new Date().toISOString();
 
@@ -2044,7 +2113,8 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       importMode,
       message: 'Airtable import mode is OFF.',
       stats,
-      details
+      details,
+      nextOffsets
     };
   }
 
@@ -2088,10 +2158,10 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
         stats.skipped += 1;
       } else {
         if (!existingRef || !existingSnap) throw new Error('Missing booking reference for REDBOOK sync write.');
-        await existingRef.set({
+        await existingRef.set(cleanFirestoreData({
           ...mapped.booking,
           createdAt: existing?.createdAt || admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        }), { merge: true });
 
         await db.collection('jobEvents').add({
           jobId: existingRef.id,
@@ -2137,13 +2207,12 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       }
     } catch (error) {
       stats.error += 1;
-      if (details.length < MAX_DETAILS) {
-        details.push({
-          action: 'error',
-          sourceRecordId: record.id,
-          message: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+      pushErrorDetail(details, {
+        action: 'error',
+        sourceRecordId: record.id,
+        sourceTable: DEFAULT_TABLE_NAME,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      }, MAX_DETAILS);
     }
   }
 
@@ -2167,6 +2236,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
     triggeredBy: mode.triggeredBy,
     userId: mode.userId || '',
     totalRecords: records.length,
+    nextOffsets,
     financeRecords: {
       clientInvoices: clientInvoiceRecords.length,
       interpreterInvoices: interpreterInvoiceRecords.length
@@ -2182,8 +2252,9 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
   };
 
   if (!mode.dryRun) {
+    const report = cleanReportData(result);
     await runRef.set({
-      ...result,
+      ...report,
       kind: 'AIRTABLE_REDBOOK',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -2192,6 +2263,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       lastRunAt: finishedAt,
       lastStats: stats,
       lastTotalRecords: records.length,
+      tableOffsets: nextOffsets,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
   }
@@ -2216,6 +2288,11 @@ const normalizeModules = (input: unknown): AirtableSyncModule[] => {
   return modules.length ? Array.from(new Set(modules)) : ['redbook'];
 };
 
+const normalizeScheduledModules = (input: unknown): AirtableSyncModule[] => {
+  const modules = normalizeModules(input || FULL_SYNC_MODULES);
+  return modules.length ? modules : FULL_SYNC_MODULES;
+};
+
 const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModule[]) => {
   interpreterCache.clear();
   clientCache.clear();
@@ -2228,6 +2305,17 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   const runRef = db.collection('syncRuns').doc();
   const overallStats: Record<SyncAction, number> = emptyActionStats();
   const moduleResults: Array<Record<string, unknown>> = [];
+  const nextOffsets: Record<string, string> = {};
+
+  const fetchModuleRecords = async (tableName: string) => {
+    const batch = await fetchAirtableRecordBatch(
+      mode.limitRecords,
+      tableName,
+      mode.tableOffsets?.[tableName] || ''
+    );
+    nextOffsets[tableName] = batch.nextOffset || '';
+    return batch.records;
+  };
 
   if (importMode === 'OFF') {
     return {
@@ -2239,7 +2327,8 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       startedAt,
       finishedAt: new Date().toISOString(),
       stats: overallStats,
-      moduleResults
+      moduleResults,
+      nextOffsets
     };
   }
 
@@ -2263,8 +2352,8 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
 
   if (modules.includes('clients')) {
     const [clients, clientsBook] = await Promise.all([
-      fetchAirtableRecords(mode.limitRecords, CLIENTS_TABLE),
-      fetchAirtableRecords(mode.limitRecords, CLIENTS_BOOK_TABLE)
+      fetchModuleRecords(CLIENTS_TABLE),
+      fetchModuleRecords(CLIENTS_BOOK_TABLE)
     ]);
     const clientsResult = await syncClients(clients, CLIENTS_TABLE, effectiveMode);
     const clientsBookResult = await syncClients(clientsBook, CLIENTS_BOOK_TABLE, effectiveMode);
@@ -2279,6 +2368,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
 
   if (modules.includes('redbook')) {
     const redbookResult = await syncRecords(effectiveMode, false) as any;
+    Object.assign(nextOffsets, redbookResult.nextOffsets || {});
     addStats(overallStats, redbookResult.stats);
     moduleResults.push({
       module: 'redbook',
@@ -2292,8 +2382,8 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
 
   if (modules.includes('translations')) {
     const [translations, webTranslations] = await Promise.all([
-      fetchAirtableRecords(mode.limitRecords, TRANSLATIONS_TABLE),
-      fetchAirtableRecords(mode.limitRecords, WEB_TRANSLATIONS_TABLE)
+      fetchModuleRecords(TRANSLATIONS_TABLE),
+      fetchModuleRecords(WEB_TRANSLATIONS_TABLE)
     ]);
     const translationResult = await syncTranslationBookings(translations, TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth);
     const webTranslationResult = await syncTranslationBookings(webTranslations, WEB_TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth);
@@ -2307,25 +2397,25 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   }
 
   if (modules.includes('clientInvoices')) {
-    const records = await fetchAirtableRecords(mode.limitRecords, CLIENT_INVOICES_TABLE);
+    const records = await fetchModuleRecords(CLIENT_INVOICES_TABLE);
     const result = await syncClientInvoices(records, effectiveMode, platformMode.sourceOfTruth);
     pushModule('clientInvoices', 'Client invoices', [CLIENT_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('interpreterInvoices')) {
-    const records = await fetchAirtableRecords(mode.limitRecords, INTERPRETER_INVOICES_TABLE);
+    const records = await fetchModuleRecords(INTERPRETER_INVOICES_TABLE);
     const result = await syncInterpreterInvoices(records, effectiveMode, platformMode.sourceOfTruth);
     pushModule('interpreterInvoices', 'Interpreter invoices', [INTERPRETER_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('translationClientInvoices')) {
-    const records = await fetchAirtableRecords(mode.limitRecords, TRANSLATION_CLIENT_INVOICES_TABLE);
+    const records = await fetchModuleRecords(TRANSLATION_CLIENT_INVOICES_TABLE);
     const result = await syncTranslationClientInvoices(records, effectiveMode, platformMode.sourceOfTruth);
     pushModule('translationClientInvoices', 'Translation client invoices', [TRANSLATION_CLIENT_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('translatorInvoices')) {
-    const records = await fetchAirtableRecords(mode.limitRecords, TRANSLATOR_INVOICES_TABLE);
+    const records = await fetchModuleRecords(TRANSLATOR_INVOICES_TABLE);
     const result = await syncTranslatorInvoices(records, effectiveMode, platformMode.sourceOfTruth);
     pushModule('translatorInvoices', 'Translator invoices', [TRANSLATOR_INVOICES_TABLE], records.length, result);
   }
@@ -2342,10 +2432,17 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
     startedAt,
     finishedAt,
     stats: overallStats,
+    nextOffsets,
     moduleResults
   };
 
   if (!effectiveMode.dryRun) {
+    const syncCenterRef = db.collection('system').doc('airtableSyncCenter');
+    const syncCenterSnap = await syncCenterRef.get();
+    const mergedTableOffsets = {
+      ...(syncCenterSnap.data()?.tableOffsets || {}),
+      ...nextOffsets
+    };
     const moduleCheckpoints = Object.fromEntries(moduleResults.map(result => [
       result.module,
       {
@@ -2356,17 +2453,19 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
         success: (result.stats as Record<SyncAction, number>).error === 0
       }
     ]));
+    const report = cleanReportData(result);
 
     await runRef.set({
-      ...result,
+      ...report,
       kind: 'AIRTABLE_SYNC_CENTER',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    await db.collection('system').doc('airtableSyncCenter').set({
+    await syncCenterRef.set({
       lastRunId: runRef.id,
       lastRunAt: finishedAt,
       lastStats: overallStats,
       lastModules: modules,
+      tableOffsets: mergedTableOffsets,
       moduleCheckpoints,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -2389,7 +2488,8 @@ export const syncRedbookJobs = functions.runWith({
     dryRun,
     limitRecords,
     triggeredBy: 'manual',
-    userId: context.auth?.uid
+    userId: context.auth?.uid,
+    tableOffsets: data?.tableOffsets || data?.offsets || {}
   });
 });
 
@@ -2408,8 +2508,51 @@ export const syncAirtableData = functions.runWith({
     dryRun,
     limitRecords,
     triggeredBy: 'manual',
-    userId: context.auth?.uid
+    userId: context.auth?.uid,
+    tableOffsets: data?.tableOffsets || data?.offsets || {}
   }, modules);
+});
+
+export const syncAirtableMaintenance = functions.runWith({
+  secrets: ['AIRTABLE_API_KEY'],
+  timeoutSeconds: 540,
+  memory: '1GB'
+}).https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  const providedToken = String(req.get('X-Lingland-Maintenance-Token') || '').trim();
+  const tokenHash = createHash('sha256').update(providedToken).digest('hex');
+  const syncConfig = await db.collection('system').doc('airtableSyncCenter').get();
+  const expectedHash = String(syncConfig.data()?.maintenanceTokenHash || '').trim();
+
+  if (!providedToken || !expectedHash || tokenHash !== expectedHash) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  try {
+    const dryRun = Boolean(req.body?.dryRun);
+    const limitRecords = Math.min(Number(req.body?.limitRecords || 100), 1000);
+    const modules = normalizeModules(req.body?.modules);
+    const tableOffsets = req.body?.tableOffsets || req.body?.offsets || {};
+    const result = await syncAirtableOperations({
+      dryRun,
+      limitRecords,
+      triggeredBy: 'manual',
+      userId: 'maintenance',
+      tableOffsets
+    }, modules);
+
+    res.status(200).json({ result });
+  } catch (error) {
+    console.error('[syncAirtableMaintenance] Failed', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Unknown maintenance sync error'
+    });
+  }
 });
 
 export const scheduledRedbookSync = functions.runWith({
@@ -2418,22 +2561,43 @@ export const scheduledRedbookSync = functions.runWith({
   memory: '1GB'
 }).pubsub.schedule('every 10 minutes').timeZone('Europe/London').onRun(async () => {
   const platformMode = await getPlatformMode();
-  const syncConfig = await db.collection('system').doc('airtableRedbookSync').get();
-  if (syncConfig.data()?.scheduleEnabled !== true) {
-    console.log('[REDBOOK Sync] Scheduled sync is disabled. Manual Dry Run/Sync remains available.');
+  const legacySyncConfig = await db.collection('system').doc('airtableRedbookSync').get();
+  const syncCenterRef = db.collection('system').doc('airtableSyncCenter');
+  const syncCenter = await syncCenterRef.get();
+  const scheduleEnabled = syncCenter.data()?.scheduleEnabled === true || legacySyncConfig.data()?.scheduleEnabled === true;
+  if (!scheduleEnabled) {
+    console.log('[Airtable Sync] Scheduled sync is disabled. Manual Dry Run/Sync remains available.');
     return null;
   }
 
   if ((platformMode.airtableImportMode || 'ON') !== 'ON') {
-    console.log('[REDBOOK Sync] Skipped because import mode is not ON.');
+    console.log('[Airtable Sync] Skipped because import mode is not ON.');
     return null;
   }
 
-  await syncRecords({
+  const syncData = syncCenter.data() || {};
+  const legacyData = legacySyncConfig.data() || {};
+  const scheduledModules = normalizeScheduledModules(syncData.scheduledModules || legacyData.scheduledModules || FULL_SYNC_MODULES);
+  const lastModuleIndex = Number(syncData.lastScheduledModuleIndex || 0);
+  const moduleIndex = scheduledModules.length ? lastModuleIndex % scheduledModules.length : 0;
+  const module = scheduledModules[moduleIndex] || 'redbook';
+  const limitRecords = Math.min(Number(syncData.limitRecords || legacyData.limitRecords || 250), 1000);
+
+  console.log(`[Airtable Sync] Scheduled module ${module} with limit ${limitRecords}.`);
+  await syncAirtableOperations({
     dryRun: false,
-    limitRecords: 5000,
-    triggeredBy: 'schedule'
-  });
+    limitRecords,
+    triggeredBy: 'schedule',
+    tableOffsets: syncData.tableOffsets || legacyData.tableOffsets || {}
+  }, [module]);
+
+  await syncCenterRef.set({
+    scheduleEnabled: true,
+    scheduledModules,
+    lastScheduledModule: module,
+    lastScheduledModuleIndex: moduleIndex + 1,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
 
   return null;
 });
