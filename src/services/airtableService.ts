@@ -2,7 +2,7 @@
 import { Interpreter } from '../types';
 
 const AIRTABLE_API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
-const AIRTABLE_BASE_ID = 'appF50EzH7zVQdwAv'; // Lingland MASTER 2026
+const AIRTABLE_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
 const INTERPRETERS_TABLE = 'Interpreters';
 
 export interface AirtableInterpreterRaw {

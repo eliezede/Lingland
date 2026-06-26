@@ -20,7 +20,7 @@ type SyncMode = {
 };
 
 const db = admin.firestore();
-const DEFAULT_BASE_ID = 'appF50EzH7zVQdwAv';
+const DEFAULT_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
 const DEFAULT_TABLE_NAME = 'REDBOOK';
 const CLIENTS_TABLE = 'Clients';
 const CLIENTS_BOOK_TABLE = 'Clients Book';
