@@ -73,7 +73,16 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    match /clientInvoiceLines/{lineId} {
+      allow read, write: if isAdmin();
+    }
+
     match /interpreterInvoices/{invoiceId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.interpreterId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId);
+      allow write: if isAdmin();
+    }
+
+    match /interpreterInvoiceLines/{lineId} {
       allow read: if isAdmin() || (isAuthenticated() && resource.data.interpreterId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId);
       allow write: if isAdmin();
     }
