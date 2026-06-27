@@ -1,35 +1,33 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
     AlertCircle,
     ArrowDownAZ,
     ArrowUpDown,
     ArrowUpRight,
+    BarChart3,
     Building2,
     Check,
     CheckCircle2,
     ChevronDown,
-    ChevronLeft,
-    ChevronRight,
     Clock,
     Copy,
+    CreditCard,
     Eye,
     EyeOff,
     FileText,
     Filter,
     Globe2,
-    GripVertical,
     Group,
     LayoutGrid,
     MapPin,
     Maximize2,
-    MoreHorizontal,
     Pencil,
     Plus,
+    PoundSterling,
     RefreshCw,
     Receipt,
     Search,
-    Settings,
     SlidersHorizontal,
     Trash2,
     UserCheck,
@@ -47,12 +45,17 @@ import { Modal } from '../../../components/ui/Modal';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
 import { ContextMenu, ContextMenuItem } from '../../../components/ui/ContextMenu';
-import { Booking, BookingStatus, ServiceCategory } from '../../../types';
+import { Booking, BookingStatus, BookingWorkspace, ServiceCategory } from '../../../types';
 import { useToast } from '../../../context/ToastContext';
 import { BillingService, BookingService } from '../../../services/api';
 import { createDependencies } from '../../../ui/actions';
 import { InterpreterAllocationDrawer } from '../../../components/operations/InterpreterAllocationDrawer';
 import { InterpreterPreviewDrawer } from '../../../components/operations/InterpreterPreviewDrawer';
+import { FinanceSummaryBar, FinanceLane } from '../../../components/operations/FinanceSummaryBar';
+import { FinanceLaneToggle } from '../../../components/operations/FinanceLaneToggle';
+import { WorkspacePagination } from '../../../components/operations/WorkspacePagination';
+import { WorkspaceViewSidebar } from '../../../components/operations/WorkspaceViewSidebar';
+import { WorkspaceViewMenu } from '../../../components/operations/WorkspaceViewMenu';
 import { filterBookings } from '../../../utils/bookingFilters';
 import { ViewManagerDrawer } from '../../../components/operations/ViewManagerDrawer';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
@@ -62,6 +65,23 @@ type QuickFilter = 'ALL' | 'INTERPRETING' | 'TRANSLATIONS' | 'OVERDUE' | 'TODAY'
 type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
 type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter' | 'serviceCategory';
 type ToolPanel = 'hide' | 'filter' | 'group' | 'sort' | null;
+
+const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef'];
+const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin'];
+const FINANCE_COLUMN_ORDER = [
+    'jobNumber',
+    'billingState',
+    'status',
+    'bookedFor',
+    'client',
+    'interpreter',
+    'service',
+    'amount',
+    'professionalCost',
+    'costCode',
+    'invoiceRef',
+    'action',
+];
 
 interface GridColumn {
     id: string;
@@ -171,51 +191,31 @@ const ToolButton = ({
 }) => (
     <button
         onClick={onClick}
-        className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition-colors ${
+        className={`inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold transition-colors ${
             active
                 ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
                 : 'border-transparent text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
         }`}
     >
-        <Icon size={15} />
+        <Icon size={14} />
         <span className="hidden sm:inline">{label}</span>
     </button>
 );
 
-const FilterChip = ({
-    label,
-    count,
-    active,
-    onClick,
-}: {
-    label: string;
-    count: number;
-    active: boolean;
-    onClick: () => void;
-}) => (
-    <button
-        onClick={onClick}
-        className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-semibold transition-colors ${
-            active
-                ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/30'
-        }`}
-    >
-        <span>{label}</span>
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-            {count}
-        </span>
-    </button>
-);
+interface JobsBoardProps {
+    workspace?: BookingWorkspace;
+}
 
-export const JobsBoard = () => {
+export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
+    const isFinanceWorkspace = workspace === 'finance';
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const { getClientCompany } = useClients();
     const { showToast } = useToast();
     const { confirm } = useConfirm();
     const { bookings = [], loading, refresh } = useBookings();
-    const { views, activeView, setActiveViewId } = useBookingViews(user?.id || '');
+    const { views, activeView, setActiveViewId, reorderViews, toggleViewFavorite } = useBookingViews(user?.id || '', workspace);
     const actionsDeps = createDependencies((user as any)?.organizationId || 'lingland-main');
 
     const [selectedJob, setSelectedJob] = useState<Booking | null>(null);
@@ -224,12 +224,15 @@ export const JobsBoard = () => {
     const [isBulkLoading, setIsBulkLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
+    const [financeLane, setFinanceLane] = useState<FinanceLane>('clientBilling');
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
     const [groupField, setGroupField] = useState<GroupField>('view');
-    const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set(['contact']));
+    const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
+        new Set(isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS)
+    );
     const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel>(null);
     const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
     const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -238,6 +241,7 @@ export const JobsBoard = () => {
     const [isViewManagerOpen, setIsViewManagerOpen] = useState(false);
     const [editingViewId, setEditingViewId] = useState<string | null>(null);
     const [isViewsMenuOpen, setIsViewsMenuOpen] = useState(false);
+    const [isViewsSidebarCollapsed, setIsViewsSidebarCollapsed] = useState(false);
     const [viewSearchQuery, setViewSearchQuery] = useState('');
     const viewsMenuRef = useRef<HTMLDivElement>(null);
     const toolsRef = useRef<HTMLDivElement>(null);
@@ -255,17 +259,39 @@ export const JobsBoard = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const requestedView = params.get('view');
+        const requestedLane = params.get('lane') as FinanceLane | null;
+
+        if (requestedView && views.some(view => view.id === requestedView)) {
+            setActiveViewId(requestedView);
+            setQuickFilter('ALL');
+            setCurrentPage(1);
+        }
+
+        if (
+            isFinanceWorkspace
+            && (requestedLane === 'clientBilling' || requestedLane === 'interpreterPayables')
+        ) {
+            setFinanceLane(requestedLane);
+            setCurrentPage(1);
+        }
+    }, [location.search, views, setActiveViewId, isFinanceWorkspace]);
+
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
+    const workspacePath = isFinanceWorkspace ? '/admin/billing' : '/admin/bookings';
+    const workspaceLabel = isFinanceWorkspace ? 'Finance Board' : 'Jobs Board';
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
-            state: { returnTo: '/admin/bookings', returnLabel: 'Jobs Board' },
+            state: { returnTo: workspacePath, returnLabel: workspaceLabel },
         });
     };
 
     const openEditJob = (job: Booking) => {
         navigate(`/admin/bookings/edit/${job.id}`, {
-            state: { returnTo: '/admin/bookings', returnLabel: 'Jobs Board' },
+            state: { returnTo: workspacePath, returnLabel: workspaceLabel },
         });
     };
 
@@ -286,7 +312,7 @@ export const JobsBoard = () => {
         {
             id: 'jobNumber',
             label: 'Job Number',
-            width: '132px',
+            width: 'minmax(118px, .72fr)',
             icon: FileText,
             primary: true,
             getSortValue: job => job.displayRef || job.jobNumber || job.bookingRef || job.id,
@@ -307,7 +333,7 @@ export const JobsBoard = () => {
         {
             id: 'status',
             label: 'Status',
-            width: '178px',
+            width: 'minmax(122px, .68fr)',
             icon: CheckCircle2,
             getSortValue: job => job.status,
             render: job => (
@@ -318,8 +344,8 @@ export const JobsBoard = () => {
         },
         {
             id: 'bookedFor',
-            label: 'Booked For',
-            width: '152px',
+            label: isFinanceWorkspace ? 'Delivery Date' : 'Booked For',
+            width: 'minmax(128px, .72fr)',
             icon: Clock,
             getSortValue: job => `${job.date || ''} ${job.startTime || ''}`,
             render: job => (
@@ -332,7 +358,7 @@ export const JobsBoard = () => {
         {
             id: 'client',
             label: 'Client',
-            width: 'minmax(180px, 1.35fr)',
+            width: 'minmax(178px, 1.2fr)',
             icon: Building2,
             getSortValue: job => getCompanyName(job),
             render: job => (
@@ -345,7 +371,7 @@ export const JobsBoard = () => {
         {
             id: 'language',
             label: 'Language',
-            width: 'minmax(150px, .9fr)',
+            width: 'minmax(164px, .95fr)',
             icon: Globe2,
             getSortValue: job => `${job.languageFrom || ''} ${job.languageTo || ''}`,
             render: job => (
@@ -358,7 +384,7 @@ export const JobsBoard = () => {
         {
             id: 'interpreter',
             label: 'Professional',
-            width: 'minmax(150px, .9fr)',
+            width: 'minmax(168px, 1fr)',
             icon: UserCheck,
             getSortValue: job => job.interpreterName || '',
             render: job => (
@@ -384,7 +410,7 @@ export const JobsBoard = () => {
         {
             id: 'location',
             label: 'Location',
-            width: 'minmax(150px, .8fr)',
+            width: 'minmax(132px, .72fr)',
             icon: MapPin,
             render: job => (
                 <div className="min-w-0">
@@ -435,11 +461,143 @@ export const JobsBoard = () => {
             render: job => <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{job.guestContact?.name || (job as any).contactName || 'No contact'}</span>,
         },
         {
+            id: 'amount',
+            label: 'Client Charge',
+            width: 'minmax(118px, .65fr)',
+            icon: Receipt,
+            getSortValue: job => job.totalAmount || 0,
+            render: job => (
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-slate-950 dark:text-white">
+                        {job.totalAmount ? `GBP ${job.totalAmount.toFixed(2)}` : 'TBC'}
+                    </p>
+                    <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{job.currency || 'GBP'}</p>
+                </div>
+            ),
+        },
+        {
+            id: 'professionalCost',
+            label: 'Professional Cost',
+            width: 'minmax(126px, .68fr)',
+            icon: PoundSterling,
+            getSortValue: job => (job as any).interpreterAmountCalculated || (job as any).professionalCost || 0,
+            render: job => {
+                const value = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost || 0);
+                return (
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-950 dark:text-white">
+                            {value ? `GBP ${value.toFixed(2)}` : 'TBC'}
+                        </p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">Payable</p>
+                    </div>
+                );
+            },
+        },
+        {
+            id: 'margin',
+            label: 'Margin',
+            width: 'minmax(110px, .62fr)',
+            icon: BarChart3,
+            getSortValue: job => {
+                const revenue = Number(job.totalAmount) || 0;
+                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                return revenue - cost;
+            },
+            render: job => {
+                const revenue = Number(job.totalAmount) || 0;
+                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                const value = revenue - cost;
+                const canCalculate = Boolean(revenue && cost);
+                return (
+                    <div className="min-w-0">
+                        <p className={`truncate text-sm font-black ${canCalculate && value < 0 ? 'text-rose-600' : 'text-slate-950 dark:text-white'}`}>
+                            {canCalculate ? `GBP ${value.toFixed(2)}` : 'TBC'}
+                        </p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">Profit</p>
+                    </div>
+                );
+            },
+        },
+        {
+            id: 'costCode',
+            label: 'PO / Cost Code',
+            width: 'minmax(130px, .75fr)',
+            icon: CreditCard,
+            getSortValue: job => job.costCode || '',
+            render: job => (
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{job.costCode || 'Missing'}</p>
+                    {!job.costCode && <p className="truncate text-[10px] font-bold uppercase text-amber-600">Finance check</p>}
+                </div>
+            ),
+        },
+        {
+            id: 'billingState',
+            label: 'Billing State',
+            width: 'minmax(126px, .7fr)',
+            icon: Receipt,
+            getSortValue: job => (job as any).paymentStatus || job.status,
+            render: job => {
+                const paymentStatus = (job as any).paymentStatus;
+                const paymentLabels: Record<string, string> = {
+                    NOT_READY: 'Not ready',
+                    READY_FOR_INVOICE: 'Invoice ready',
+                    INVOICED: 'Awaiting payment',
+                    PAID: 'Paid',
+                    ISSUE: 'Billing issue',
+                };
+                const label = (job as any).billingIssueFlag ? 'Billing issue' :
+                    paymentStatus && paymentLabels[paymentStatus] ? paymentLabels[paymentStatus] :
+                    job.clientInvoiceId || job.clientInvoiceNumber || job.clientInvoiceReference ? 'Awaiting payment' :
+                    job.timesheetVerifiedAt || job.billingReadyAt || invoiceWorkStatuses.includes(job.status) ? 'Invoice ready' :
+                    job.timesheetId || job.status === BookingStatus.TIMESHEET_SUBMITTED ? 'Timesheet review' :
+                    job.status === BookingStatus.SESSION_COMPLETED ? 'Timesheet needed' :
+                    'Not ready';
+                return <span className="inline-flex max-w-full rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-800 dark:text-slate-300"><span className="truncate">{label}</span></span>;
+            },
+        },
+        {
+            id: 'invoiceRef',
+            label: 'Invoice Ref',
+            width: 'minmax(122px, .68fr)',
+            icon: Receipt,
+            getSortValue: job => (job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceId || '',
+            render: job => {
+                const invoiceRef = (job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceReference || (job as any).clientInvoiceId;
+                const interpreterRef = (job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference || (job as any).interpreterInvoiceId;
+                return (
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{invoiceRef || 'Not issued'}</p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{interpreterRef ? `INT ${interpreterRef}` : 'Client invoice'}</p>
+                    </div>
+                );
+            },
+        },
+        {
             id: 'action',
             label: 'Action',
-            width: '116px',
+            width: isFinanceWorkspace ? 'minmax(128px, .72fr)' : '92px',
             icon: ArrowUpRight,
             render: job => {
+                if (isFinanceWorkspace) {
+                    const hasBlockingBillingIssue = Boolean((job as any).billingIssueFlag || !job.costCode || !job.totalAmount);
+                    if (hasBlockingBillingIssue && [BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING].includes(job.status)) {
+                        return <Button size="sm" variant="secondary" icon={AlertCircle} onClick={(e) => { e.stopPropagation(); handleFlagBillingIssue(job); }}>Flag issue</Button>;
+                    }
+                    if (job.status === BookingStatus.SESSION_COMPLETED) {
+                        return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleRecordManualTimesheet(job); }}>Timesheet</Button>;
+                    }
+                    if (job.status === BookingStatus.TIMESHEET_SUBMITTED) {
+                        return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleVerifyTimesheet(job); }}>Verify</Button>;
+                    }
+                    if (invoiceWorkStatuses.includes(job.status)) {
+                        return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInvoiceIssued(job); }}>Invoice</Button>;
+                    }
+                    if (job.status === BookingStatus.INVOICED) {
+                        return <Button size="sm" variant="secondary" icon={PoundSterling} onClick={(e) => { e.stopPropagation(); handleRecordPaymentReceived(job); }}>Paid</Button>;
+                    }
+                    return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); openJobDetails(job); }}>Open</Button>;
+                }
                 if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) {
                     return <Button size="sm" variant="secondary" icon={UserPlus} onClick={(e) => handleAssignClick(e, job)}>Assign</Button>;
                 }
@@ -467,10 +625,23 @@ export const JobsBoard = () => {
                 return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); openJobDetails(job); }}>Open</Button>;
             },
         },
-    ], [getClientCompany]);
+    ], [getClientCompany, isFinanceWorkspace]);
 
-    const visibleColumns = columns.filter(column => column.primary || !hiddenColumns.has(column.id));
+    const orderedColumns = useMemo(() => {
+        if (!isFinanceWorkspace) return columns;
+        const columnById = new Map(columns.map(column => [column.id, column]));
+        const ordered = FINANCE_COLUMN_ORDER
+            .map(columnId => columnById.get(columnId))
+            .filter(Boolean) as GridColumn[];
+        const remaining = columns.filter(column => !FINANCE_COLUMN_ORDER.includes(column.id));
+        return [...ordered, ...remaining];
+    }, [columns, isFinanceWorkspace]);
+
+    const visibleColumns = orderedColumns.filter(column => column.primary || !hiddenColumns.has(column.id));
     const gridTemplateColumns = `44px ${visibleColumns.map(column => column.width).join(' ')}`;
+    const gridMinWidth = isFinanceWorkspace
+        ? 'min-w-[1280px]'
+        : hiddenColumns.has('location') ? 'min-w-[1040px]' : 'min-w-[1170px]';
 
     const searchFilteredBookings = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
@@ -497,23 +668,47 @@ export const JobsBoard = () => {
         [searchFilteredBookings, activeView]
     );
 
+    const laneFilteredBookings = useMemo(() => {
+        if (!isFinanceWorkspace) return viewFilteredBookings;
+        if (financeLane === 'interpreterPayables') {
+            return viewFilteredBookings.filter(job => [
+                BookingStatus.SESSION_COMPLETED,
+                BookingStatus.TIMESHEET_SUBMITTED,
+                BookingStatus.TIMESHEET_VERIFIED,
+                BookingStatus.READY_FOR_INVOICE,
+                BookingStatus.INVOICING,
+                BookingStatus.INVOICED,
+                BookingStatus.PAID
+            ].includes(job.status));
+        }
+        return viewFilteredBookings.filter(job => [
+            BookingStatus.READY_FOR_INVOICE,
+            BookingStatus.INVOICING,
+            BookingStatus.INVOICED,
+            BookingStatus.PAID,
+            BookingStatus.SESSION_COMPLETED,
+            BookingStatus.TIMESHEET_SUBMITTED,
+            BookingStatus.TIMESHEET_VERIFIED
+        ].includes(job.status));
+    }, [viewFilteredBookings, isFinanceWorkspace, financeLane]);
+
     const quickCounts = useMemo(() => ({
-        ALL: viewFilteredBookings.length,
-        INTERPRETING: applyQuickFilter(viewFilteredBookings, 'INTERPRETING').length,
-        TRANSLATIONS: applyQuickFilter(viewFilteredBookings, 'TRANSLATIONS').length,
-        OVERDUE: applyQuickFilter(viewFilteredBookings, 'OVERDUE').length,
-        TODAY: applyQuickFilter(viewFilteredBookings, 'TODAY').length,
-        UNASSIGNED: applyQuickFilter(viewFilteredBookings, 'UNASSIGNED').length,
-        COMPLETED: applyQuickFilter(viewFilteredBookings, 'COMPLETED').length,
-        TIMESHEET: applyQuickFilter(viewFilteredBookings, 'TIMESHEET').length,
-        INVOICE_READY: applyQuickFilter(viewFilteredBookings, 'INVOICE_READY').length,
-        AWAITING_PAYMENT: applyQuickFilter(viewFilteredBookings, 'AWAITING_PAYMENT').length,
-        CANCELLED: applyQuickFilter(viewFilteredBookings, 'CANCELLED').length,
-    }), [viewFilteredBookings]);
+        ALL: laneFilteredBookings.length,
+        INTERPRETING: applyQuickFilter(laneFilteredBookings, 'INTERPRETING').length,
+        TRANSLATIONS: applyQuickFilter(laneFilteredBookings, 'TRANSLATIONS').length,
+        OVERDUE: applyQuickFilter(laneFilteredBookings, 'OVERDUE').length,
+        TODAY: applyQuickFilter(laneFilteredBookings, 'TODAY').length,
+        UNASSIGNED: applyQuickFilter(laneFilteredBookings, 'UNASSIGNED').length,
+        COMPLETED: applyQuickFilter(laneFilteredBookings, 'COMPLETED').length,
+        TIMESHEET: applyQuickFilter(laneFilteredBookings, 'TIMESHEET').length,
+        INVOICE_READY: applyQuickFilter(laneFilteredBookings, 'INVOICE_READY').length,
+        AWAITING_PAYMENT: applyQuickFilter(laneFilteredBookings, 'AWAITING_PAYMENT').length,
+        CANCELLED: applyQuickFilter(laneFilteredBookings, 'CANCELLED').length,
+    }), [laneFilteredBookings]);
 
     const filteredBookings = useMemo(
-        () => applyQuickFilter(viewFilteredBookings, quickFilter),
-        [viewFilteredBookings, quickFilter]
+        () => applyQuickFilter(laneFilteredBookings, quickFilter),
+        [laneFilteredBookings, quickFilter]
     );
 
     const sortedBookings = useMemo(() => {
@@ -535,6 +730,27 @@ export const JobsBoard = () => {
         });
     }, [filteredBookings, columns, sortField, sortDirection]);
 
+    const financeSummary = useMemo(() => {
+        const totalClientCharge = sortedBookings.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0);
+        const readyForInvoice = sortedBookings.filter(job => invoiceWorkStatuses.includes(job.status));
+        const awaitingPayment = sortedBookings.filter(job => job.status === BookingStatus.INVOICED);
+        const missingCostCode = sortedBookings.filter(job => !job.costCode);
+        const timesheetNeeded = sortedBookings.filter(job => job.status === BookingStatus.SESSION_COMPLETED);
+        const timesheetReview = sortedBookings.filter(job => job.status === BookingStatus.TIMESHEET_SUBMITTED);
+        const uniqueProfessionals = new Set(sortedBookings.map(job => job.interpreterId || job.interpreterName).filter(Boolean));
+        return {
+            totalClientCharge,
+            readyCount: readyForInvoice.length,
+            readyAmount: readyForInvoice.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
+            awaitingPaymentCount: awaitingPayment.length,
+            awaitingPaymentAmount: awaitingPayment.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
+            missingCostCodeCount: missingCostCode.length,
+            timesheetNeededCount: timesheetNeeded.length,
+            timesheetReviewCount: timesheetReview.length,
+            uniqueProfessionalCount: uniqueProfessionals.size,
+        };
+    }, [sortedBookings]);
+
     const totalPages = Math.max(1, Math.ceil(sortedBookings.length / pageSize));
     const safeCurrentPage = Math.min(currentPage, totalPages);
     const pageStartIndex = sortedBookings.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize;
@@ -546,7 +762,7 @@ export const JobsBoard = () => {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchQuery, quickFilter, sortField, sortDirection, groupField, activeView.id, pageSize]);
+    }, [searchQuery, quickFilter, sortField, sortDirection, groupField, activeView.id, pageSize, financeLane]);
 
     useEffect(() => {
         if (currentPage > totalPages) setCurrentPage(totalPages);
@@ -569,8 +785,6 @@ export const JobsBoard = () => {
         return Array.from(groups.entries()).map(([key, rows]) => ({ key, rows }));
     }, [paginatedBookings, groupField, activeView.groupBy]);
 
-    const activeFilterCount = (searchQuery ? 1 : 0) + (quickFilter !== 'ALL' ? 1 : 0);
-
     const toggleColumn = (columnId: string) => {
         setHiddenColumns(prev => {
             const next = new Set(prev);
@@ -583,6 +797,12 @@ export const JobsBoard = () => {
     const clearLocalFilters = () => {
         setSearchQuery('');
         setQuickFilter('ALL');
+    };
+
+    const openViewEditor = (viewId: string | null) => {
+        setEditingViewId(viewId);
+        setIsViewManagerOpen(true);
+        setIsViewsMenuOpen(false);
     };
 
     const handleRowClick = (job: Booking) => {
@@ -733,6 +953,39 @@ export const JobsBoard = () => {
         }
     };
 
+    const handleFlagBillingIssue = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Flag Billing Issue',
+            message: 'This keeps the job in its current stage but marks it for Accounts review. Use it for missing PO, amount mismatch, invoice discrepancy or payment query.',
+            confirmLabel: 'Flag Issue',
+            variant: 'warning',
+        });
+        if (!ok) return;
+
+        try {
+            const timestamp = new Date().toLocaleString('en-GB');
+            const existingNotes = job.adminNotes || '';
+            await BookingService.update(job.id, {
+                ...({
+                    billingIssueFlag: true,
+                    billingIssueRaisedAt: new Date().toISOString(),
+                    paymentStatus: 'ISSUE',
+                    adminNotes: `${existingNotes}${existingNotes ? '\n' : ''}[${timestamp}] Finance issue flagged for Accounts review.`,
+                } as any),
+            });
+            refresh();
+            if (selectedJob?.id === job.id) {
+                setSelectedJob({
+                    ...job,
+                    adminNotes: `${existingNotes}${existingNotes ? '\n' : ''}[${timestamp}] Finance issue flagged for Accounts review.`,
+                });
+            }
+            showToast('Billing issue flagged for Accounts review', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to flag billing issue', 'error');
+        }
+    };
+
     const handleBulkStatus = async (ids: string[], status: BookingStatus) => {
         setIsBulkLoading(true);
         let done = 0;
@@ -811,6 +1064,9 @@ export const JobsBoard = () => {
         ...(job.status === BookingStatus.INVOICED
             ? [{ label: 'Mark Paid', icon: Receipt, onClick: () => handleRecordPaymentReceived(job) }]
             : []),
+        ...(isFinanceWorkspace
+            ? [{ label: 'Flag Billing Issue', icon: AlertCircle, onClick: () => handleFlagBillingIssue(job) }]
+            : []),
         { label: 'Copy Job URL', icon: Copy, onClick: () => navigator.clipboard?.writeText(`${window.location.origin}/#/admin/bookings/${job.id}`) },
         { label: 'Cancel Job', icon: Trash2, variant: 'danger' as const, onClick: () => handleQuickStatusChange(job, BookingStatus.CANCELLED) },
     ];
@@ -868,7 +1124,7 @@ export const JobsBoard = () => {
                 <div className="absolute left-0 top-full z-50 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
                     <p className="mb-2 text-xs font-semibold text-slate-500">Visible fields</p>
                     <div className="space-y-1">
-                        {columns.filter(c => !c.primary).map(column => (
+                        {orderedColumns.filter(c => !c.primary).map(column => (
                             <button
                                 key={column.id}
                                 onClick={() => toggleColumn(column.id)}
@@ -884,25 +1140,52 @@ export const JobsBoard = () => {
         }
 
         if (activeToolPanel === 'filter') {
+            const operationsQuickFilterOptions: Array<[QuickFilter, string, number]> = [
+                ['ALL', 'All', quickCounts.ALL],
+                ['INTERPRETING', 'Interpreting', quickCounts.INTERPRETING],
+                ['TRANSLATIONS', 'Translations', quickCounts.TRANSLATIONS],
+                ['OVERDUE', 'Overdue', quickCounts.OVERDUE],
+                ['TODAY', 'Today', quickCounts.TODAY],
+                ['UNASSIGNED', 'Unassigned', quickCounts.UNASSIGNED],
+                ['COMPLETED', 'Completed', quickCounts.COMPLETED],
+                ['TIMESHEET', 'Timesheets', quickCounts.TIMESHEET],
+                ['INVOICE_READY', 'Invoice ready', quickCounts.INVOICE_READY],
+                ['AWAITING_PAYMENT', 'Awaiting payment', quickCounts.AWAITING_PAYMENT],
+                ['CANCELLED', 'Cancelled', quickCounts.CANCELLED],
+            ];
+            const financeQuickFilterOptions: Array<[QuickFilter, string, number]> = [
+                ['ALL', 'All finance jobs', quickCounts.ALL],
+                ['TIMESHEET', 'Timesheets', quickCounts.TIMESHEET],
+                ['INVOICE_READY', 'Invoice ready', quickCounts.INVOICE_READY],
+                ['AWAITING_PAYMENT', 'Awaiting payment', quickCounts.AWAITING_PAYMENT],
+                ['COMPLETED', 'Completed', quickCounts.COMPLETED],
+                ['INTERPRETING', 'Interpreting', quickCounts.INTERPRETING],
+                ['TRANSLATIONS', 'Translations', quickCounts.TRANSLATIONS],
+                ['CANCELLED', 'Cancelled', quickCounts.CANCELLED],
+            ];
+            const quickFilterOptions = isFinanceWorkspace ? financeQuickFilterOptions : operationsQuickFilterOptions;
             return (
                 <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-                    <p className="mb-2 text-xs font-semibold text-slate-500">Quick filters</p>
+                    <div className="mb-2 flex items-center justify-between">
+                        <p className="text-xs font-semibold text-slate-500">Quick filters</p>
+                        {quickFilter !== 'ALL' && (
+                            <button
+                                onClick={() => setQuickFilter('ALL')}
+                                className="rounded-md px-2 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
-                        {[
-                            ['ALL', 'All'],
-                            ['OVERDUE', 'Overdue'],
-                            ['TODAY', 'Today'],
-                            ['UNASSIGNED', 'Unassigned'],
-                            ['TIMESHEET', 'Timesheets'],
-                            ['INVOICE_READY', 'Invoice ready'],
-                            ['CANCELLED', 'Cancelled'],
-                        ].map(([value, label]) => (
+                        {quickFilterOptions.map(([value, label, count]) => (
                             <button
                                 key={value}
-                                onClick={() => setQuickFilter(value as QuickFilter)}
-                                className={`rounded-md border px-3 py-2 text-left text-sm font-semibold ${quickFilter === value ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                                onClick={() => setQuickFilter(value)}
+                                className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm font-semibold ${quickFilter === value ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                             >
-                                {label}
+                                <span>{label}</span>
+                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${quickFilter === value ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/70 dark:text-blue-200' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>{count}</span>
                             </button>
                         ))}
                     </div>
@@ -991,108 +1274,59 @@ export const JobsBoard = () => {
     };
 
     return (
-        <div className="flex min-h-[calc(100vh-8rem)] flex-col bg-slate-100 dark:bg-slate-950">
-            <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-100 pb-3 dark:border-slate-800 dark:bg-slate-950 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                    <div className="flex items-center gap-3">
-                        <h1 className="text-2xl font-semibold text-slate-950 dark:text-white">Jobs Board</h1>
-                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                            {sortedBookings.length} of {bookings.length}
-                        </span>
-                    </div>
-                    <p className="mt-1 text-sm text-slate-500">Grid workspace for requests, assignments, delivery and billing handoff.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    <Button onClick={refresh} icon={RefreshCw} variant="secondary" size="sm">Refresh</Button>
-                    <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">New booking</Button>
-                </div>
-            </div>
+        <div className="flex min-h-[calc(100dvh-3.5rem)] min-w-0 bg-white dark:bg-slate-950">
+            <WorkspaceViewSidebar
+                activeView={activeView}
+                views={views}
+                viewSearchQuery={viewSearchQuery}
+                isCollapsed={isViewsSidebarCollapsed}
+                sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Bookings'}
+                onSearchChange={setViewSearchQuery}
+                onCollapsedChange={setIsViewsSidebarCollapsed}
+                onCreateView={() => openViewEditor(null)}
+                onEditView={openViewEditor}
+                onSelectView={setActiveViewId}
+                onToggleFavorite={toggleViewFavorite}
+                onReorderView={reorderViews}
+                getViewCount={(view) => filterBookings(searchFilteredBookings, view).length}
+            />
 
-            <div ref={toolsRef} className="relative mt-3 rounded-t-lg border border-b-0 border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <section className="flex min-w-0 flex-1 flex-col">
+            <div ref={toolsRef} className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
                 <div className="flex flex-col gap-2 border-b border-slate-200 p-2 dark:border-slate-800 xl:flex-row xl:items-center">
                     <div className="relative" ref={viewsMenuRef}>
-                        <button
-                            onClick={() => setIsViewsMenuOpen(!isViewsMenuOpen)}
-                            className="inline-flex h-10 w-full items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:hover:bg-slate-800 sm:w-auto"
-                        >
-                            <LayoutGrid size={17} className="text-blue-500" />
-                            <span className="max-w-[260px] truncate uppercase tracking-wide">{activeView?.name || 'All Bookings'}</span>
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{viewFilteredBookings.length}</span>
-                            <ChevronDown size={14} className={`transition-transform ${isViewsMenuOpen ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {isViewsMenuOpen && (
-                            <div className="absolute left-0 top-full z-50 mt-2 flex h-[560px] w-[350px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-                                <div className="flex items-center justify-between border-b border-slate-200 px-3 py-3 dark:border-slate-800">
-                                    <button
-                                        onClick={() => { setEditingViewId(null); setIsViewManagerOpen(true); setIsViewsMenuOpen(false); }}
-                                        className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-                                    >
-                                        <Plus size={16} /> Create new...
-                                    </button>
-                                    <button
-                                        onClick={() => { setEditingViewId(activeView.id); setIsViewManagerOpen(true); setIsViewsMenuOpen(false); }}
-                                        className="rounded-md p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                        aria-label="View settings"
-                                    >
-                                        <Settings size={16} />
-                                    </button>
-                                </div>
-                                <div className="border-b border-slate-200 p-3 dark:border-slate-800">
-                                    <div className="relative">
-                                        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="text"
-                                            placeholder="Find a view"
-                                            value={viewSearchQuery}
-                                            onChange={(e) => setViewSearchQuery(e.target.value)}
-                                            className="h-9 w-full rounded-md border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-3">
-                                    <p className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-500"><span className="text-amber-500">★</span> My favorites</p>
-                                    <div className="ml-3 border-l border-slate-200 pl-3 dark:border-slate-800">
-                                        {views.filter(v => v.name.toLowerCase().includes(viewSearchQuery.toLowerCase())).slice(0, 5).map(view => {
-                                            const count = filterBookings(searchFilteredBookings, view).length;
-                                            return (
-                                                <button
-                                                    key={view.id}
-                                                    onClick={() => { setActiveViewId(view.id); setIsViewsMenuOpen(false); }}
-                                                    className={`group flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm transition-colors ${activeView.id === view.id ? 'bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                                                >
-                                                    <span className="flex min-w-0 items-center gap-2">
-                                                        <LayoutGrid size={15} className="shrink-0 text-blue-500" />
-                                                        <span className="truncate font-semibold">{view.name}</span>
-                                                    </span>
-                                                    <span className="ml-2 text-[10px] text-slate-400">{count}</span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <p className="mb-2 mt-5 flex items-center gap-2 text-xs font-bold text-slate-500"><ChevronDown size={13} /> Bookings</p>
-                                    <div className="ml-3 border-l border-slate-200 pl-3 dark:border-slate-800">
-                                        {views.filter(v => v.name.toLowerCase().includes(viewSearchQuery.toLowerCase())).map(view => (
-                                            <button
-                                                key={`booking-${view.id}`}
-                                                onClick={() => { setActiveViewId(view.id); setIsViewsMenuOpen(false); }}
-                                                className={`group flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm transition-colors ${activeView.id === view.id ? 'bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-white' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                                            >
-                                                <span className="flex min-w-0 items-center gap-2">
-                                                    <LayoutGrid size={15} className="shrink-0 text-blue-500" />
-                                                    <span className="truncate font-semibold">{view.name}</span>
-                                                </span>
-                                                <MoreHorizontal size={14} className="opacity-0 group-hover:opacity-100" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <WorkspaceViewMenu
+                            activeView={activeView}
+                            views={views}
+                            viewSearchQuery={viewSearchQuery}
+                            isOpen={isViewsMenuOpen}
+                            sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Bookings'}
+                            activeCount={viewFilteredBookings.length}
+                            onOpenChange={setIsViewsMenuOpen}
+                            onSearchChange={setViewSearchQuery}
+                            onCreateView={() => openViewEditor(null)}
+                            onEditView={openViewEditor}
+                            onSelectView={setActiveViewId}
+                            onToggleFavorite={toggleViewFavorite}
+                            onReorderView={reorderViews}
+                            getViewCount={(view) => filterBookings(searchFilteredBookings, view).length}
+                        />
                     </div>
 
-                    <div className="flex items-center gap-1 overflow-x-auto">
+                    <div className="flex flex-wrap items-center gap-1 xl:order-3">
+                        {isFinanceWorkspace && (
+                            <FinanceLaneToggle
+                                lane={financeLane}
+                                onLaneChange={(lane) => {
+                                    setFinanceLane(lane);
+                                    setQuickFilter('ALL');
+                                    setCurrentPage(1);
+                                }}
+                            />
+                        )}
+                        <Button onClick={refresh} icon={RefreshCw} variant="ghost" size="sm">Refresh</Button>
+                        {isFinanceWorkspace && <Button onClick={() => navigate('/admin/billing/overview')} icon={PoundSterling} variant="ghost" size="sm">Overview</Button>}
+                        {!isFinanceWorkspace && <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">New</Button>}
                         <ToolButton icon={EyeOff} label="Hide fields" active={activeToolPanel === 'hide'} onClick={() => setActiveToolPanel(activeToolPanel === 'hide' ? null : 'hide')} />
                         <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL'} onClick={() => setActiveToolPanel(activeToolPanel === 'filter' ? null : 'filter')} />
                         <ToolButton icon={Group} label="Group" active={activeToolPanel === 'group' || groupField !== 'view'} onClick={() => setActiveToolPanel(activeToolPanel === 'group' ? null : 'group')} />
@@ -1101,14 +1335,14 @@ export const JobsBoard = () => {
                         <ToolPanelContent />
                     </div>
 
-                    <div className="relative min-w-0 flex-1">
+                    <div className="relative min-w-0 flex-1 xl:order-2">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                             type="text"
                             placeholder="Search ref, client, contact, language, interpreter, postcode"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                            className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
                         />
                         {searchQuery && (
                             <button
@@ -1122,27 +1356,15 @@ export const JobsBoard = () => {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-200 p-2 dark:border-slate-800">
-                    <FilterChip label="All" count={quickCounts.ALL} active={quickFilter === 'ALL'} onClick={() => setQuickFilter('ALL')} />
-                    <FilterChip label="Interpreting" count={quickCounts.INTERPRETING} active={quickFilter === 'INTERPRETING'} onClick={() => setQuickFilter('INTERPRETING')} />
-                    <FilterChip label="Translations" count={quickCounts.TRANSLATIONS} active={quickFilter === 'TRANSLATIONS'} onClick={() => setQuickFilter('TRANSLATIONS')} />
-                    <FilterChip label="Overdue" count={quickCounts.OVERDUE} active={quickFilter === 'OVERDUE'} onClick={() => setQuickFilter('OVERDUE')} />
-                    <FilterChip label="Today" count={quickCounts.TODAY} active={quickFilter === 'TODAY'} onClick={() => setQuickFilter('TODAY')} />
-                    <FilterChip label="Unassigned" count={quickCounts.UNASSIGNED} active={quickFilter === 'UNASSIGNED'} onClick={() => setQuickFilter('UNASSIGNED')} />
-                    <FilterChip label="Completed" count={quickCounts.COMPLETED} active={quickFilter === 'COMPLETED'} onClick={() => setQuickFilter('COMPLETED')} />
-                    <FilterChip label="Timesheets" count={quickCounts.TIMESHEET} active={quickFilter === 'TIMESHEET'} onClick={() => setQuickFilter('TIMESHEET')} />
-                    <FilterChip label="Invoice ready" count={quickCounts.INVOICE_READY} active={quickFilter === 'INVOICE_READY'} onClick={() => setQuickFilter('INVOICE_READY')} />
-                    <FilterChip label="Awaiting payment" count={quickCounts.AWAITING_PAYMENT} active={quickFilter === 'AWAITING_PAYMENT'} onClick={() => setQuickFilter('AWAITING_PAYMENT')} />
-                    <FilterChip label="Cancelled" count={quickCounts.CANCELLED} active={quickFilter === 'CANCELLED'} onClick={() => setQuickFilter('CANCELLED')} />
-                    {activeFilterCount > 0 && (
-                        <Button size="sm" variant="ghost" icon={X} onClick={() => { setSearchQuery(''); setQuickFilter('ALL'); }}>Clear</Button>
-                    )}
-                </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden rounded-b-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-                <div className="overflow-x-auto">
-                    <div className="min-w-full">
+            {isFinanceWorkspace && (
+                <FinanceSummaryBar lane={financeLane} recordCount={sortedBookings.length} summary={financeSummary} />
+            )}
+
+            <div className="min-w-0 overflow-hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                <div className="min-w-0 overflow-x-auto overflow-y-visible">
+                    <div className={`${gridMinWidth} min-w-full`}>
                         <div
                             className="grid h-10 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
                             style={{ gridTemplateColumns }}
@@ -1178,7 +1400,7 @@ export const JobsBoard = () => {
                             ))}
                         </div>
 
-                        <div className="max-h-[calc(100vh-18rem)] overflow-y-auto">
+                        <div>
                             {loading ? (
                                 <div className="p-8 text-sm text-slate-500">Loading jobs...</div>
                             ) : sortedBookings.length === 0 ? (
@@ -1202,42 +1424,17 @@ export const JobsBoard = () => {
                 </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-x border-b border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 sm:flex-row sm:items-center sm:justify-between">
-                <div className="font-semibold">
-                    {sortedBookings.length === 0 ? '0 jobs' : `${pageStartIndex + 1}-${pageEndIndex} of ${sortedBookings.length} jobs`}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
-                        disabled={safeCurrentPage === 1}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 disabled:opacity-40 dark:border-slate-800"
-                        aria-label="Previous page"
-                    >
-                        <ChevronLeft size={15} />
-                    </button>
-                    <span className="rounded-md border border-slate-200 px-3 py-1.5 font-semibold dark:border-slate-800">
-                        Page {safeCurrentPage} of {totalPages}
-                    </span>
-                    <button
-                        type="button"
-                        onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
-                        disabled={safeCurrentPage === totalPages}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 disabled:opacity-40 dark:border-slate-800"
-                        aria-label="Next page"
-                    >
-                        <ChevronRight size={15} />
-                    </button>
-                    <select
-                        value={pageSize}
-                        onChange={(event) => setPageSize(Number(event.target.value))}
-                        className="h-8 rounded-md border border-slate-200 bg-white px-2 font-semibold outline-none dark:border-slate-800 dark:bg-slate-950"
-                        aria-label="Rows per page"
-                    >
-                        {[10, 25, 50, 100].map(size => <option key={size} value={size}>{size}/page</option>)}
-                    </select>
-                </div>
-            </div>
+            <WorkspacePagination
+                totalCount={sortedBookings.length}
+                pageStartIndex={pageStartIndex}
+                pageEndIndex={pageEndIndex}
+                currentPage={safeCurrentPage}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                onPreviousPage={() => setCurrentPage(page => Math.max(1, page - 1))}
+                onNextPage={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                onPageSizeChange={setPageSize}
+            />
 
             <BulkActionBar
                 selectedIds={selectedIds}
@@ -1247,7 +1444,22 @@ export const JobsBoard = () => {
                 isLoading={isBulkLoading}
                 onClearSelection={() => setSelectedIds([])}
                 onSelectAll={() => setSelectedIds(sortedBookings.map(b => b.id))}
-                actions={[
+                actions={isFinanceWorkspace ? [
+                    { label: 'Timesheet', icon: FileText, onClick: (ids) => handleBulkManualStep(ids, 'Record Timesheet', async job => { await BillingService.recordManualTimesheetReceived(job.id); }) },
+                    { label: 'Verify', icon: CheckCircle2, onClick: (ids) => handleBulkManualStep(ids, 'Verify Timesheet', job => BillingService.approveTimesheetByBookingId(job.id)), variant: 'success' },
+                    { label: 'Invoice', icon: Receipt, onClick: (ids) => handleBulkManualStep(ids, 'Mark Invoiced', job => BillingService.recordManualInvoiceIssued(job.id)) },
+                    { label: 'Paid', icon: PoundSterling, onClick: (ids) => handleBulkManualStep(ids, 'Mark Paid', job => BillingService.recordManualPaymentReceived(job.id)), variant: 'success' },
+                    { label: 'Flag issue', icon: AlertCircle, onClick: (ids) => handleBulkManualStep(ids, 'Flag Billing Issue', async job => {
+                        await BookingService.update(job.id, {
+                            ...({
+                                billingIssueFlag: true,
+                                billingIssueRaisedAt: new Date().toISOString(),
+                                paymentStatus: 'ISSUE',
+                                adminNotes: `${job.adminNotes || ''}${job.adminNotes ? '\n' : ''}[${new Date().toLocaleString('en-GB')}] Finance issue flagged in bulk for Accounts review.`,
+                            } as any),
+                        });
+                    }), variant: 'warning' },
+                ] : [
                     { label: 'Book', icon: UserCheck, onClick: () => handleBulkStatus(selectedIds, BookingStatus.BOOKED), variant: 'success' },
                     { label: 'Complete', icon: CheckCircle2, onClick: (ids) => handleBulkManualStep(ids, 'Complete', job => BookingService.recordSessionCompletedByStaff(job.id)), variant: 'success' },
                     { label: 'Timesheet', icon: FileText, onClick: (ids) => handleBulkManualStep(ids, 'Record Timesheet', async job => { await BillingService.recordManualTimesheetReceived(job.id); }) },
@@ -1373,7 +1585,9 @@ export const JobsBoard = () => {
                 isOpen={isViewManagerOpen}
                 onClose={() => setIsViewManagerOpen(false)}
                 viewId={editingViewId}
+                workspace={workspace}
             />
+            </section>
         </div>
     );
 };

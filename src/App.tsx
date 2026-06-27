@@ -201,7 +201,8 @@ const App = () => {
                                <Route path="administration/staff" element={<AdminStaff />} />
                                <Route path="administration/org-chart" element={<AdminOrgChart />} />
                                <Route path="profile" element={<AdminProfile />} />
-                              <Route path="billing" element={<AdminBillingDashboard />} />
+                              <Route path="billing" element={<JobsBoard workspace="finance" />} />
+                              <Route path="billing/overview" element={<AdminBillingDashboard />} />
                               <Route path="system/audit-log" element={<AuditLog />} />
                               <Route path="billing/client-invoices" element={<AdminClientInvoicesPage />} />
                               <Route path="billing/client-invoices/:id" element={<AdminClientInvoiceDetailsPage />} />

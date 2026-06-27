@@ -19,3 +19,4 @@ export * from './notificationService';
 export * from './applicationService';
 export * from './emailService';
 export * from './jobNumberService';
+export * from './bookingViewService';

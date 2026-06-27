@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useBookingViews } from '../../hooks/useBookingViews';
-import { BookingStatus, FilterableField, SortableField, GroupableField, ViewFilterRule, ViewSortRule, ServiceType, Interpreter } from '../../types';
+import { BookingStatus, BookingWorkspace, FilterableField, SortableField, GroupableField, ViewFilterRule, ViewSortRule, ServiceType, Interpreter } from '../../types';
 import { Trash2, Save, Plus, X, Filter, ArrowUpDown, Layers } from 'lucide-react';
 import { InterpreterService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -12,10 +12,14 @@ interface ViewManagerDrawerProps {
     isOpen: boolean;
     onClose: () => void;
     viewId: string | null; // null for new view
+    workspace?: BookingWorkspace;
 }
 
 const FILTERABLE_FIELDS: { value: FilterableField; label: string }[] = [
     { value: 'status', label: 'Status' },
+    { value: 'clientName', label: 'Client' },
+    { value: 'costCode', label: 'PO / Cost Code' },
+    { value: 'totalAmount', label: 'Client Charge' },
     { value: 'languageTo', label: 'To Language' },
     { value: 'serviceType', label: 'Service Type' },
     { value: 'locationType', label: 'Location Type' },
@@ -35,6 +39,8 @@ const SORTABLE_FIELDS: { value: SortableField; label: string }[] = [
 const GROUPABLE_FIELDS: { value: GroupableField | ''; label: string }[] = [
     { value: '', label: 'None' },
     { value: 'status', label: 'Status' },
+    { value: 'client', label: 'Client' },
+    { value: 'interpreter', label: 'Interpreter' },
     { value: 'languageTo', label: 'Language' },
     { value: 'serviceType', label: 'Service Type' },
     { value: 'locationType', label: 'Location Type' },
@@ -45,10 +51,11 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
     isOpen,
     onClose,
     viewId,
+    workspace = 'operations',
 }) => {
     const { user } = useAuth();
     const { showToast } = useToast();
-    const { views, saveCustomView, updateCustomView, deleteCustomView } = useBookingViews(user?.id || '');
+    const { views, saveCustomView, updateCustomView, deleteCustomView } = useBookingViews(user?.id || '', workspace);
 
     const [name, setName] = useState('');
     const [filterRules, setFilterRules] = useState<ViewFilterRule[]>([]);
@@ -99,15 +106,16 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
             sortBy: 'dateDesc' as const, // Fallback
             filterRules,
             sortRules,
-            groupBy
+            groupBy,
+            workspace
         };
 
         if (viewId) {
             updateCustomView(viewId, viewData);
-            showToast('Intelligence View updated', 'success');
+            showToast('View updated', 'success');
         } else {
             saveCustomView(viewData);
-            showToast('Intelligence View created', 'success');
+            showToast('View created', 'success');
         }
         onClose();
     };
@@ -146,7 +154,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
             isOpen={isOpen}
             onClose={onClose}
             type="drawer"
-            title={viewId ? 'Edit Intelligence View' : 'Create Intelligence View'}
+            title={viewId ? 'Edit View' : 'Create View'}
             maxWidth="md"
         >
             <div className="space-y-8 p-6">
@@ -343,12 +351,12 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
 
                 <div className="pt-8 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     {viewId && !isSystem ? (
-                        <Button variant="outline" className="text-red-600 border-red-100 hover:bg-red-50" onClick={() => deleteCustomView(viewId)} icon={Trash2}>Delete View</Button>
+                        <Button variant="outline" className="text-red-600 border-red-100 hover:bg-red-50" onClick={() => { deleteCustomView(viewId); onClose(); }} icon={Trash2}>Delete View</Button>
                     ) : <div />}
 
                     <div className="flex gap-2">
                         <Button variant="outline" onClick={onClose}>Cancel</Button>
-                        <Button onClick={handleSave} icon={Save}>Save Intelligence View</Button>
+                        <Button onClick={handleSave} icon={Save}>Save View</Button>
                     </div>
                 </div>
             </div>

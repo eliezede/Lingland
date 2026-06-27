@@ -203,6 +203,23 @@ export interface Booking {
   currency?: string;
   priority?: 'High' | 'Normal' | 'Low';
   totalAmount?: number;
+  timesheetId?: string | null;
+  timesheetStatus?: Timesheet['status'] | string;
+  timesheetSubmittedAt?: string;
+  timesheetVerifiedAt?: string;
+  billingReadyAt?: string;
+  clientInvoiceId?: string | null;
+  clientInvoiceNumber?: string;
+  clientInvoiceReference?: string;
+  interpreterInvoiceId?: string | null;
+  interpreterInvoiceNumber?: string;
+  interpreterInvoiceReference?: string;
+  paymentStatus?: 'NOT_READY' | 'READY_FOR_INVOICE' | 'INVOICED' | 'PAID' | 'ISSUE';
+  invoicedAt?: string;
+  paidAt?: string;
+  billingIssueFlag?: boolean;
+  billingIssueReason?: string;
+  billingIssueRaisedAt?: string;
   endTime?: string;
   patientReference?: string;
   adminNotes?: string;
@@ -630,8 +647,9 @@ export interface ViewFilter {
 }
 
 export type SortableField = 'date' | 'status' | 'client' | 'interpreter' | 'languageTo' | 'duration' | 'amount' | 'serviceCategory';
-export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'interpreterId' | 'date';
-export type GroupableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'date';
+export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'interpreterId' | 'date' | 'clientName' | 'costCode' | 'totalAmount';
+export type GroupableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'date' | 'client' | 'interpreter';
+export type BookingWorkspace = 'operations' | 'finance';
 
 export type BookingColumnField =
   | 'ref' | 'date' | 'time' | 'client' | 'languageFrom' | 'languageTo'
@@ -666,11 +684,17 @@ export interface ViewFilterRule {
   value: any;
 }
 
+export type BookingViewScope = 'SYSTEM' | 'TEAM' | 'PERSONAL';
+
 export interface BookingView {
   id: string;
   name: string;
   icon?: string;
   isSystem?: boolean;
+  isFavorite?: boolean;
+  workspace?: BookingWorkspace;
+  viewScope?: BookingViewScope;
+  ownerId?: string;
   // Legacy (kept for backward compat)
   filters: ViewFilter;
   sortBy: 'dateAsc' | 'dateDesc' | 'status' | 'client';

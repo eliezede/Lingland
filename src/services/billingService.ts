@@ -256,6 +256,9 @@ export const BillingService = {
           if (line.bookingId) {
             batch.update(doc(db, 'bookings', line.bookingId), {
               status: BookingStatus.PAID,
+              clientInvoiceId: id,
+              paymentStatus: 'PAID',
+              paidAt: new Date().toISOString(),
               updatedAt: serverTimestamp()
             });
           }
@@ -449,6 +452,14 @@ export const BillingService = {
           readyForInterpreterInvoice: false,
           updatedAt: serverTimestamp()
         });
+        if (ts.bookingId) {
+          batch.update(doc(db, 'bookings', ts.bookingId), {
+            interpreterInvoiceId: invoiceRef.id,
+            interpreterInvoiceReference: ref,
+            interpreterInvoiceNumber: ref,
+            updatedAt: serverTimestamp()
+          });
+        }
       });
 
       await batch.commit();
@@ -527,6 +538,12 @@ export const BillingService = {
       if (ts.bookingId) {
         batch.update(doc(db, 'bookings', ts.bookingId), {
           status: BookingStatus.READY_FOR_INVOICE,
+          timesheetId: id,
+          timesheetStatus: 'APPROVED',
+          timesheetVerifiedAt: new Date().toISOString(),
+          billingReadyAt: new Date().toISOString(),
+          paymentStatus: 'READY_FOR_INVOICE',
+          billingIssueFlag: false,
           updatedAt: serverTimestamp()
         });
       }
@@ -546,7 +563,15 @@ export const BillingService = {
         ts.readyForInterpreterInvoice = true;
 
         const b = MOCK_BOOKINGS.find(book => book.id === ts.bookingId);
-        if (b) b.status = BookingStatus.READY_FOR_INVOICE;
+        if (b) {
+          b.status = BookingStatus.READY_FOR_INVOICE;
+          b.timesheetId = id;
+          b.timesheetStatus = 'APPROVED';
+          b.timesheetVerifiedAt = new Date().toISOString();
+          b.billingReadyAt = new Date().toISOString();
+          b.paymentStatus = 'READY_FOR_INVOICE';
+          b.billingIssueFlag = false;
+        }
 
         saveMockData();
       }
@@ -581,9 +606,14 @@ export const BillingService = {
       if (booking.status !== BookingStatus.READY_FOR_INVOICE) {
         throw new Error('Job must be ready for invoice before marking it invoiced.');
       }
+      const manualInvoiceRef = booking.clientInvoiceReference || booking.clientInvoiceNumber || `MANUAL-${booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id.slice(0, 8)}`;
 
       await updateDoc(bookingRef, {
         status: BookingStatus.INVOICED,
+        clientInvoiceReference: manualInvoiceRef,
+        clientInvoiceNumber: manualInvoiceRef,
+        paymentStatus: 'INVOICED',
+        billingIssueFlag: false,
         invoicedAt: new Date().toISOString(),
         updatedAt: serverTimestamp()
       });
@@ -605,7 +635,13 @@ export const BillingService = {
     } catch (e) {
       const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
       if (mockBooking && mockBooking.status === BookingStatus.READY_FOR_INVOICE) {
+        const manualInvoiceRef = mockBooking.clientInvoiceReference || mockBooking.clientInvoiceNumber || `MANUAL-${mockBooking.displayRef || mockBooking.jobNumber || mockBooking.bookingRef || mockBooking.id.slice(0, 8)}`;
         mockBooking.status = BookingStatus.INVOICED;
+        mockBooking.clientInvoiceReference = manualInvoiceRef;
+        mockBooking.clientInvoiceNumber = manualInvoiceRef;
+        mockBooking.paymentStatus = 'INVOICED';
+        mockBooking.billingIssueFlag = false;
+        mockBooking.invoicedAt = new Date().toISOString();
         saveMockData();
         return;
       }
@@ -625,6 +661,7 @@ export const BillingService = {
 
       await updateDoc(bookingRef, {
         status: BookingStatus.PAID,
+        paymentStatus: 'PAID',
         paidAt: new Date().toISOString(),
         updatedAt: serverTimestamp()
       });
@@ -647,6 +684,8 @@ export const BillingService = {
       const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
       if (mockBooking && mockBooking.status === BookingStatus.INVOICED) {
         mockBooking.status = BookingStatus.PAID;
+        mockBooking.paymentStatus = 'PAID';
+        mockBooking.paidAt = new Date().toISOString();
         saveMockData();
         return;
       }
@@ -742,6 +781,12 @@ export const BillingService = {
       if (data.bookingId) {
         batch.update(doc(db, 'bookings', data.bookingId), {
           status: 'TIMESHEET_SUBMITTED',
+          timesheetId: tsRef.id,
+          timesheetStatus: 'SUBMITTED',
+          timesheetSubmittedAt: new Date().toISOString(),
+          paymentStatus: 'NOT_READY',
+          clientInvoiceId: null,
+          interpreterInvoiceId: null,
           updatedAt: serverTimestamp()
         });
       }
@@ -756,7 +801,15 @@ export const BillingService = {
       const mockTs = { id: `ts-${Date.now()}`, ...newTs } as Timesheet;
       MOCK_TIMESHEETS.push(mockTs);
       const mockBooking = MOCK_BOOKINGS.find(b => b.id === data.bookingId);
-      if (mockBooking) mockBooking.status = BookingStatus.TIMESHEET_SUBMITTED;
+      if (mockBooking) {
+        mockBooking.status = BookingStatus.TIMESHEET_SUBMITTED;
+        mockBooking.timesheetId = mockTs.id;
+        mockBooking.timesheetStatus = 'SUBMITTED';
+        mockBooking.timesheetSubmittedAt = new Date().toISOString();
+        mockBooking.paymentStatus = 'NOT_READY';
+        mockBooking.clientInvoiceId = null;
+        mockBooking.interpreterInvoiceId = null;
+      }
       saveMockData();
       return mockTs;
     }
@@ -885,6 +938,12 @@ export const BillingService = {
       batch.set(tsRef, newTs);
       batch.update(doc(db, 'bookings', booking.id), {
         status: BookingStatus.TIMESHEET_SUBMITTED,
+        timesheetId: tsRef.id,
+        timesheetStatus: 'SUBMITTED',
+        timesheetSubmittedAt: new Date().toISOString(),
+        paymentStatus: 'NOT_READY',
+        clientInvoiceId: null,
+        interpreterInvoiceId: null,
         adminNotes: `${booking.adminNotes ? `${booking.adminNotes}\n` : ''}Not executed: ${reason}`,
         updatedAt: serverTimestamp()
       });
@@ -902,6 +961,12 @@ export const BillingService = {
       const mockBooking = MOCK_BOOKINGS.find(b => b.id === booking.id);
       if (mockBooking) {
         mockBooking.status = BookingStatus.TIMESHEET_SUBMITTED;
+        mockBooking.timesheetId = mockTs.id;
+        mockBooking.timesheetStatus = 'SUBMITTED';
+        mockBooking.timesheetSubmittedAt = new Date().toISOString();
+        mockBooking.paymentStatus = 'NOT_READY';
+        mockBooking.clientInvoiceId = null;
+        mockBooking.interpreterInvoiceId = null;
         mockBooking.adminNotes = `${mockBooking.adminNotes ? `${mockBooking.adminNotes}\n` : ''}Not executed: ${reason}`;
       }
       saveMockData();
