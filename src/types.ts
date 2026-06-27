@@ -132,6 +132,7 @@ export enum BookingStatus {
   TIMESHEET_SUBMITTED = 'TIMESHEET_SUBMITTED', // Job done, timesheet submitted, awaiting admin verification
   TIMESHEET_VERIFIED = 'TIMESHEET_VERIFIED',
   READY_FOR_INVOICE = 'READY_FOR_INVOICE', // Verified, ready for invoicing
+  INVOICING = 'INVOICING',
   INVOICED = 'INVOICED', // Invoice generated
   PAID = 'PAID' // Invoice paid
 }

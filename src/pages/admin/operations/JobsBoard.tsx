@@ -79,6 +79,8 @@ const terminalStatuses = new Set<string>([
     BookingStatus.PAID,
 ]);
 
+const invoiceWorkStatuses = [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING];
+
 const formatDate = (date?: string, options?: Intl.DateTimeFormatOptions) => {
     if (!date) return 'No date';
     const parsed = new Date(date);
@@ -111,7 +113,7 @@ const getNextAction = (job: Booking) => {
     if (job.status === BookingStatus.BOOKED) return 'Mark completed';
     if (job.status === BookingStatus.SESSION_COMPLETED) return 'Record timesheet';
     if (job.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
-    if (job.status === BookingStatus.READY_FOR_INVOICE) return 'Mark invoiced';
+    if (invoiceWorkStatuses.includes(job.status)) return 'Mark invoiced';
     if (job.status === BookingStatus.INVOICED) return 'Mark paid';
     if (job.status === BookingStatus.PAID) return 'Complete';
     if (job.status === BookingStatus.CANCELLED) return 'Cancelled';
@@ -139,7 +141,7 @@ const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
         case 'COMPLETED':
             return jobs.filter(job => job.status === BookingStatus.SESSION_COMPLETED);
         case 'INVOICE_READY':
-            return jobs.filter(job => job.status === BookingStatus.READY_FOR_INVOICE);
+            return jobs.filter(job => invoiceWorkStatuses.includes(job.status));
         case 'AWAITING_PAYMENT':
             return jobs.filter(job => job.status === BookingStatus.INVOICED);
         case 'CANCELLED':
@@ -456,7 +458,7 @@ export const JobsBoard = () => {
                 if (job.status === BookingStatus.SESSION_COMPLETED) {
                     return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleRecordManualTimesheet(job); }}>Timesheet</Button>;
                 }
-                if (job.status === BookingStatus.READY_FOR_INVOICE) {
+                if (invoiceWorkStatuses.includes(job.status)) {
                     return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInvoiceIssued(job); }}>Invoice</Button>;
                 }
                 if (job.status === BookingStatus.INVOICED) {
@@ -803,7 +805,7 @@ export const JobsBoard = () => {
         ...(job.status === BookingStatus.SESSION_COMPLETED
             ? [{ label: 'Record Timesheet', icon: FileText, onClick: () => handleRecordManualTimesheet(job) }]
             : []),
-        ...(job.status === BookingStatus.READY_FOR_INVOICE
+        ...(invoiceWorkStatuses.includes(job.status)
             ? [{ label: 'Mark Invoiced', icon: Receipt, onClick: () => handleRecordInvoiceIssued(job) }]
             : []),
         ...(job.status === BookingStatus.INVOICED
@@ -1303,7 +1305,7 @@ export const JobsBoard = () => {
                                 {selectedJob.status === BookingStatus.TIMESHEET_SUBMITTED && (
                                     <Button size="sm" onClick={() => handleVerifyTimesheet(selectedJob)} icon={FileText} className="col-span-2">Verify timesheet</Button>
                                 )}
-                                {selectedJob.status === BookingStatus.READY_FOR_INVOICE && (
+                                {invoiceWorkStatuses.includes(selectedJob.status) && (
                                     <Button size="sm" onClick={() => handleRecordInvoiceIssued(selectedJob)} icon={Receipt} className="col-span-2">Mark invoiced</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.INVOICED && (

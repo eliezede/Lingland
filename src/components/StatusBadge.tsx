@@ -17,6 +17,7 @@ const DISPLAY_LABELS: Record<string, string> = {
   'TIMESHEET_SUBMITTED': 'Timesheet Submitted',
   'TIMESHEET_VERIFIED': 'Timesheet Verified',
   'READY_FOR_INVOICE': 'Ready to Invoice',
+  'INVOICING': 'Invoicing',
   'INVOICED': 'Invoiced',
   'PAID': 'Paid',
   'PENDING_ASSIGNMENT': 'Pending Assignment',
@@ -66,7 +67,9 @@ export const StatusBadge: React.FC<{ status: BookingStatus | JobStatus | string 
       case 'ADMIN_HOLD':
         return 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800/50';
       case BookingStatus.READY_FOR_INVOICE:
+      case BookingStatus.INVOICING:
       case BookingStatus.TIMESHEET_VERIFIED:
+      case 'INVOICING':
       case 'TIMESHEET_VERIFIED':
       case 'TIMESHEET_SUBMITTED':
         return 'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800/50';

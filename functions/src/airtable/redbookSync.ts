@@ -65,6 +65,7 @@ const STATUS_RANK: Record<string, number> = {
   TIMESHEET_SUBMITTED: 6,
   TIMESHEET_VERIFIED: 7,
   READY_FOR_INVOICE: 8,
+  INVOICING: 8,
   INVOICED: 9,
   PAID: 10,
   CANCELLED: 99,
@@ -219,25 +220,66 @@ const parseDuration = (value: string): number => {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : 60;
 };
 
+const canonicalAirtableStatus = (value: string) => value
+  .trim()
+  .toLowerCase()
+  .replace(/\s+/g, ' ');
+
+const REDBOOK_STATUS_MAP: Record<string, string> = {
+  'incoming': 'INCOMING',
+  'incoming 23': 'INCOMING',
+  'quote': 'QUOTE_PENDING',
+  'opened': 'OPENED',
+  'opened tr': 'OPENED',
+  'assigned tr': 'OPENED',
+  'admin': 'ADMIN',
+  'admin tr': 'ADMIN',
+  'booked': 'BOOKED',
+  'cancelled': 'CANCELLED',
+  'early cancellation': 'CANCELLED',
+  'unfilled/missed': 'CANCELLED',
+  'unclaimed': 'NEEDS_ASSIGNMENT',
+  'invoicing': 'INVOICING',
+  'sent and invoicing tr': 'INVOICING',
+  'invoice sage': 'INVOICING',
+  'invoiced': 'INVOICED',
+  'invoiced and completed': 'INVOICED',
+  'paid': 'PAID',
+  'russian': 'INCOMING'
+};
+
+const TRANSLATION_STATUS_MAP: Record<string, string> = {
+  ...REDBOOK_STATUS_MAP,
+  'completed': 'READY_FOR_INVOICE',
+  'verified': 'READY_FOR_INVOICE'
+};
+
 const mapStatus = (fields: Record<string, unknown>, hasInterpreter: boolean) => {
   const rawStatus = pick(fields, ['Status', 'Job Status', 'Booking Status']);
   const normalized = rawStatus.toLowerCase();
+  const explicitStatus = REDBOOK_STATUS_MAP[canonicalAirtableStatus(rawStatus)];
   const invoiceStatus = pick(fields, ['Status (from invoices table)', 'Invocing Status']);
   const invoiceNumber = pick(fields, ['Invoice Nbr (from 💷 Invoices)', 'INV ID (from 💷 Invoices)', 'Invoice Nbr', 'INV ID']);
-  const hasClientInvoice = Boolean(invoiceNumber || pick(fields, ['Invoiced on']) || safeNumber(pickRaw(fields, ['job invoice', 'Total invoiced', 'Invoiced + VAT'])));
-  const hasInterpreterInvoice = Boolean(pick(fields, ['INV interp', 'interpreter invoice form', 'Google timesheet']));
-  const timesheetReceived = truthyField(fields, ['timesheet']) || Boolean(pick(fields, ['timesheet link', 'Google timesheet']));
-  const verified = truthyField(fields, ['Verified', 'Verified (from Job Number from redbook)', 'Verified (from Job Number from redbook) 2'])
-    || Boolean(pick(fields, ['verification date']));
-  const paid = truthyField(fields, ['Paid']) || invoiceStatus.toLowerCase().includes('paid') || normalized.includes('paid');
 
-  let status = 'INCOMING';
-  if (normalized.includes('cancel')) status = 'CANCELLED';
+  const schedule = parseDateTime(fields);
+  const bookingStart = new Date(`${schedule.date}T${schedule.startTime}`);
+  const isFuture = !Number.isNaN(bookingStart.getTime()) && bookingStart.getTime() > Date.now();
+
+  const hasClientInvoice = !isFuture && Boolean(invoiceNumber || pick(fields, ['Invoiced on']) || safeNumber(pickRaw(fields, ['job invoice', 'Total invoiced', 'Invoiced + VAT'])));
+  const hasInterpreterInvoice = !isFuture && Boolean(pick(fields, ['INV interp', 'interpreter invoice form', 'Google timesheet']));
+  const timesheetReceived = !isFuture && (truthyField(fields, ['timesheet']) || Boolean(pick(fields, ['timesheet link', 'Google timesheet'])));
+  const verified = !isFuture && (truthyField(fields, ['Verified', 'Verified (from Job Number from redbook)', 'Verified (from Job Number from redbook) 2'])
+    || Boolean(pick(fields, ['verification date'])));
+  const paid = !isFuture && (truthyField(fields, ['Paid']) || invoiceStatus.toLowerCase().includes('paid') || normalized.includes('paid'));
+
+  let status = explicitStatus || 'INCOMING';
+  if (explicitStatus) status = explicitStatus;
+  else if (normalized.includes('cancel')) status = 'CANCELLED';
   else if (paid) status = 'PAID';
   else if (hasClientInvoice || invoiceStatus.toLowerCase().includes('invoice')) status = 'INVOICED';
   else if (verified) status = 'READY_FOR_INVOICE';
-  else if (timesheetReceived || hasInterpreterInvoice || normalized.includes('timesheet')) status = 'TIMESHEET_SUBMITTED';
-  else if (normalized.includes('complete') || normalized.includes('done')) status = 'SESSION_COMPLETED';
+  else if (timesheetReceived || hasInterpreterInvoice || (!isFuture && normalized.includes('timesheet'))) status = 'TIMESHEET_SUBMITTED';
+  else if (!isFuture && (normalized.includes('complete') || normalized.includes('done'))) status = 'SESSION_COMPLETED';
   else if (normalized.includes('pending')) status = 'ASSIGNMENT_PENDING';
   else if (normalized.includes('open')) status = hasInterpreter ? 'OPENED' : 'INCOMING';
   else if (normalized.includes('assign')) status = hasInterpreter ? 'OPENED' : 'NEEDS_ASSIGNMENT';
@@ -253,7 +295,8 @@ const mapStatus = (fields: Record<string, unknown>, hasInterpreter: boolean) => 
       hasInterpreterInvoice,
       timesheetReceived,
       verified,
-      paid
+      paid,
+      explicitStatusMatched: Boolean(explicitStatus)
     }
   };
 };
@@ -1086,13 +1129,15 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
 const mapTranslationStatus = (fields: Record<string, unknown>, hasTranslator: boolean) => {
   const rawStatus = pick(fields, ['TR Status', 'Status', 'Translation Status']);
   const normalized = rawStatus.toLowerCase();
+  const explicitStatus = TRANSLATION_STATUS_MAP[canonicalAirtableStatus(rawStatus)];
   const completed = truthyField(fields, ['COMPLETED', 'TR Verified']) || normalized.includes('complete') || normalized.includes('verified');
   const invoiceNumber = pick(fields, ['Invoice No', 'INVOICE NO/DATE', 'TR Invoice Nbr']);
   const paid = truthyField(fields, ['Invoice Paid', 'TR barbara paid']) || normalized.includes('paid');
   const quoteRequested = truthyField(fields, ['Needs quote?']) || normalized.includes('quote');
 
-  let status = 'INCOMING';
-  if (normalized.includes('cancel')) status = 'CANCELLED';
+  let status = explicitStatus || 'INCOMING';
+  if (explicitStatus) status = explicitStatus;
+  else if (normalized.includes('cancel')) status = 'CANCELLED';
   else if (paid) status = 'PAID';
   else if (invoiceNumber || normalized.includes('invoice')) status = 'INVOICED';
   else if (completed) status = 'READY_FOR_INVOICE';
@@ -1106,7 +1151,8 @@ const mapTranslationStatus = (fields: Record<string, unknown>, hasTranslator: bo
       completed,
       invoiceNumber,
       paid,
-      quoteRequested
+      quoteRequested,
+      explicitStatusMatched: Boolean(explicitStatus)
     }
   };
 };
