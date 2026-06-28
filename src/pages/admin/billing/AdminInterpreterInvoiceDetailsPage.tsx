@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowUpRight, CheckCircle, ChevronLeft, Download, FileText, PoundSterling, XCircle } from 'lucide-react';
 import { BillingService } from '../../../services/billingService';
 import { InterpreterInvoice, InvoiceStatus } from '../../../types';
@@ -29,9 +29,23 @@ const uniqueCount = (values: Array<string | undefined>) => new Set(values.filter
 export const AdminInterpreterInvoiceDetailsPage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [invoice, setInvoice] = useState<InterpreterInvoice | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const { showToast } = useToast();
+  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+
+  const goBackToContext = () => {
+    if (routeState?.returnTo) {
+      navigate(routeState.returnTo);
+      return;
+    }
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/admin/billing/interpreter-invoices');
+  };
 
   useEffect(() => {
     if (id) BillingService.getInterpreterInvoiceById(id).then(setInvoice);
@@ -72,9 +86,10 @@ export const AdminInterpreterInvoiceDetailsPage = () => {
       <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <button
-            onClick={() => navigate(-1)}
+            onClick={goBackToContext}
             className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-            aria-label="Back"
+            aria-label={`Back to ${routeState?.returnLabel || 'previous page'}`}
+            title={`Back to ${routeState?.returnLabel || 'previous page'}`}
           >
             <ChevronLeft size={18} />
           </button>

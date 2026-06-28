@@ -288,17 +288,20 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
 
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
     const workspacePath = isFinanceWorkspace ? '/admin/billing' : '/admin/bookings';
-    const workspaceLabel = isFinanceWorkspace ? 'Finance Board' : 'Jobs Board';
+    const workspaceReturnPath = `${location.pathname}${location.search}`;
+    const workspaceLabel = location.search
+        ? (isFinanceWorkspace ? 'Filtered Finance Board' : 'Filtered Jobs Board')
+        : (isFinanceWorkspace ? 'Finance Board' : 'Jobs Board');
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
-            state: { returnTo: workspacePath, returnLabel: workspaceLabel },
+            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel },
         });
     };
 
     const openEditJob = (job: Booking) => {
         navigate(`/admin/bookings/edit/${job.id}`, {
-            state: { returnTo: workspacePath, returnLabel: workspaceLabel },
+            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel },
         });
     };
 
