@@ -9,6 +9,9 @@ import { useToast } from '../../context/ToastContext';
 import { ChevronLeft, Camera, Upload, Check, FileText, Info, AlertCircle, Clock, MapPin, Receipt, ArrowRight, UserCheck } from 'lucide-react';
 import { SignaturePad } from '../../components/ui/SignaturePad';
 
+const money = (amount: number) =>
+  `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export const InterpreterTimesheetForm = () => {
   const { bookingId } = useParams<{ bookingId: string }>();
   const navigate = useNavigate();
@@ -125,7 +128,7 @@ export const InterpreterTimesheetForm = () => {
     const billableMins = Math.max(0, diff - formData.breakMins);
     const durationH = billableMins / 60;
     
-    // Basic estimate (using fallback rate of £25 if not available on job)
+    // Basic estimate using fallback rates when the job does not provide them.
     const sessionEarnings = durationH * ((job as any)?.interpreterRate || 25);
     const travelEarnings = (formData.travelTime / 60) * ((job as any)?.travelRate || 12);
     const mileageEarnings = formData.mileage * ((job as any)?.mileageRate || 0.45);
@@ -306,12 +309,12 @@ export const InterpreterTimesheetForm = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Unit Price (£)</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Unit Price (GBP)</label>
                     <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">£</span>
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-black uppercase">GBP</span>
                       <input
                         type="number" step="0.001"
-                        className="w-full p-4 pl-8 border border-slate-200 rounded-2xl bg-slate-50 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold"
+                        className="w-full p-4 pl-14 border border-slate-200 rounded-2xl bg-slate-50 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-semibold"
                         value={formData.unitPrice || ''}
                         onChange={e => setFormData({ ...formData, unitPrice: parseFloat(e.target.value) || 0 })}
                       />
@@ -364,7 +367,7 @@ export const InterpreterTimesheetForm = () => {
               <div className="bg-blue-600 p-6 rounded-3xl shadow-xl shadow-blue-200 flex items-center justify-between text-white">
                 <div>
                   <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Estimated Earnings</p>
-                  <p className="text-3xl font-black">£{(job.serviceCategory === ServiceCategory.TRANSLATION ? formData.wordCount * formData.unitPrice : calculatedStats.earnings).toFixed(2)}</p>
+                  <p className="text-3xl font-black">{money(job.serviceCategory === ServiceCategory.TRANSLATION ? formData.wordCount * formData.unitPrice : calculatedStats.earnings)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Billable Units</p>
@@ -424,7 +427,7 @@ export const InterpreterTimesheetForm = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Parking (£)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Parking (GBP)</label>
                   <input
                     type="number" step="0.01"
                     className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none font-semibold"
@@ -433,7 +436,7 @@ export const InterpreterTimesheetForm = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Public Trans (£)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Public Trans (GBP)</label>
                   <input
                     type="number" step="0.01"
                     className="w-full p-4 border border-slate-200 rounded-2xl bg-slate-50 outline-none font-semibold"
@@ -521,7 +524,7 @@ export const InterpreterTimesheetForm = () => {
                    </div>
                    <div className="pl-4 space-y-1">
                       <p className="text-slate-500 text-[10px] font-black uppercase">Total Earnings</p>
-                      <p className="text-xl font-black text-emerald-400">£{finalEarnings.toFixed(2)}</p>
+                      <p className="text-xl font-black text-emerald-400">{money(finalEarnings)}</p>
                     </div>
                 </div>
              </div>

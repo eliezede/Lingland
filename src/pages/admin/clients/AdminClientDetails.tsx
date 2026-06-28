@@ -2,13 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClientService } from '../../../services/clientService';
 import { BookingService } from '../../../services/bookingService';
+import { BillingService } from '../../../services/billingService';
 import { ChatService } from '../../../services/chatService';
-import { Client, Booking, BookingStatus } from '../../../types';
+import { Client, Booking, BookingStatus, ClientInvoice, InvoiceStatus } from '../../../types';
 import { Spinner } from '../../../components/ui/Spinner';
 import { Button } from '../../../components/ui/Button';
 import { Modal } from '../../../components/ui/Modal';
 import { Badge } from '../../../components/ui/Badge';
 import { EmptyState } from '../../../components/ui/EmptyState';
+import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
 import { useToast } from '../../../context/ToastContext';
@@ -16,10 +18,11 @@ import {
     Building2, Mail, Phone, MapPin,
     Briefcase, Clock, Calendar, MessageSquare,
     ChevronLeft, Edit, Trash2, ShieldCheck,
-    ExternalLink, BarChart3, CreditCard, ChevronRight, AlertCircle
+    ExternalLink, BarChart3, CreditCard, ChevronRight, AlertCircle,
+    ArrowUpRight, FileText, CheckCircle2, WalletCards
 } from 'lucide-react';
 
-type Tab = 'JOBS' | 'FINANCE' | 'DOCS';
+type Tab = 'ACTIVITY' | 'FINANCE' | 'ACCOUNT';
 
 export const AdminClientDetails = () => {
     const { id } = useParams<{ id: string }>();
@@ -30,8 +33,9 @@ export const AdminClientDetails = () => {
 
     const [client, setClient] = useState<Client | null>(null);
     const [jobs, setJobs] = useState<Booking[]>([]);
+    const [invoices, setInvoices] = useState<ClientInvoice[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<Tab>('JOBS');
+    const [activeTab, setActiveTab] = useState<Tab>('ACTIVITY');
 
     // Edit State
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -52,12 +56,14 @@ export const AdminClientDetails = () => {
     const loadData = async (clientId: string) => {
         setLoading(true);
         try {
-            const [clientData, jobsData] = await Promise.all([
+            const [clientData, jobsData, invoiceData] = await Promise.all([
                 ClientService.getById(clientId),
-                BookingService.getByClientId(clientId)
+                BookingService.getByClientId(clientId),
+                BillingService.getClientInvoices(clientId)
             ]);
             setClient(clientData || null);
             setJobs(jobsData);
+            setInvoices(invoiceData);
             if (clientData) setFormData(clientData);
         } catch (error) {
             console.error("Failed to load client data", error);
@@ -125,14 +131,46 @@ export const AdminClientDetails = () => {
         );
     }
 
+    const money = (amount?: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const activeJobs = jobs.filter(j => ['INCOMING', 'NEEDS_ASSIGNMENT', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT', 'BOOKED'].includes(String(j.status)));
+    const billingReadyJobs = jobs.filter(j => j.status === BookingStatus.READY_FOR_INVOICE || j.paymentStatus === 'READY_FOR_INVOICE');
+    const uninvoicedCompletedJobs = jobs.filter(j => ['TIMESHEET_SUBMITTED', 'VERIFIED', 'READY_FOR_INVOICE'].includes(String(j.status)) && !j.clientInvoiceId);
+    const translationJobs = jobs.filter(j => String(j.serviceCategory || '').toUpperCase() === 'TRANSLATION' || String(j.serviceType || '').toUpperCase().includes('TRANSLATION'));
+    const outstandingInvoices = invoices.filter(inv => [InvoiceStatus.DRAFT, InvoiceStatus.SENT].includes(inv.status));
+    const outstandingTotal = outstandingInvoices.reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+    const paidTotal = invoices.filter(inv => inv.status === InvoiceStatus.PAID).reduce((sum, inv) => sum + Number(inv.totalAmount || 0), 0);
+    const accountIssues = [
+        !client.billingAddress ? 'Billing address missing' : null,
+        !client.email ? 'Finance email missing' : null,
+        !client.contactPerson ? 'Primary contact missing' : null,
+        !client.paymentTermsDays ? 'Payment terms missing' : null,
+    ].filter(Boolean) as string[];
+
     const stats = [
-        { label: 'Total Volume', value: jobs.length, icon: Briefcase, color: 'blue' },
-        { label: 'Active Service', value: jobs.filter(j => ['INCOMING', 'NEEDS_ASSIGNMENT', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT', 'BOOKED'].includes(String(j.status))).length, icon: Clock, color: 'emerald' },
-        { label: 'Net Terms', value: `${client.paymentTermsDays || 30} Days`, icon: CreditCard, color: 'indigo' }
+        { label: 'Demand', value: `${jobs.length} jobs`, detail: `${activeJobs.length} active now`, icon: Briefcase, className: 'bg-blue-50 text-blue-700 border-blue-100' },
+        { label: 'Billing queue', value: billingReadyJobs.length, detail: `${uninvoicedCompletedJobs.length} waiting handoff`, icon: WalletCards, className: 'bg-amber-50 text-amber-700 border-amber-100' },
+        { label: 'Outstanding', value: money(outstandingTotal), detail: `${outstandingInvoices.length} open invoices`, icon: CreditCard, className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+        { label: 'Account health', value: accountIssues.length ? `${accountIssues.length} issue${accountIssues.length > 1 ? 's' : ''}` : 'Ready', detail: `${client.paymentTermsDays || 30} day terms`, icon: accountIssues.length ? AlertCircle : CheckCircle2, className: accountIssues.length ? 'bg-red-50 text-red-700 border-red-100' : 'bg-slate-50 text-slate-700 border-slate-100' },
     ];
+
+    const formatJobDate = (job: Booking) => {
+        const raw = [job.date, job.startTime].filter(Boolean).join(' ');
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) return { day: job.date || 'TBD', time: job.startTime || '' };
+        return {
+            day: parsed.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }),
+            time: parsed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+        };
+    };
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
+            state: { returnTo: `/admin/clients/${id}`, returnLabel: 'Client profile' },
+        });
+    };
+
+    const openInvoiceDetails = (invoice: ClientInvoice) => {
+        navigate(`/admin/billing/client-invoices/${invoice.id}`, {
             state: { returnTo: `/admin/clients/${id}`, returnLabel: 'Client profile' },
         });
     };
@@ -179,18 +217,23 @@ export const AdminClientDetails = () => {
                 </div>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Cockpit cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 {stats.map((stat, i) => (
-                    <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group flex items-center gap-4">
-                        <div className={`w-12 h-12 bg-${stat.color}-50 text-${stat.color}-600 rounded-xl flex items-center justify-center`}>
+                    <button
+                        key={i}
+                        onClick={() => setActiveTab(i === 1 || i === 2 ? 'FINANCE' : i === 3 ? 'ACCOUNT' : 'ACTIVITY')}
+                        className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group flex items-center gap-4 text-left hover:bg-slate-50"
+                    >
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${stat.className}`}>
                             <stat.icon size={20} />
                         </div>
                         <div>
                             <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">{stat.label}</p>
-                            <p className="text-xl font-bold text-slate-900">{stat.value}</p>
+                            <p className="text-lg font-black text-slate-900">{stat.value}</p>
+                            <p className="text-[11px] font-semibold text-slate-500">{stat.detail}</p>
                         </div>
-                    </div>
+                    </button>
                 ))}
             </div>
 
@@ -231,11 +274,37 @@ export const AdminClientDetails = () => {
                             </div>
                         </div>
                     </div>
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+                            <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-widest flex items-center gap-2">
+                                <BarChart3 size={14} className="text-blue-500" />
+                                Service Mix
+                            </h3>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="font-bold text-slate-600">Interpreting</span>
+                                <span className="font-black text-slate-900">{Math.max(jobs.length - translationJobs.length, 0)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="font-bold text-slate-600">Translations</span>
+                                <span className="font-black text-slate-900">{translationJobs.length}</span>
+                            </div>
+                            <Button
+                                variant="outline"
+                                icon={ArrowUpRight}
+                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`)}
+                                className="w-full mt-2"
+                            >
+                                Open client jobs
+                            </Button>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="lg:col-span-2 space-y-4">
                     <div className="flex gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 w-fit">
-                        {(['JOBS', 'FINANCE', 'DOCS'] as Tab[]).map((tab) => (
+                        {(['ACTIVITY', 'FINANCE', 'ACCOUNT'] as Tab[]).map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => setActiveTab(tab)}
@@ -244,13 +313,13 @@ export const AdminClientDetails = () => {
                                     : 'text-slate-500 hover:text-slate-700'
                                     }`}
                             >
-                                {tab === 'JOBS' ? 'Historical Activity' : tab}
+                                {tab === 'ACTIVITY' ? 'Recent activity' : tab === 'FINANCE' ? 'Billing handoff' : 'Account data'}
                             </button>
                         ))}
                     </div>
 
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-1">
-                        {activeTab === 'JOBS' && (
+                        {activeTab === 'ACTIVITY' && (
                             <div className="p-3 space-y-2">
                                 {jobs.length === 0 ? (
                                     <EmptyState
@@ -260,7 +329,9 @@ export const AdminClientDetails = () => {
                                     />
                                 ) : (
                                     <div className="space-y-2">
-                                        {jobs.map(job => (
+                                        {jobs.slice(0, 10).map(job => {
+                                            const schedule = formatJobDate(job);
+                                            return (
                                             <div
                                                 key={job.id}
                                                 onClick={() => openJobDetails(job)}
@@ -268,15 +339,15 @@ export const AdminClientDetails = () => {
                                             >
                                                 <div className="flex items-center gap-4">
                                                     <div className="w-12 h-12 bg-white rounded-lg border border-slate-200 flex flex-col items-center justify-center group-hover:bg-blue-600 group-hover:border-blue-600 group-hover:text-white transition-all">
-                                                        <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">{job.date?.split(',')[0]}</span>
-                                                        <span className="text-base font-bold leading-none">{job.date?.split(',')[1]?.trim()?.split(' ')[0]}</span>
+                                                        <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">{schedule.day}</span>
+                                                        <span className="text-[10px] font-bold leading-none">{schedule.time}</span>
                                                     </div>
                                                     <div>
                                                         <p className="text-xs font-bold text-slate-900 uppercase tracking-tight group-hover:text-blue-600 transition-colors">
-                                                            {job.bookingRef || `#${job.id.slice(-6)}`}
+                                                            {job.displayRef || job.jobNumber || job.bookingRef || `#${job.id.slice(-6)}`}
                                                         </p>
                                                         <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5 flex items-center gap-1.5">
-                                                            {job.serviceType} <span className="w-1 h-1 bg-slate-300 rounded-full" /> {job.languageTo}
+                                                            {job.serviceCategory || job.serviceType} <span className="w-1 h-1 bg-slate-300 rounded-full" /> {job.languageFrom} to {job.languageTo}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -287,17 +358,122 @@ export const AdminClientDetails = () => {
                                                     <ChevronRight size={16} className="text-slate-400 group-hover:text-blue-500 transition-all group-hover:translate-x-0.5" />
                                                 </div>
                                             </div>
-                                        ))}
+                                        )})}
+                                        {jobs.length > 10 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`)}
+                                                className="w-full rounded-xl border border-dashed border-slate-200 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                                            >
+                                                View all {jobs.length} jobs in Jobs Board
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
                         )}
 
                         {activeTab === 'FINANCE' && (
-                            <div className="p-8 text-center">
-                                <CreditCard className="mx-auto text-slate-200 mb-4" size={48} />
-                                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-tight">Ledger Integration</h4>
-                                <p className="text-slate-500 font-medium max-w-xs mx-auto mt-1 text-xs">Financial invoices and settlement history will be visualized here.</p>
+                            <div className="p-5 space-y-5">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ready to invoice</p>
+                                        <p className="mt-2 text-2xl font-black text-slate-900">{billingReadyJobs.length}</p>
+                                        <p className="text-xs font-semibold text-slate-500">Jobs waiting finance</p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Outstanding</p>
+                                        <p className="mt-2 text-2xl font-black text-slate-900">{money(outstandingTotal)}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{outstandingInvoices.length} draft/sent invoices</p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Paid history</p>
+                                        <p className="mt-2 text-2xl font-black text-slate-900">{money(paidTotal)}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{invoices.filter(inv => inv.status === InvoiceStatus.PAID).length} paid invoices</p>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/60">
+                                        <div>
+                                            <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Recent client invoices</h4>
+                                            <p className="text-xs font-semibold text-slate-500">Open invoice details for the complete ledger.</p>
+                                        </div>
+                                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/client-invoices')}>
+                                            Finance
+                                        </Button>
+                                    </div>
+                                    {invoices.length === 0 ? (
+                                        <div className="p-8 text-center">
+                                            <FileText className="mx-auto text-slate-200 mb-3" size={42} />
+                                            <p className="text-sm font-bold text-slate-500">No client invoices yet.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="divide-y divide-slate-100">
+                                            {invoices.slice(0, 6).map(invoice => (
+                                                <button
+                                                    key={invoice.id}
+                                                    onClick={() => openInvoiceDetails(invoice)}
+                                                    className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-slate-50"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-black text-slate-900">{invoice.invoiceNumber || invoice.reference || invoice.id.substring(0, 8)}</p>
+                                                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                                            Due {new Date(invoice.dueDate).toLocaleDateString('en-GB')}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex shrink-0 items-center gap-3">
+                                                        <span className="text-sm font-black text-slate-900">{money(invoice.totalAmount)}</span>
+                                                        <InvoiceStatusBadge status={invoice.status} />
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'ACCOUNT' && (
+                            <div className="p-5 space-y-4">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-3">Operational readiness</h4>
+                                    {accountIssues.length === 0 ? (
+                                        <div className="flex items-center gap-3 text-emerald-700">
+                                            <CheckCircle2 size={18} />
+                                            <span className="text-sm font-black">Client account is ready for booking and billing.</span>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {accountIssues.map(issue => (
+                                                <div key={issue} className="flex items-center gap-2 text-sm font-bold text-red-700">
+                                                    <AlertCircle size={15} />
+                                                    {issue}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div className="rounded-xl border border-slate-200 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Primary contact</p>
+                                        <p className="mt-2 text-sm font-black text-slate-900">{client.contactPerson || 'Not recorded'}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.email || 'No email'}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.phone || 'No phone'}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Billing setup</p>
+                                        <p className="mt-2 text-sm font-black text-slate-900">{client.defaultCostCodeType || 'PO'} required</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.paymentTermsDays || 30} day payment terms</p>
+                                    </div>
+                                </div>
+                                <Button
+                                    variant="primary"
+                                    icon={Edit}
+                                    onClick={() => { setFormData(client); setIsEditModalOpen(true); }}
+                                >
+                                    Edit account data
+                                </Button>
                             </div>
                         )}
                     </div>

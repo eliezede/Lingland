@@ -4,7 +4,7 @@ import {
   InterpreterService, BookingService, BillingService, ChatService, NotificationService, EmailService, UserService
 } from '../../../services/api';
 import {
-  Interpreter, Booking, InterpreterInvoice, BookingStatus, NotificationType, UserRole
+  Interpreter, Booking, InterpreterInvoice, BookingStatus, NotificationType, Timesheet, UserRole
 } from '../../../types';
 import { Spinner } from '../../../components/ui/Spinner';
 import { Card } from '../../../components/ui/Card';
@@ -39,6 +39,7 @@ export const AdminInterpreterDetails = () => {
   const [interpreter, setInterpreter] = useState<Interpreter | null>(null);
   const [jobs, setJobs] = useState<Booking[]>([]);
   const [invoices, setInvoices] = useState<InterpreterInvoice[]>([]);
+  const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('JOBS');
 
@@ -63,11 +64,12 @@ export const AdminInterpreterDetails = () => {
   const loadData = async (interpreterId: string) => {
     setLoading(true);
     try {
-      const [profile, schedule, financialHistory, offers] = await Promise.all([
+      const [profile, schedule, financialHistory, offers, interpreterTimesheets] = await Promise.all([
         InterpreterService.getById(interpreterId),
         BookingService.getInterpreterSchedule(interpreterId),
         BillingService.getInterpreterInvoices(),
-        BookingService.getInterpreterOffers(interpreterId)
+        BookingService.getInterpreterOffers(interpreterId),
+        BillingService.getInterpreterTimesheets(interpreterId)
       ]);
 
       setInterpreter(profile || null);
@@ -89,6 +91,7 @@ export const AdminInterpreterDetails = () => {
 
       setJobs(mergedJobs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
       setInvoices(financialHistory.filter(inv => inv.interpreterId === interpreterId));
+      setTimesheets(interpreterTimesheets);
     } finally {
       setLoading(false);
     }
@@ -300,9 +303,23 @@ export const AdminInterpreterDetails = () => {
   if (loading) return <div className="p-12 flex justify-center"><Spinner size="lg" /></div>;
   if (!interpreter) return <div className="p-12 text-center text-red-500 font-bold">Interpreter not found.</div>;
 
-  const earningsTotal = invoices.reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
   const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && ['BOOKED', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT'].includes(String(j.status))).length;
   const completedJobsCount = jobs.filter(j => ['TIMESHEET_SUBMITTED', 'VERIFIED', 'INVOICING', 'INVOICED', 'PAID'].includes(String(j.status))).length;
+  const money = (amount?: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const payablePending = timesheets
+    .filter(ts => ts.adminApproved && !ts.interpreterInvoiceId)
+    .reduce((sum, ts) => sum + Number(ts.interpreterAmountCalculated || ts.totalToPay || 0), 0);
+  const claimsInReview = timesheets.filter(ts => !ts.adminApproved && ts.status === 'SUBMITTED').length;
+  const approvedClaims = timesheets.filter(ts => ts.adminApproved || ['INVOICING', 'INVOICED'].includes(String(ts.status))).length;
+  const paidInvoices = invoices.filter(inv => inv.status === 'PAID').length;
+  const openInvoices = invoices.filter(inv => inv.status !== 'PAID' && inv.status !== 'CANCELLED').length;
+  const paidTotal = invoices
+    .filter(inv => inv.status === 'PAID')
+    .reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
+  const activationState = interpreter.status === 'IMPORTED'
+    ? (interpreter.activationEmailSentAt ? 'Activation sent' : 'Passive imported')
+    : 'Platform active';
+  const sourceLabel = (interpreter as any).sourceSystem === 'AIRTABLE' ? 'Airtable import' : ((interpreter as any).sourceSystem || 'Platform');
   return (
     <>
       <div className="space-y-4 pb-20">
@@ -346,23 +363,39 @@ export const AdminInterpreterDetails = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="flex flex-col justify-center items-center py-4" padding="none">
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Total Jobs</p>
-          <p className="text-2xl font-bold text-slate-900">{jobs.length}</p>
-        </Card>
-        <Card className="flex flex-col justify-center items-center py-4" padding="none">
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Total Earnings</p>
-          <p className="text-2xl font-bold text-slate-900">£{earningsTotal.toFixed(2)}</p>
-        </Card>
-        <Card className="flex flex-col justify-center items-center py-4 border-blue-100 bg-blue-50/50" padding="none">
-          <p className="text-blue-500 text-[10px] font-bold uppercase tracking-widest mb-0.5">Open Schedule</p>
-          <p className="text-2xl font-bold text-blue-600">{upcomingJobsCount}</p>
-        </Card>
-        <Card className="flex flex-col justify-center items-center py-4" padding="none">
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-0.5">Rating</p>
-          <p className="text-2xl font-bold text-slate-900">4.9 ★</p>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <button
+          onClick={handleEdit}
+          className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:bg-slate-50"
+        >
+          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Account mode</p>
+          <p className="text-xl font-black text-slate-900">{activationState}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">{sourceLabel}</p>
+        </button>
+        <button
+          onClick={() => setActiveTab('JOBS')}
+          className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:bg-slate-50"
+        >
+          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Work history</p>
+          <p className="text-xl font-black text-slate-900">{jobs.length} jobs</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">{upcomingJobsCount} open · {completedJobsCount} delivered</p>
+        </button>
+        <button
+          onClick={() => setActiveTab('FINANCE')}
+          className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-left shadow-sm hover:bg-blue-50"
+        >
+          <p className="text-blue-500 text-[10px] font-bold uppercase tracking-widest mb-1">Claims</p>
+          <p className="text-xl font-black text-blue-700">{claimsInReview} review</p>
+          <p className="mt-1 text-xs font-semibold text-blue-600">{approvedClaims} authorized</p>
+        </button>
+        <button
+          onClick={() => setActiveTab('FINANCE')}
+          className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-left shadow-sm hover:bg-emerald-50"
+        >
+          <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-widest mb-1">Payables</p>
+          <p className="text-xl font-black text-emerald-800">{money(payablePending)}</p>
+          <p className="mt-1 text-xs font-semibold text-emerald-700">{openInvoices} open invoices · {paidInvoices} paid</p>
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -467,6 +500,12 @@ export const AdminInterpreterDetails = () => {
                 className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'JOBS' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 Jobs ({jobs.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('FINANCE')}
+                className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'FINANCE' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+              >
+                Claims & Pay
               </button>
               <button
                 onClick={() => setActiveTab('COMPLIANCE')}
@@ -734,7 +773,7 @@ export const AdminInterpreterDetails = () => {
                         ].map(r => (
                           <div key={r.label} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
                             <span className="text-xs font-bold text-slate-600">{r.label}</span>
-                            <span className="text-sm font-black text-slate-900 italic">£{Number(r.value || 0).toFixed(2)}</span>
+                            <span className="text-sm font-black text-slate-900 italic">{money(Number(r.value || 0))}</span>
                           </div>
                         ))}
                       </div>
@@ -750,7 +789,7 @@ export const AdminInterpreterDetails = () => {
                         ].map(r => (
                           <div key={r.label} className="flex justify-between items-center p-4 bg-blue-50/30 rounded-xl border border-blue-100 shadow-sm">
                             <span className="text-xs font-bold text-slate-700">{r.label}</span>
-                            <span className="text-sm font-black text-blue-600 italic">£{Number(r.value || 0).toFixed(2)}</span>
+                            <span className="text-sm font-black text-blue-600 italic">{money(Number(r.value || 0))}</span>
                           </div>
                         ))}
                       </div>
@@ -767,66 +806,77 @@ export const AdminInterpreterDetails = () => {
 
               {activeTab === 'FINANCE' && (
                 <div className="p-8 animate-in fade-in duration-300">
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-8 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-100">
-                        <Banknote size={24} />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Bank Details (UK BACS)</h4>
-                        {interpreter.bankDetails ? (
-                           <p className="text-xs text-slate-500 font-medium tracking-widest uppercase">
-                             {interpreter.bankDetails.sortCode} • <span className="font-bold text-slate-800 tracking-[0.2em]">{interpreter.bankDetails.accountNumber}</span>
-                           </p>
-                        ) : (
-                           <p className="text-xs text-red-500 font-bold uppercase tracking-widest">Bank Details Missing</p>
-                        )}
-                      </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved not invoiced</p>
+                      <p className="mt-2 text-2xl font-black text-slate-900">{money(payablePending)}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">Claims ready for interpreter invoice</p>
                     </div>
-                    {interpreter.bankDetails && (
-                      <div className="text-right">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Account Name</p>
-                        <p className="text-xs font-bold text-slate-700">{interpreter.bankDetails.accountName}</p>
-                      </div>
-                    )}
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Claims in review</p>
+                      <p className="mt-2 text-2xl font-black text-slate-900">{claimsInReview}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">{timesheets.length} total claims</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Paid history</p>
+                      <p className="mt-2 text-2xl font-black text-slate-900">{money(paidTotal)}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">{paidInvoices} paid invoices</p>
+                    </div>
                   </div>
 
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200">
-                    <thead className="bg-slate-50/80">
-                      <tr>
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Ref</th>
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount</th>
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
-                        <th className="px-6 py-4 text-right"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {invoices.length === 0 ? (
-                        <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-medium">No financial history.</td></tr>
-                      ) : (
-                        invoices.map(inv => (
-                          <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="text-sm font-black text-slate-900 flex items-center">
-                                <FileText size={14} className="mr-2 text-slate-300" />
-                                {inv.externalInvoiceReference || inv.id.substring(0, 8)}
-                              </div>
-                              <div className="text-[10px] text-slate-500 font-bold uppercase">{new Date(inv.issueDate).toLocaleDateString()}</div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-black text-slate-900">£{inv.totalAmount.toFixed(2)}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Recent payable documents</h4>
+                          <p className="text-xs font-semibold text-slate-500">Open invoice details for full line-item review.</p>
+                        </div>
+                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/interpreter-invoices')}>
+                          Invoices
+                        </Button>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {invoices.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm font-semibold text-slate-400">No interpreter invoices yet.</div>
+                        ) : invoices.slice(0, 6).map(inv => (
+                          <button
+                            key={inv.id}
+                            onClick={() => navigate(`/admin/billing/interpreter-invoices/${inv.id}`)}
+                            className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-black text-slate-900">{inv.externalInvoiceReference || inv.id.substring(0, 8)}</p>
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{new Date(inv.issueDate).toLocaleDateString()}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-3">
+                              <span className="text-sm font-black text-slate-900">{money(inv.totalAmount)}</span>
                               <InvoiceStatusBadge status={inv.status} />
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <button onClick={() => navigate(`/admin/billing/interpreter-invoices/${inv.id}`)} className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-800">Manage</button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Bank readiness</h4>
+                        {interpreter.bankDetails ? (
+                          <div className="space-y-2">
+                            <p className="text-sm font-black text-slate-900">{interpreter.bankDetails.accountName || 'Account name missing'}</p>
+                            <p className="text-xs font-bold text-slate-500 tracking-widest">{interpreter.bankDetails.sortCode || 'No sort code'} · {interpreter.bankDetails.accountNumber || 'No account'}</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-bold text-red-600">Bank details missing</p>
+                        )}
+                      </div>
+                      <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables')} className="w-full">
+                        Open payables board
+                      </Button>
+                      <Button variant="outline" icon={Edit} onClick={() => { setEditModalTab('FINANCE'); setIsEditModalOpen(true); }} className="w-full">
+                        Edit finance details
+                      </Button>
+                    </div>
+                  </div>
               </div>
             )}
             </div>
@@ -1324,7 +1374,7 @@ export const AdminInterpreterDetails = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="space-y-3">
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Core Service Rates (£/hr)</p>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Core Service Rates (GBP/hr)</p>
                   {([
                     { label: 'Standard F2F', key: 'stF2F' },
                     { label: 'Standard Video', key: 'stVideo' },
@@ -1336,7 +1386,7 @@ export const AdminInterpreterDetails = () => {
                     <div key={r.key} className="flex items-center gap-3">
                       <label className="text-sm font-semibold text-slate-600 w-40 shrink-0">{r.label}</label>
                       <div className="flex items-center gap-1 flex-1">
-                        <span className="text-sm text-slate-400 font-bold">£</span>
+                        <span className="text-sm text-slate-400 font-bold">GBP</span>
                         <input type="number" step="0.01" min="0"
                           className="flex-1 px-3 py-2 text-sm font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                           value={(formData.rates as any)?.[r.key] ?? ''}
@@ -1349,7 +1399,7 @@ export const AdminInterpreterDetails = () => {
                 <div className="space-y-3">
                   <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Travel & Expenses</p>
                   {([
-                    { label: 'Travel Time (£/hr)', key: 'travelTimeST' },
+                    { label: 'Travel Time (GBP/hr)', key: 'travelTimeST' },
                     { label: 'Mileage (p/mile)', key: 'mileageST' },
                     { label: 'Special Rates Int.', key: 'spRatesInt' },
                     { label: 'F2F Minimum', key: 'f2fRate' },
@@ -1357,7 +1407,7 @@ export const AdminInterpreterDetails = () => {
                     <div key={r.key} className="flex items-center gap-3">
                       <label className="text-sm font-semibold text-slate-600 w-40 shrink-0">{r.label}</label>
                       <div className="flex items-center gap-1 flex-1">
-                        <span className="text-sm text-slate-400 font-bold">£</span>
+                        <span className="text-sm text-slate-400 font-bold">GBP</span>
                         <input type="number" step="0.01" min="0"
                           className="flex-1 px-3 py-2 text-sm font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                           value={(formData.rates as any)?.[r.key] ?? ''}

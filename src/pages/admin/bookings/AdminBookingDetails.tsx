@@ -31,7 +31,7 @@ import {
 import { BookingService } from '../../../services/bookingService';
 import { BillingService } from '../../../services/billingService';
 import { ChatService } from '../../../services/chatService';
-import { Booking, BookingStatus } from '../../../types';
+import { Booking, BookingStatus, Timesheet } from '../../../types';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { PdfService } from '../../../services/pdfService';
 import { Button } from '../../../components/ui/Button';
@@ -59,6 +59,44 @@ const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string =>
 };
 
 const formatMoney = (amount?: number) => `GBP ${(amount || 0).toFixed(2)}`;
+
+const formatDateTime = (value?: string): string => {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+const formatSource = (source?: string, recordedByStaff?: boolean) => {
+  if (recordedByStaff) return 'Staff manual';
+  if (source === 'AIRTABLE_MIRROR') return 'Airtable mirror';
+  if (source === 'SYSTEM_IMPORT') return 'System import';
+  if (source === 'INTERPRETER_APP') return 'Interpreter app';
+  return 'Unknown source';
+};
+
+const formatBookingSource = (source?: string) => {
+  if (source === 'AIRTABLE') return 'Airtable mirror';
+  if (source === 'CLIENT_PORTAL') return 'Client portal';
+  if (source === 'STAFF_MANUAL') return 'Staff manual';
+  if (source === 'INTERPRETER_APP') return 'Interpreter app';
+  if (source === 'PLATFORM') return 'Platform';
+  return source || 'Unknown';
+};
+
+const getSyncTone = (status?: string) => {
+  if (status === 'SYNCED') return 'success';
+  if (status === 'CONFLICT') return 'danger';
+  if (status === 'ARCHIVED') return 'muted';
+  return 'warning';
+};
+
+const getSyncBadgeClass = (status?: string) => ({
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200',
+  danger: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200',
+  warning: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200',
+  muted: 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
+}[getSyncTone(status)]);
 
 const getNextAction = (booking: Booking) => {
   if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) return 'Assign interpreter';
@@ -135,6 +173,7 @@ export const AdminBookingDetails = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  const [timesheet, setTimesheet] = useState<Timesheet | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
   const returnLabel = routeState?.returnLabel || 'Previous page';
@@ -162,10 +201,18 @@ export const AdminBookingDetails = () => {
     }
   };
 
+  const loadOperationalArtifacts = async () => {
+    if (!id) return;
+    await Promise.all([
+      BillingService.getTimesheetByBookingId(id).then(setTimesheet).catch(() => setTimesheet(null)),
+      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {}),
+    ]);
+  };
+
   useEffect(() => {
     if (id) {
       loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      loadOperationalArtifacts();
     }
   }, [id]);
 
@@ -233,7 +280,7 @@ export const AdminBookingDetails = () => {
       await BookingService.recordInterpreterResponseByStaff(id, accepted);
       showToast(accepted ? 'Interpreter acceptance recorded' : 'Interpreter decline recorded', 'success');
       await loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to record interpreter response', 'error');
     } finally {
@@ -256,7 +303,7 @@ export const AdminBookingDetails = () => {
       await BillingService.recordManualTimesheetReceived(id);
       showToast('Timesheet recorded for review', 'success');
       await loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to record timesheet', 'error');
     } finally {
@@ -279,7 +326,7 @@ export const AdminBookingDetails = () => {
       await BookingService.recordSessionCompletedByStaff(id);
       showToast('Session marked as completed', 'success');
       await loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to mark session completed', 'error');
     } finally {
@@ -302,7 +349,7 @@ export const AdminBookingDetails = () => {
       await BillingService.recordManualInvoiceIssued(id);
       showToast('Invoice issued recorded', 'success');
       await loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to record invoice', 'error');
     } finally {
@@ -325,7 +372,7 @@ export const AdminBookingDetails = () => {
       await BillingService.recordManualPaymentReceived(id);
       showToast('Payment received recorded', 'success');
       await loadBooking();
-      BookingService.getJobEvents(id).then(setAuditEvents).catch(() => {});
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to record payment', 'error');
     } finally {
@@ -347,7 +394,8 @@ export const AdminBookingDetails = () => {
     try {
       await BillingService.createNonExecutedJobClaim(id, 'Marked as not executed from booking details');
       showToast('Exception claim created for review', 'success');
-      loadBooking();
+      await loadBooking();
+      await loadOperationalArtifacts();
     } catch (error: any) {
       showToast(error?.message || 'Failed to create exception claim', 'error');
     } finally {
@@ -429,6 +477,63 @@ export const AdminBookingDetails = () => {
   const languageLabel = `${booking.languageFrom || 'English'} to ${booking.languageTo || 'N/A'}`;
   const assignmentLabel = booking.interpreterName || (booking.interpreterId ? 'Interpreter assigned' : 'No interpreter');
   const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
+  const claimSourceLabel = timesheet ? formatSource(timesheet.source, timesheet.recordedByStaff) : 'No claim';
+  const clientAmount = timesheet?.clientAmountCalculated || booking.totalAmount || 0;
+  const interpreterAmount = timesheet?.interpreterAmountCalculated || timesheet?.totalToPay || 0;
+  const workflowSteps = [
+    {
+      label: 'Delivered',
+      done: [
+        BookingStatus.SESSION_COMPLETED,
+        BookingStatus.TIMESHEET_SUBMITTED,
+        BookingStatus.READY_FOR_INVOICE,
+        BookingStatus.INVOICING,
+        BookingStatus.INVOICED,
+        BookingStatus.PAID,
+      ].includes(booking.status),
+    },
+    { label: 'Claim', done: Boolean(timesheet || booking.timesheetId) },
+    { label: 'Authorized', done: Boolean(timesheet?.adminApproved || booking.timesheetVerifiedAt || booking.status === BookingStatus.READY_FOR_INVOICE || booking.status === BookingStatus.INVOICED || booking.status === BookingStatus.PAID) },
+    { label: 'Invoiced', done: Boolean(booking.clientInvoiceId || booking.clientInvoiceNumber || booking.status === BookingStatus.INVOICED || booking.status === BookingStatus.PAID) },
+    { label: 'Paid', done: booking.status === BookingStatus.PAID || booking.paymentStatus === 'PAID' },
+  ];
+  const operationalChecks = [
+    {
+      label: 'Interpreter assigned',
+      ok: Boolean(booking.interpreterId),
+      detail: booking.interpreterName || 'No interpreter assigned',
+      action: () => setIsAllocationDrawerOpen(true),
+    },
+    {
+      label: 'Schedule confirmed',
+      ok: Boolean(booking.date && booking.startTime),
+      detail: sessionLabel,
+    },
+    {
+      label: 'Billing reference',
+      ok: Boolean(booking.costCode),
+      detail: booking.costCode || 'Missing PO / cost code',
+      action: () => navigate(`/admin/bookings/edit/${id}`, { state: { returnTo: `/admin/bookings/${id}`, returnLabel: 'Booking record' } }),
+    },
+    {
+      label: 'Claim recorded',
+      ok: Boolean(timesheet || booking.timesheetId || ![
+        BookingStatus.SESSION_COMPLETED,
+        BookingStatus.TIMESHEET_SUBMITTED,
+        BookingStatus.READY_FOR_INVOICE,
+        BookingStatus.INVOICED,
+        BookingStatus.PAID,
+      ].includes(booking.status)),
+      detail: timesheet ? claimSourceLabel : 'No claim yet',
+      action: () => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`),
+    },
+    {
+      label: 'Billing issue',
+      ok: !booking.billingIssueFlag,
+      detail: booking.billingIssueReason || (booking.billingIssueFlag ? 'Issue raised' : 'No issue'),
+    },
+  ];
+  const blockedChecks = operationalChecks.filter(check => !check.ok);
 
   const primaryAction = () => {
     if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) {
@@ -628,9 +733,172 @@ export const AdminBookingDetails = () => {
                 </div>
               )}
             </Section>
+
+            <Section
+              title="Delivery, claim and billing handoff"
+              icon={Receipt}
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={ArrowUpRight}
+                  onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`)}
+                >
+                  Claims
+                </Button>
+              }
+            >
+              <div className="space-y-4">
+                <div className="grid gap-2 sm:grid-cols-5">
+                  {workflowSteps.map((step, index) => (
+                    <div
+                      key={step.label}
+                      className={`rounded-md border p-3 ${
+                        step.done
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100'
+                          : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${
+                          step.done ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-800'
+                        }`}>
+                          {step.done ? <CheckCircle2 size={13} /> : index + 1}
+                        </span>
+                        <span className="text-xs font-black uppercase tracking-wide">{step.label}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-4">
+                  <InfoItem
+                    icon={FileText}
+                    label="Claim source"
+                    value={
+                      <>
+                        {claimSourceLabel}
+                        {timesheet?.submittedAt && <><br /><span className="text-slate-500">{formatDateTime(timesheet.submittedAt)}</span></>}
+                      </>
+                    }
+                  />
+                  <InfoItem
+                    icon={ShieldCheck}
+                    label="Claim status"
+                    value={timesheet ? (timesheet.adminApproved ? 'Authorized for finance' : 'Awaiting review') : (booking.status === BookingStatus.SESSION_COMPLETED ? 'Missing claim' : 'Not ready')}
+                  />
+                  <InfoItem icon={Receipt} label="Client billing" value={formatMoney(clientAmount)} />
+                  <InfoItem icon={CreditCard} label="Interpreter payable" value={timesheet ? formatMoney(interpreterAmount) : 'Pending claim'} />
+                </div>
+
+                {timesheet?.nonExecutionReason && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-amber-700 dark:text-amber-200">Exception claim</p>
+                    <p className="mt-1 text-sm font-semibold text-amber-950 dark:text-amber-100">{timesheet.nonExecutionReason}</p>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  {booking.status === BookingStatus.SESSION_COMPLETED && !timesheet && (
+                    <Button size="sm" icon={FileText} onClick={handleRecordManualTimesheet} isLoading={isActionLoading}>
+                      Record manual claim
+                    </Button>
+                  )}
+                  {timesheet && !timesheet.adminApproved && (
+                    <Button size="sm" icon={ShieldCheck} onClick={handleVerifyTimesheet} isLoading={isActionLoading}>
+                      Authorize claim
+                    </Button>
+                  )}
+                  {booking.status === BookingStatus.READY_FOR_INVOICE && (
+                    <Button size="sm" icon={Receipt} onClick={handleRecordInvoiceIssued} isLoading={isActionLoading}>
+                      Mark invoiced
+                    </Button>
+                  )}
+                  {booking.status === BookingStatus.INVOICED && (
+                    <Button size="sm" icon={CreditCard} onClick={handleRecordPaymentReceived} isLoading={isActionLoading}>
+                      Mark paid
+                    </Button>
+                  )}
+                  {timesheet?.supportingDocumentUrl && (
+                    <a
+                      href={timesheet.supportingDocumentUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-bold text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                    >
+                      Evidence <ArrowUpRight size={13} />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </Section>
           </div>
 
           <aside className="space-y-4 xl:sticky xl:top-16 xl:self-start">
+            <Section
+              title="Operational checks"
+              icon={ShieldCheck}
+              action={
+                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                  blockedChecks.length === 0
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200'
+                    : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200'
+                }`}>
+                  {blockedChecks.length === 0 ? 'Ready' : `${blockedChecks.length} blocked`}
+                </span>
+              }
+            >
+              <div className="space-y-2">
+                {operationalChecks.map(check => (
+                  <div key={check.label} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                          check.ok ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
+                        }`}>
+                          {check.ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                        </span>
+                        <p className="truncate text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">{check.label}</p>
+                      </div>
+                      <p className="mt-1 truncate pl-7 text-xs font-semibold text-slate-500 dark:text-slate-400">{check.detail}</p>
+                    </div>
+                    {!check.ok && check.action && (
+                      <button
+                        onClick={check.action}
+                        className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
+                      >
+                        Fix
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+
+            <Section title="Mirror and source" icon={History}>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Source</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{formatBookingSource(booking.sourceSystem)}</p>
+                  </div>
+                  <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${getSyncBadgeClass(booking.syncStatus)}`}>
+                    {booking.syncStatus || 'LOCAL'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <InfoItem label="Source record" value={booking.sourceRecordId || booking.legacyAirtableRef || 'N/A'} />
+                  <InfoItem label="Legacy ref" value={booking.legacyPlatformRef || booking.legacyAirtableRef || 'N/A'} />
+                </div>
+                <InfoItem label="Last synced" value={booking.lastSyncedAt ? formatDateTime(booking.lastSyncedAt) : 'Not synced'} />
+                {booking.sourceSystem === 'AIRTABLE' && (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+                    This job is mirrored from Airtable. Manual actions here update Lingland workflow state, but Airtable remains the source while Mirror Mode is active.
+                  </div>
+                )}
+              </div>
+            </Section>
+
             <Section title="Interpreter assignment" icon={User}>
               <div className="space-y-3">
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
@@ -681,7 +949,45 @@ export const AdminBookingDetails = () => {
                   <InfoItem label="VAT estimate" value={formatMoney(invoiceEstimate * 0.2)} />
                   <InfoItem label="Cost code" value={booking.costCode || 'N/A'} />
                 </div>
-                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing')} className="w-full">Open billing hub</Button>
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Claim / timesheet</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                        {timesheet ? (timesheet.adminApproved ? 'Authorized' : 'Needs review') : 'Not recorded'}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={ArrowUpRight}
+                      onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`)}
+                    >
+                      Open
+                    </Button>
+                  </div>
+                </div>
+                {booking.clientInvoiceId && (
+                  <Button
+                    variant="secondary"
+                    icon={ArrowUpRight}
+                    onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`)}
+                    className="w-full"
+                  >
+                    Open client invoice
+                  </Button>
+                )}
+                {booking.interpreterInvoiceId && (
+                  <Button
+                    variant="secondary"
+                    icon={ArrowUpRight}
+                    onClick={() => navigate(`/admin/billing/interpreter-invoices/${booking.interpreterInvoiceId}`)}
+                    className="w-full"
+                  >
+                    Open interpreter invoice
+                  </Button>
+                )}
+                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing')} className="w-full">Open finance board</Button>
               </div>
             </Section>
 

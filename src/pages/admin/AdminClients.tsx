@@ -2,22 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClientService } from '../../services/clientService';
 import { BookingService } from '../../services/bookingService';
+import { BillingService } from '../../services/billingService';
 import { ChatService } from '../../services/chatService';
-import { Client, Booking, BookingStatus } from '../../types';
+import { Client, Booking, BookingStatus, ClientInvoice, InvoiceStatus, ServiceCategory } from '../../types';
 import { Spinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';
-import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
-import { useClients } from '../../context/ClientContext';
 import {
-  Search, Plus, Mail, Trash2, MapPin, Briefcase, Clock,
-  ChevronRight, ExternalLink, User, MessageSquare, AlertCircle, LayoutGrid, List, Calendar, Phone,
-  Building, Check, AlertTriangle
+  Search, Plus, Trash2, Briefcase,
+  ExternalLink, MessageSquare, AlertCircle,
+  Building, Check, CreditCard, WalletCards
 } from 'lucide-react';
-import { ViewToggle } from '../../components/ui/ViewToggle';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Table } from '../../components/ui/Table';
 import { BulkActionBar } from '../../components/ui/BulkActionBar';
@@ -27,6 +25,13 @@ import { useConfirm } from '../../context/ConfirmContext';
 interface ClientWithStats extends Client {
   totalBookings: number;
   activeBookings: number;
+  readyForInvoice: number;
+  outstandingInvoices: number;
+  outstandingTotal: number;
+  paidTotal: number;
+  translationBookings: number;
+  lastBookingDate?: string;
+  accountIssues: string[];
 }
 
 export const AdminClients = () => {
@@ -35,18 +40,12 @@ export const AdminClients = () => {
   const { openThread } = useChat();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
-  const { clientsMap } = useClients();
   const [clients, setClients] = useState<ClientWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'GUEST' | 'SUSPENDED'>('ALL');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedClient, setSelectedClient] = useState<ClientWithStats | null>(null);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [clientJobs, setClientJobs] = useState<any[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(false);
 
   // Fetch clients explicitly instead of relying on global lazy cache 
   useEffect(() => {
@@ -56,13 +55,24 @@ export const AdminClients = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const clientsData = await ClientService.getAll();
-      // We skip downloading all bookings in the world to calculate stats locally.
-      // This immediately fixes the N+1 and memory explosion.
+      const [clientsData, bookingsData, invoicesData] = await Promise.all([
+        ClientService.getAll(),
+        BookingService.getAll(),
+        BillingService.getClientInvoices('ALL')
+      ]);
+      const bookingsByClient = new Map<string, Booking[]>();
+      bookingsData.forEach(booking => {
+        if (!booking.clientId) return;
+        bookingsByClient.set(booking.clientId, [...(bookingsByClient.get(booking.clientId) || []), booking]);
+      });
+      const invoicesByClient = new Map<string, ClientInvoice[]>();
+      invoicesData.forEach(invoice => {
+        if (!invoice.clientId) return;
+        invoicesByClient.set(invoice.clientId, [...(invoicesByClient.get(invoice.clientId) || []), invoice]);
+      });
       const clientsWithStats = clientsData.map(client => ({
         ...client,
-        totalBookings: 0, // TODO: Implement Server-Side aggregation via Cloud Functions
-        activeBookings: 0 // TODO: Implement Server-Side aggregation via Cloud Functions
+        ...buildClientStats(client, bookingsByClient.get(client.id) || [], invoicesByClient.get(client.id) || [])
       }));
       setClients(clientsWithStats.sort((a, b) => a.companyName.localeCompare(b.companyName)));
     } catch (err) {
@@ -70,6 +80,35 @@ export const AdminClients = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const money = (amount?: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const buildClientStats = (client: Client, bookings: Booking[], invoices: ClientInvoice[]) => {
+    const activeStatuses = new Set<string>(['INCOMING', 'NEEDS_ASSIGNMENT', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT', 'OPENED', 'BOOKED']);
+    const readyForInvoice = bookings.filter(job => job.status === BookingStatus.READY_FOR_INVOICE || job.paymentStatus === 'READY_FOR_INVOICE').length;
+    const outstandingInvoices = invoices.filter(invoice => [InvoiceStatus.DRAFT, InvoiceStatus.SENT].includes(invoice.status));
+    const sortedDates = bookings
+      .map(job => new Date([job.date, job.startTime].filter(Boolean).join(' ')))
+      .filter(date => !Number.isNaN(date.getTime()))
+      .sort((a, b) => b.getTime() - a.getTime());
+    const accountIssues = [
+      !client.billingAddress ? 'Billing address' : null,
+      !client.email ? 'Finance email' : null,
+      !client.contactPerson ? 'Primary contact' : null,
+      !client.paymentTermsDays ? 'Payment terms' : null,
+    ].filter(Boolean) as string[];
+    return {
+      totalBookings: bookings.length,
+      activeBookings: bookings.filter(job => activeStatuses.has(String(job.status))).length,
+      readyForInvoice,
+      outstandingInvoices: outstandingInvoices.length,
+      outstandingTotal: outstandingInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0),
+      paidTotal: invoices.filter(invoice => invoice.status === InvoiceStatus.PAID).reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0),
+      translationBookings: bookings.filter(job => job.serviceCategory === ServiceCategory.TRANSLATION || String(job.serviceType || '').toUpperCase().includes('TRANSLATION')).length,
+      lastBookingDate: sortedDates[0]?.toISOString(),
+      accountIssues,
+    };
   };
 
   const filteredClients = clients.filter(c => {
@@ -83,24 +122,12 @@ export const AdminClients = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const handleOpenPreview = async (client: ClientWithStats) => {
-    setSelectedClient(client);
-    setIsPreviewOpen(true);
-    setLoadingJobs(true);
-    try {
-      const jobs = await BookingService.getByClientId(client.id);
-      setClientJobs(jobs);
-    } catch (error) {
-      console.error("Failed to load client jobs", error);
-    } finally {
-      setLoadingJobs(false);
-    }
-  };
-
-  const openJobFromClient = (job: Booking) => {
-    navigate(`/admin/bookings/${job.id}`, {
-      state: { returnTo: '/admin/clients', returnLabel: 'Clients' },
-    });
+  const summary = {
+    all: clients.length,
+    readyIssues: clients.filter(c => c.accountIssues.length > 0).length,
+    activeJobs: clients.reduce((sum, c) => sum + c.activeBookings, 0),
+    readyForInvoice: clients.reduce((sum, c) => sum + c.readyForInvoice, 0),
+    outstanding: clients.reduce((sum, c) => sum + c.outstandingTotal, 0),
   };
 
   const handleStartChat = async (e: React.MouseEvent | undefined, clientId: string, clientName: string, clientPhoto?: string) => {
@@ -108,7 +135,7 @@ export const AdminClients = () => {
     if (!user) return;
 
     try {
-      const clientRecord = selectedClient?.id === clientId ? selectedClient : clients.find(c => c.id === clientId);
+      const clientRecord = clients.find(c => c.id === clientId);
       const clientUser = await ChatService.resolveUserByProfileId(clientId) || await ChatService.resolveUserByEmail(clientRecord?.email || '');
       if (!clientUser) {
         showToast('No active user account found for this client', 'error');
@@ -163,15 +190,25 @@ export const AdminClients = () => {
     {
       header: 'Organization',
       accessor: (c: ClientWithStats) => (
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-[180px] max-w-[220px] items-center gap-2">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm border shadow-sm ${c.status === 'GUEST' 
             ? 'bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-900/30' 
             : 'bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-900/30'}`}>
             {c.companyName.charAt(0)}
           </div>
-          <div>
-            <p className="font-bold text-slate-900 dark:text-white">{c.companyName}</p>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">{c.status || 'Active'}</p>
+          <div className="min-w-0">
+            <p className="truncate font-bold text-slate-900 dark:text-white">{c.companyName}</p>
+            <div className="mt-1 flex items-center gap-2">
+              <Badge variant={c.status === 'SUSPENDED' ? 'danger' : c.status === 'GUEST' ? 'warning' : 'success'} className="text-[9px] py-0 px-1.5">
+                {c.status || 'ACTIVE'}
+              </Badge>
+              {c.accountIssues.length > 0 && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-600 dark:text-red-400">
+                  <AlertCircle size={11} />
+                  {c.accountIssues.length} setup issue{c.accountIssues.length > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )
@@ -179,27 +216,52 @@ export const AdminClients = () => {
     {
       header: 'Primary Contact',
       accessor: (c: ClientWithStats) => (
-        <div>
-          <p className="font-medium text-slate-700 dark:text-slate-200">{c.contactPerson}</p>
-          <p className="text-xs text-slate-400 dark:text-slate-500">{c.email}</p>
+        <div className="min-w-[160px] max-w-[210px]">
+          <p className="truncate font-medium text-slate-700 dark:text-slate-200">{c.contactPerson}</p>
+          <p className="truncate text-xs text-slate-400 dark:text-slate-500">{c.email}</p>
         </div>
       )
     },
     {
-      header: 'Activity',
+      header: 'Operations',
       accessor: (c: ClientWithStats) => (
-        <div className="flex items-center gap-3">
-          <Badge variant="info" className="text-[10px] py-0 px-1.5">{c.activeBookings} Active</Badge>
-          <span className="text-xs text-slate-400 dark:text-slate-500">{c.totalBookings} Total</span>
+        <div className="min-w-[145px]">
+          <div className="flex items-center gap-2">
+            <Badge variant="info" className="text-[10px] py-0 px-1.5">{c.activeBookings} Active</Badge>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{c.totalBookings} total</span>
+          </div>
+          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            {c.translationBookings} translations
+          </p>
         </div>
       )
     },
     {
-      header: 'Location',
+      header: 'Finance',
       accessor: (c: ClientWithStats) => (
-        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-          <MapPin size={12} />
-          <span className="text-xs truncate max-w-[150px]">{c.billingAddress || 'N/A'}</span>
+        <div className="min-w-[160px]">
+          <div className="flex items-center gap-2">
+            <Badge variant={c.readyForInvoice > 0 ? 'warning' : 'neutral'} className="text-[10px] py-0 px-1.5">
+              {c.readyForInvoice} ready
+            </Badge>
+            <span className="text-xs font-black text-slate-900 dark:text-white">{money(c.outstandingTotal)}</span>
+          </div>
+          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            {c.outstandingInvoices} open invoices
+          </p>
+        </div>
+      )
+    },
+    {
+      header: 'Last Activity',
+      accessor: (c: ClientWithStats) => (
+        <div className="min-w-[130px]">
+          <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+            {c.lastBookingDate ? new Date(c.lastBookingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'No jobs'}
+          </p>
+          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            {c.defaultCostCodeType || 'PO'} · {c.paymentTermsDays || 30}d
+          </p>
         </div>
       )
     }
@@ -208,9 +270,9 @@ export const AdminClients = () => {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <PageHeader
-        title="Executive Database"
-        subtitle="Manage corporate accounts and organizational entities."
-        stats={{ label: "Global Clients", value: clients.length }}
+        title="Client CRM"
+        subtitle="Account control for bookings, billing readiness and client data health."
+        stats={{ label: "Clients", value: clients.length }}
       >
         <Button
           icon={Plus}
@@ -220,6 +282,25 @@ export const AdminClients = () => {
           New Booking
         </Button>
       </PageHeader>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        {[
+          { label: 'Clients', value: summary.all, detail: 'total accounts', icon: Building, tone: 'bg-slate-50 text-slate-700 border-slate-200' },
+          { label: 'Setup issues', value: summary.readyIssues, detail: 'need account data', icon: AlertCircle, tone: summary.readyIssues ? 'bg-red-50 text-red-700 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+          { label: 'Active jobs', value: summary.activeJobs, detail: 'in operations', icon: Briefcase, tone: 'bg-blue-50 text-blue-700 border-blue-100' },
+          { label: 'Ready invoice', value: summary.readyForInvoice, detail: 'finance handoff', icon: WalletCards, tone: 'bg-amber-50 text-amber-700 border-amber-100' },
+          { label: 'Outstanding', value: money(summary.outstanding), detail: 'draft/sent invoices', icon: CreditCard, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+        ].map(card => (
+          <div key={card.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg border ${card.tone}`}>
+              <card.icon size={18} />
+            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{card.label}</p>
+            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{card.value}</p>
+            <p className="text-xs font-semibold text-slate-500">{card.detail}</p>
+          </div>
+        ))}
+      </div>
 
       <div className="bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row items-center gap-2 transition-colors">
         <div className="flex-1 relative w-full h-10">
@@ -245,8 +326,6 @@ export const AdminClients = () => {
               {s}
             </button>
           ))}
-          <div className="mx-2 h-4 w-px bg-slate-200 dark:bg-slate-800 hidden lg:block"></div>
-          <ViewToggle view={viewMode} onChange={setViewMode} />
         </div>
       </div>
 
@@ -271,7 +350,13 @@ export const AdminClients = () => {
             selectable
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
-            onRowClick={handleOpenPreview}
+            onRowClick={(client) => navigate(`/admin/clients/${client.id}`)}
+            renderContextMenu={(client) => [
+              { label: 'Open profile', icon: ExternalLink, onClick: () => navigate(`/admin/clients/${client.id}`) },
+              { label: 'Open client jobs', icon: Briefcase, onClick: () => navigate(`/admin/bookings?clientId=${client.id}`) },
+              { label: 'Open finance board', icon: CreditCard, onClick: () => navigate(`/admin/billing?lane=clientBilling`) },
+              { label: 'Message', icon: MessageSquare, onClick: () => handleStartChat(undefined, client.id, client.companyName, client.photoUrl) },
+            ]}
           />
 
           <BulkActionBar
@@ -288,115 +373,6 @@ export const AdminClients = () => {
           />
         </div>
       )}
-
-      {/* Preview Modal */}
-      <Modal
-        isOpen={isPreviewOpen}
-        onClose={() => setIsPreviewOpen(false)}
-        title="Account Preview"
-        type="drawer"
-      >
-        {selectedClient && (
-          <div className="space-y-6 py-2">
-            <div className="flex flex-col md:flex-row items-center justify-between p-6 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 gap-4">
-              <div className="flex flex-col md:flex-row items-center gap-4 text-center md:text-left">
-                <div className="w-16 h-16 bg-blue-600 dark:bg-blue-700 text-white rounded-xl flex items-center justify-center font-bold text-2xl shadow-md border-2 border-white dark:border-slate-700">
-                  {selectedClient.companyName.charAt(0)}
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">{selectedClient.companyName}</h2>
-                  <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 mt-2">
-                    <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-xs font-medium bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm">
-                      <Mail size={12} className="text-blue-500" />
-                      {selectedClient.email}
-                    </span>
-                    <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-xs font-medium bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm">
-                      <User size={12} className="text-indigo-500" />
-                      {selectedClient.contactPerson}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="primary"
-                icon={ExternalLink}
-                onClick={() => navigate(`/admin/clients/${selectedClient.id}`)}
-                className="flex-1 rounded-lg h-10 px-6 font-bold text-xs shadow-sm"
-              >View Full Profile</Button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Briefcase size={14} className="text-blue-500" />
-                  Contractual Data
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-4">
-                    <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg shadow-sm"><Clock size={16} /></div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-widest mb-1">Standard Terms</p>
-                      <p className="font-bold text-slate-900 dark:text-slate-200 text-sm">{selectedClient.paymentTermsDays || 30} Days Net</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-4">
-                    <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg shadow-sm"><MapPin size={16} /></div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-widest mb-1.5">Billing Base</p>
-                      <p className="text-xs font-medium text-slate-700 dark:text-slate-400 leading-relaxed italic">{selectedClient.billingAddress || 'No primary address recorded'}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col h-full">
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Calendar size={14} className="text-purple-500" />
-                  Order Analytics
-                </h3>
-                {loadingJobs ? (
-                  <div className="flex-1 flex items-center justify-center py-4"><Spinner /></div>
-                ) : clientJobs.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-4 min-h-[100px]">
-                    <AlertCircle className="text-slate-300 dark:text-slate-600 mb-2" size={24} />
-                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400">No service history found</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar flex-1">
-                    {clientJobs.slice(0, 5).map(job => (
-                      <div key={job.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-100 dark:border-slate-800 group hover:border-blue-200 dark:hover:border-blue-900/50 transition-all cursor-pointer" onClick={() => openJobFromClient(job)}>
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">{job.bookingRef || `#${job.id.slice(-4)}`}</span>
-                          <span className="text-xs text-xs text-slate-500 dark:text-slate-400">{job.date}</span>
-                        </div>
-                        <Badge variant={job.status === 'COMPLETED' ? 'success' : 'info'} className="text-xs px-2">
-                          {job.status}
-                        </Badge>
-                      </div>
-                    ))}
-                    {clientJobs.length > 5 && (
-                      <p className="text-xs text-center font-bold text-slate-500 dark:text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800 mt-2">Historical Volume: {clientJobs.length} Orders</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-4 flex justify-end gap-3 border-t border-slate-200">
-              <Button
-                variant="ghost"
-                onClick={() => setIsPreviewOpen(false)}
-                className="font-bold text-xs"
-              >Return</Button>
-              <Button
-                onClick={(e) => handleStartChat(e, selectedClient.id, selectedClient.companyName)}
-                className="bg-blue-600 hover:bg-blue-700 shadow-sm font-bold text-xs"
-                icon={MessageSquare}
-              >Direct Message</Button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };

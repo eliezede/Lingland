@@ -1,132 +1,245 @@
-
-import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowUpRight, CheckCircle, ChevronLeft, Download, FileText, Receipt, Send } from 'lucide-react';
 import { BillingService, PdfService } from '../../../services/api';
 import { ClientInvoice, InvoiceStatus } from '../../../types';
 import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
-import { ChevronLeft, Download, Send, CheckCircle } from 'lucide-react';
 import { useToast } from '../../../context/ToastContext';
+
+type InvoiceLine = ClientInvoice['items'][number] & {
+  bookingId?: string;
+  timesheetId?: string;
+  bookingReference?: string;
+  jobNumber?: string;
+  serviceType?: string;
+};
+
+const money = (amount?: number, currency = 'GBP') =>
+  `${currency} ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatDate = (value?: string) => {
+  if (!value) return 'Not set';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+const uniqueCount = (values: Array<string | undefined>) => new Set(values.filter(Boolean)).size;
 
 export const AdminClientInvoiceDetailsPage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [invoice, setInvoice] = useState<ClientInvoice | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
     if (id) BillingService.getClientInvoiceById(id).then(setInvoice);
   }, [id]);
 
+  const lines = useMemo(() => (invoice?.items || []) as InvoiceLine[], [invoice]);
+
+  const summary = useMemo(() => ({
+    lines: lines.length,
+    jobs: uniqueCount(lines.map(line => line.bookingId)),
+    timesheets: uniqueCount(lines.map(line => line.timesheetId)),
+    subtotal: lines.reduce((sum, line) => sum + Number(line.total || 0), 0),
+  }), [lines]);
+
   const handleStatusUpdate = async (status: InvoiceStatus) => {
-    if (invoice) {
+    if (!invoice) return;
+    setIsUpdating(true);
+    try {
       await BillingService.updateClientInvoiceStatus(invoice.id, status);
       setInvoice({ ...invoice, status });
       showToast(`Invoice marked as ${status}`, 'success');
+    } catch {
+      showToast('Could not update invoice status', 'error');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
   const handleDownloadPdf = () => {
-    if (invoice) {
-      PdfService.generateClientInvoice(invoice);
-      showToast('Downloading PDF...', 'info');
-    }
+    if (!invoice) return;
+    PdfService.generateClientInvoice(invoice);
+    showToast('Downloading PDF...', 'info');
   };
 
-  if (!invoice) return <div className="p-8 text-center">Loading details...</div>;
+  if (!invoice) {
+    return <div className="p-8 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">Loading invoice details...</div>;
+  }
+
+  const total = invoice.totalAmount || summary.subtotal;
+  const currency = invoice.currency || 'GBP';
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <button onClick={() => navigate(-1)} className="flex items-center text-gray-500 hover:text-gray-700">
-          <ChevronLeft size={20} className="mr-1" /> Back
-        </button>
-        <div className="space-x-3 flex">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+            aria-label="Back"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{invoice.reference || invoice.invoiceNumber || invoice.id}</h1>
+              <InvoiceStatusBadge status={invoice.status} />
+            </div>
+            <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+              Client receivable for {invoice.clientName || 'Unknown client'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Finance Board <ArrowUpRight size={15} />
+          </Link>
           <button
             onClick={handleDownloadPdf}
-            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center mr-2"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            <Download size={16} className="mr-2" /> PDF
+            <Download size={15} /> PDF
           </button>
-
           {invoice.status === InvoiceStatus.DRAFT && (
-            <button onClick={() => handleStatusUpdate(InvoiceStatus.SENT)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center">
-              <Send size={16} className="mr-2" /> Mark Sent
+            <button
+              onClick={() => handleStatusUpdate(InvoiceStatus.SENT)}
+              disabled={isUpdating}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              <Send size={15} /> Mark sent
             </button>
           )}
           {invoice.status === InvoiceStatus.SENT && (
-            <button onClick={() => handleStatusUpdate(InvoiceStatus.PAID)} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 flex items-center">
-              <CheckCircle size={16} className="mr-2" /> Mark Paid
+            <button
+              onClick={() => handleStatusUpdate(InvoiceStatus.PAID)}
+              disabled={isUpdating}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              <CheckCircle size={15} /> Mark paid
             </button>
           )}
         </div>
       </div>
 
-      {/* Invoice Paper */}
-      <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
-        <div className="p-8 border-b border-gray-200">
-          <div className="flex justify-between items-start">
+      <section className="grid gap-3 lg:grid-cols-[1.4fr_0.8fr]">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">{invoice.reference || invoice.id}</h1>
-              <p className="text-gray-500 mt-1">Issued: {new Date(invoice.issueDate).toLocaleDateString()}</p>
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Bill to</p>
+              <h2 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{invoice.clientName}</h2>
+              <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+                Period {formatDate(invoice.periodStart)} to {formatDate(invoice.periodEnd)}
+              </p>
             </div>
-            <div className="text-right">
-              <InvoiceStatusBadge status={invoice.status} />
-              <p className="mt-2 font-bold text-xl">£{invoice.totalAmount.toFixed(2)}</p>
-            </div>
-          </div>
-          <div className="mt-8 grid grid-cols-2 gap-8">
-            <div>
-              <p className="text-xs font-bold text-gray-400 uppercase">Bill To</p>
-              <p className="font-medium text-gray-900 text-lg">{invoice.clientName}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-bold text-gray-400 uppercase">Due Date</p>
-              <p className="font-medium text-gray-900">{new Date(invoice.dueDate).toLocaleDateString()}</p>
+            <div className="text-left md:text-right">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Total receivable</p>
+              <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{money(total, currency)}</p>
+              <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">Due {formatDate(invoice.dueDate)}</p>
             </div>
           </div>
         </div>
 
-        <div className="p-0">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            ['Issue date', formatDate(invoice.issueDate)],
+            ['Lines', summary.lines],
+            ['Linked jobs', summary.jobs],
+            ['Timesheets', summary.timesheets],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-2 truncate text-lg font-black text-slate-950 dark:text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+              <Receipt size={17} />
+            </span>
+            <div>
+              <h3 className="text-sm font-black text-slate-950 dark:text-white">Invoice lines and linked work</h3>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Every billable line should trace back to a job or timesheet.</p>
+            </div>
+          </div>
+          <p className="text-sm font-black text-slate-950 dark:text-white">{money(summary.subtotal || total, currency)}</p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-[900px] w-full divide-y divide-slate-200 dark:divide-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950">
               <tr>
-                <th className="px-8 py-3 text-left text-[10px] font-black tracking-widest text-slate-400 uppercase">Category</th>
-                <th className="px-8 py-3 text-left text-[10px] font-black tracking-widest text-slate-400 uppercase">Description</th>
-                <th className="px-8 py-3 text-right text-[10px] font-black tracking-widest text-slate-400 uppercase">Units</th>
-                <th className="px-8 py-3 text-right text-[10px] font-black tracking-widest text-slate-400 uppercase">Rate</th>
-                <th className="px-8 py-3 text-right text-[10px] font-black tracking-widest text-slate-400 uppercase">Amount</th>
+                <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-wide text-slate-400">Category</th>
+                <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-wide text-slate-400">Description</th>
+                <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-wide text-slate-400">Job</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-wide text-slate-400">Units</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-wide text-slate-400">Rate</th>
+                <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-wide text-slate-400">Amount</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
-              {invoice.items?.map((item: any, idx: number) => (
-                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-8 py-4 whitespace-nowrap">
-                    <span className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-wider rounded border border-blue-100">
-                      {item.category?.replace(/_/g, ' ') || 'SERVICE'}
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {lines.map((item, idx) => (
+                <tr key={item.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <td className="px-4 py-3">
+                    <span className="inline-flex rounded-full border border-blue-100 bg-blue-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
+                      {(item.category || 'SERVICE').replace(/_/g, ' ')}
                     </span>
                   </td>
-                  <td className="px-8 py-4 text-sm text-gray-900 font-medium">{item.description}</td>
-                  <td className="px-8 py-4 text-sm text-gray-500 text-right">{item.units}</td>
-                  <td className="px-8 py-4 text-sm text-gray-500 text-right">£{item.rate.toFixed(2)}</td>
-                  <td className="px-8 py-4 text-sm font-black text-gray-900 text-right">£{item.total.toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    <p className="max-w-[360px] text-sm font-semibold text-slate-900 dark:text-slate-100">{item.description || 'Invoice line'}</p>
+                    {item.timesheetId && <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">Timesheet {item.timesheetId}</p>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.bookingId ? (
+                      <Link
+                        to={`/admin/bookings/${item.bookingId}`}
+                        state={{ returnTo: `/admin/billing/client-invoices/${invoice.id}`, returnLabel: 'Client Invoice' }}
+                        className="inline-flex items-center gap-1 text-sm font-black text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                      >
+                        {item.bookingReference || item.jobNumber || item.bookingId}
+                        <ArrowUpRight size={13} />
+                      </Link>
+                    ) : (
+                      <span className="text-sm font-medium text-slate-400">No job link</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm font-semibold text-slate-600 dark:text-slate-300">{Number(item.units || 0).toLocaleString('en-GB')}</td>
+                  <td className="px-4 py-3 text-right text-sm font-semibold text-slate-600 dark:text-slate-300">{money(item.rate, currency)}</td>
+                  <td className="px-4 py-3 text-right text-sm font-black text-slate-950 dark:text-white">{money(item.total, currency)}</td>
                 </tr>
               ))}
+              {lines.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                    No invoice lines found for this document.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        <div className="p-8 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
-          <div className="bg-emerald-50 border border-emerald-100 px-4 py-2 rounded-lg">
-            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Est. Profit Margin (35%)</p>
-            <p className="text-sm font-black text-emerald-700">£{(invoice.totalAmount * 0.35).toFixed(2)}</p>
+        <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
+            <FileText size={16} />
+            Status changes update linked jobs when the invoice is paid.
           </div>
-          <div className="text-right">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Due</p>
-            <p className="text-3xl font-black text-slate-900 leading-none">£{invoice.totalAmount.toFixed(2)}</p>
+          <div className="text-left sm:text-right">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Total due</p>
+            <p className="text-2xl font-black text-slate-950 dark:text-white">{money(total, currency)}</p>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 };

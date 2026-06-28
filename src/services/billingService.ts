@@ -730,11 +730,15 @@ export const BillingService = {
   },
 
   submitTimesheet: async (data: Partial<Timesheet>): Promise<Timesheet> => {
-    const newTs = {
+    const now = new Date().toISOString();
+    const newTs: Omit<Timesheet, 'id'> = {
+      organizationId: data.organizationId || 'lingland-main',
+      createdAt: data.createdAt || now,
+      updatedAt: data.updatedAt || now,
       bookingId: data.bookingId!,
       interpreterId: data.interpreterId!,
       clientId: data.clientId!,
-      submittedAt: new Date().toISOString(),
+      submittedAt: now,
       sessionMode: data.sessionMode || SessionMode.F2F,
       actualStart: data.actualStart || new Date().toISOString(),
       actualEnd: data.actualEnd || new Date().toISOString(),
@@ -764,7 +768,9 @@ export const BillingService = {
       interpreterInvoiceId: null,
       supportingDocumentUrl: data.supportingDocumentUrl,
       clientSignatureUrl: data.clientSignatureUrl,
-      clientNameSigned: data.clientNameSigned
+      clientNameSigned: data.clientNameSigned,
+      source: data.source || 'INTERPRETER_APP',
+      recordedByStaff: Boolean(data.recordedByStaff)
     };
     try {
       const existingQ = query(collection(db, 'timesheets'), where('bookingId', '==', data.bookingId));
@@ -847,7 +853,9 @@ export const BillingService = {
       sessionFees: 0,
       totalToPay: 0,
       interpreterAmountCalculated: 0,
-      clientAmountCalculated: booking.totalAmount || 0
+      clientAmountCalculated: booking.totalAmount || 0,
+      source: 'STAFF_MANUAL',
+      recordedByStaff: true
     });
 
     try {
@@ -892,11 +900,15 @@ export const BillingService = {
     const actualStart = `${booking.date}T${booking.startTime || '00:00'}:00`;
     const actualEnd = new Date(new Date(actualStart).getTime() + durationMinutes * 60000).toISOString();
 
-    const newTs = {
+    const now = new Date().toISOString();
+    const newTs: Omit<Timesheet, 'id'> = {
+      organizationId: booking.organizationId || 'lingland-main',
+      createdAt: now,
+      updatedAt: now,
       bookingId: booking.id,
       interpreterId: booking.interpreterId || 'unassigned',
       clientId: booking.clientId,
-      submittedAt: new Date().toISOString(),
+      submittedAt: now,
       sessionMode: SessionMode.CANCELLATION,
       actualStart,
       actualEnd,
@@ -925,7 +937,9 @@ export const BillingService = {
       interpreterInvoiceId: null,
       nonExecutionReason: reason,
       billableCancellation,
-      exceptionType: 'CANCELLATION' as const
+      exceptionType: 'CANCELLATION' as const,
+      source: 'STAFF_MANUAL',
+      recordedByStaff: true
     };
 
     try {
@@ -981,7 +995,7 @@ export const BillingService = {
       const data = bookingDoc.data();
       
       // Markup logic from Airtable: interpreterCost + margin
-      // margin is £21 for OOH, £17 for standard
+      // margin is GBP 21 for OOH, GBP 17 for standard
       const margin = data.isOOH ? 21 : 17;
       
       // Calculate based on duration (h) * interpreterRate + margin

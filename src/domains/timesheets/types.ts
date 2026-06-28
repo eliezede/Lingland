@@ -1,6 +1,7 @@
 import { TenantScopedEntity } from '../../shared/types/baseEntity';
 
 export type TimesheetStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'INVOICED';
+export type TimesheetSource = 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'SYSTEM_IMPORT';
 
 export interface Timesheet extends TenantScopedEntity {
     jobId: string; // Alias to bookingId for now
@@ -28,4 +29,6 @@ export interface Timesheet extends TenantScopedEntity {
     clientInvoiceId?: string | null;
     interpreterInvoiceId?: string | null;
     supportingDocumentUrl?: string;
+    source?: TimesheetSource;
+    recordedByStaff?: boolean;
 }

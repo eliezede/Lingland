@@ -403,6 +403,8 @@ export enum InvoiceStatus {
   APPROVED = 'APPROVED'
 }
 
+export type TimesheetSource = 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'SYSTEM_IMPORT';
+
 export interface Timesheet extends TenantScopedEntity {
   bookingId: string;
   interpreterId: string;
@@ -445,6 +447,8 @@ export interface Timesheet extends TenantScopedEntity {
   clientSignatureUrl?: string;
   clientNameSigned?: string;
   interpreterPhotoUrl?: string;
+  source?: TimesheetSource;
+  recordedByStaff?: boolean;
 }
 
 export type FiscalCategory =

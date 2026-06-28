@@ -7,6 +7,9 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { getTimesheetInterpreterAmount } from '../../utils/interpreterFlow';
 
+const money = (amount: number) =>
+  `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export const InterpreterTimesheets = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -113,7 +116,7 @@ export const InterpreterTimesheets = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right text-xs font-black text-slate-900">
-                        {getTimesheetInterpreterAmount(ts) > 0 ? `£${getTimesheetInterpreterAmount(ts).toFixed(2)}` : <span className="text-slate-400 text-[10px] uppercase">Processing</span>}
+                        {getTimesheetInterpreterAmount(ts) > 0 ? money(getTimesheetInterpreterAmount(ts)) : <span className="text-slate-400 text-[10px] uppercase">Processing</span>}
                       </td>
                       <td className="px-6 py-4 text-center">
                         {ts.supportingDocumentUrl ? (

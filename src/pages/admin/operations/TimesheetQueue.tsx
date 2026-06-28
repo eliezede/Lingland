@@ -1,349 +1,546 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { FileCheck, AlertCircle, Clock, CheckCircle2, XCircle, Eye, ArrowRight, ShieldCheck, Info, Zap, CheckCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  AlertCircle,
+  ArrowUpRight,
+  CheckCircle2,
+  Clock,
+  FileCheck,
+  FileText,
+  Filter,
+  Receipt,
+  Search,
+  ShieldCheck,
+  UserCheck,
+} from 'lucide-react';
 import { useBookings } from '../../../hooks/useBookings';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { Button } from '../../../components/ui/Button';
-import { Table } from '../../../components/ui/Table';
 import { Modal } from '../../../components/ui/Modal';
-import { StatusBadge } from '../../../components/StatusBadge';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
-import { Booking, BookingStatus, Timesheet, ServiceCategory, InterpreterInvoice, InvoiceStatus } from '../../../types';
-import { BookingService, BillingService } from '../../../services/api';
+import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../../../types';
+import { BillingService } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 
+type ClaimStage = 'NEEDS_CLAIM' | 'SUBMITTED' | 'APPROVED' | 'CLIENT_INVOICED' | 'PAID' | 'ISSUE';
+
+type ClaimRow = {
+  id: string;
+  stage: ClaimStage;
+  job: Booking;
+  timesheet?: Timesheet;
+  source: 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'MISSING';
+};
+
+const money = (amount?: number) =>
+  `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatDate = (value?: string) => {
+  if (!value) return 'Not set';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+};
+
+const formatTime = (value?: string) => {
+  if (!value) return '--:--';
+  if (/^\d{2}:\d{2}/.test(value)) return value.slice(0, 5);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+};
+
+const getJobRef = (job: Booking) => job.displayRef || job.jobNumber || job.bookingRef || job.legacyAirtableRef || job.id.slice(0, 8).toUpperCase();
+
+const getStageLabel = (stage: ClaimStage) => ({
+  NEEDS_CLAIM: 'Needs claim',
+  SUBMITTED: 'Review',
+  APPROVED: 'Ready for invoice',
+  CLIENT_INVOICED: 'Invoiced',
+  PAID: 'Paid',
+  ISSUE: 'Issue',
+}[stage]);
+
+const getStageClass = (stage: ClaimStage) => ({
+  NEEDS_CLAIM: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200',
+  SUBMITTED: 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200',
+  APPROVED: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200',
+  CLIENT_INVOICED: 'border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200',
+  PAID: 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
+  ISSUE: 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200',
+}[stage]);
+
+const getTimesheetStage = (timesheet: Timesheet, job?: Booking): ClaimStage => {
+  if (job?.billingIssueFlag || job?.paymentStatus === 'ISSUE') return 'ISSUE';
+  if (job?.status === BookingStatus.PAID || job?.paymentStatus === 'PAID') return 'PAID';
+  if (job?.status === BookingStatus.INVOICED || job?.paymentStatus === 'INVOICED' || timesheet.clientInvoiceId) return 'CLIENT_INVOICED';
+  if (timesheet.adminApproved || ['APPROVED', 'INVOICING', 'INVOICED'].includes(String(timesheet.status))) return 'APPROVED';
+  return 'SUBMITTED';
+};
+
 export const TimesheetQueue = () => {
-    const navigate = useNavigate();
-    const { showToast } = useToast();
-    const { bookings = [], loading, refresh } = useBookings();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { showToast } = useToast();
+  const { bookings = [], loading: bookingsLoading, refresh } = useBookings();
+  const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
+  const [loadingTimesheets, setLoadingTimesheets] = useState(true);
+  const [selectedRow, setSelectedRow] = useState<ClaimRow | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkLoading, setIsBulkLoading] = useState(false);
+  const [query, setQuery] = useState(searchParams.get('jobId') || '');
+  const [stageFilter, setStageFilter] = useState<'ALL' | ClaimStage>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | ClaimRow['source']>('ALL');
 
-    // Filter jobs that have submitted timesheets but aren't verified yet
-    const pendingTimesheets = bookings.filter(b =>
-        (b.status as any) === BookingStatus.TIMESHEET_SUBMITTED ||
-        (b.status as any) === BookingStatus.READY_FOR_INVOICE ||
-        (b.status as any) === 'TIMESHEET_SUBMITTED' // String literal for safety
-    );
+  const loadTimesheets = async () => {
+    setLoadingTimesheets(true);
+    try {
+      setTimesheets(await BillingService.getAllTimesheets());
+    } finally {
+      setLoadingTimesheets(false);
+    }
+  };
 
-    const [selectedJob, setSelectedJob] = useState<Booking | null>(null);
-    const [selectedTimesheet, setSelectedTimesheet] = useState<Timesheet | null>(null);
-    const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
-    const [isBulkLoading, setIsBulkLoading] = useState(false);
+  useEffect(() => {
+    loadTimesheets();
+  }, []);
 
-    const openAuditHub = async (job: Booking) => {
-        setSelectedJob(job);
-        setSelectedTimesheet(null);
-        setIsAuditModalOpen(true);
+  const rows = useMemo<ClaimRow[]>(() => {
+    const bookingById = new Map(bookings.map(job => [job.id, job]));
+    const timesheetRows = timesheets.map(timesheet => {
+      const job = bookingById.get(timesheet.bookingId);
+      if (!job) return null;
+      const source = String(timesheet.source || '').toUpperCase();
+      const manual = Boolean(timesheet.recordedByStaff || source === 'STAFF_MANUAL' || source === 'MANUAL_STAFF');
+      const mirrored = source === 'AIRTABLE_MIRROR' || job.sourceSystem === 'AIRTABLE' || Boolean(job.legacyAirtableRef);
+      return {
+        id: timesheet.id,
+        stage: getTimesheetStage(timesheet, job),
+        job,
+        timesheet,
+        source: manual ? 'STAFF_MANUAL' : mirrored ? 'AIRTABLE_MIRROR' : 'INTERPRETER_APP',
+      } as ClaimRow;
+    }).filter(Boolean) as ClaimRow[];
 
-        try {
-            const ts = await BillingService.getTimesheetByBookingId(job.id);
-            setSelectedTimesheet(ts);
-        } catch (error) {
-            console.error("Failed to load timesheet evidence:", error);
-        }
-    };
+    const bookingsWithTimesheet = new Set(timesheets.map(ts => ts.bookingId));
+    const missingClaimRows: ClaimRow[] = bookings
+      .filter(job => job.status === BookingStatus.SESSION_COMPLETED && !bookingsWithTimesheet.has(job.id))
+      .map(job => ({
+        id: `missing-${job.id}`,
+        stage: 'NEEDS_CLAIM' as ClaimStage,
+        job,
+        source: 'MISSING' as const,
+      }));
 
-    const handleVerify = async (job: Booking) => {
-        try {
-            await BillingService.approveTimesheetByBookingId(job.id);
-            setIsAuditModalOpen(false);
-            refresh();
-            showToast("Timesheet authorized for billing", "success");
-        } catch (e) {
-            showToast("Failed to verify timesheet", "error");
-        }
-    };
+    return [...missingClaimRows, ...timesheetRows].sort((a, b) => {
+      const aDate = a.timesheet?.submittedAt || `${a.job.date}T${a.job.startTime || '00:00'}:00`;
+      const bDate = b.timesheet?.submittedAt || `${b.job.date}T${b.job.startTime || '00:00'}:00`;
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+  }, [bookings, timesheets]);
 
-    const handleBulkVerify = async (ids: string[]) => {
-        setIsBulkLoading(true);
-        let done = 0;
-        await Promise.allSettled(ids.map(async id => {
-            try {
-                await BillingService.approveTimesheetByBookingId(id);
-                done++;
-            } catch { /* silent */ }
-        }));
-        setSelectedIds([]);
-        setIsBulkLoading(false);
-        refresh();
-        showToast(`${done} claim${done !== 1 ? 's' : ''} authorized for billing`, 'success');
-    };
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter(row => {
+      if (stageFilter !== 'ALL' && row.stage !== stageFilter) return false;
+      if (sourceFilter !== 'ALL' && row.source !== sourceFilter) return false;
+      if (!needle) return true;
+      return [
+        getJobRef(row.job),
+        row.job.id,
+        row.job.clientName,
+        row.job.interpreterName,
+        row.job.languageFrom,
+        row.job.languageTo,
+        row.job.postcode,
+        row.timesheet?.id,
+      ].filter(Boolean).some(value => String(value).toLowerCase().includes(needle));
+    });
+  }, [query, rows, sourceFilter, stageFilter]);
 
-    const columns = [
-        {
-            header: 'Job Reference',
-            accessor: (job: Booking) => (
-                <div className="flex flex-col">
-                    <span className="font-bold text-slate-900 dark:text-white">{job.bookingRef || 'TBD'}</span>
-                    <span className="text-[10px] text-slate-500 uppercase">{job.clientName}</span>
-                    {job.adminNotes?.includes('Not executed:') && (
-                        <span className="mt-1 inline-flex w-fit rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-700 border border-amber-100">Exception</span>
-                    )}
-                </div>
-            )
-        },
-        {
-            header: 'Interpreter',
-            accessor: (job: Booking) => (
-                <div className="flex items-center">
-                    <UserAvatar
-                        name={job.interpreterName || 'Unknown'}
-                        src={job.interpreterPhotoUrl}
-                        size="sm"
-                        className="mr-3"
-                    />
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{job.interpreterName}</div>
-                </div>
-            )
-        },
-        {
-            header: 'Claimed Vol.',
-            accessor: (job: Booking) => (
-                <div className="flex items-center text-sm font-bold text-slate-900 dark:text-white">
-                    {job.serviceCategory === ServiceCategory.TRANSLATION ? (
-                        <>
-                            <FileCheck size={14} className="mr-2 text-indigo-500" />
-                            {job.durationMinutes === 0 ? 'TBD' : `${job.durationMinutes} Units`}
-                        </>
-                    ) : (
-                        <>
-                            <Clock size={14} className="mr-2 text-blue-500" />
-                            {job.durationMinutes === 0 ? 'TBD' : `${Math.floor(job.durationMinutes / 60)}h ${job.durationMinutes % 60}m`}
-                        </>
-                    )}
-                </div>
-            )
-        },
-        {
-            header: 'Status',
-            accessor: (job: Booking) => <StatusBadge status={job.status} />
-        }
-    ];
+  const selectedActionableIds = useMemo(
+    () => selectedIds.filter(id => {
+      const row = rows.find(item => item.id === id);
+      return row?.stage === 'SUBMITTED' && row.timesheet;
+    }),
+    [rows, selectedIds]
+  );
 
-    return (
-        <div className="space-y-6">
-            <PageHeader title="Timesheet Review" subtitle="Visual audit and compliance verification" />
+  const summary = useMemo(() => ({
+    total: rows.length,
+    needsClaim: rows.filter(row => row.stage === 'NEEDS_CLAIM').length,
+    review: rows.filter(row => row.stage === 'SUBMITTED').length,
+    ready: rows.filter(row => row.stage === 'APPROVED').length,
+    invoiced: rows.filter(row => row.stage === 'CLIENT_INVOICED').length,
+    paid: rows.filter(row => row.stage === 'PAID').length,
+    issue: rows.filter(row => row.stage === 'ISSUE').length,
+    clientReadyAmount: rows
+      .filter(row => row.stage === 'APPROVED')
+      .reduce((sum, row) => sum + Number(row.timesheet?.clientAmountCalculated || row.job.totalAmount || 0), 0),
+    interpreterPayable: rows
+      .filter(row => ['SUBMITTED', 'APPROVED'].includes(row.stage))
+      .reduce((sum, row) => sum + Number(row.timesheet?.interpreterAmountCalculated || row.timesheet?.totalToPay || 0), 0),
+  }), [rows]);
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="lg:col-span-3 space-y-4">
-                    <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800 p-4 rounded-2xl flex items-start space-x-3">
-                        <ShieldCheck className="text-emerald-600 shrink-0 mt-0.5" size={18} />
-                        <div>
-                            <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">Quality Assurance Required</p>
-                            <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">There are {pendingTimesheets.length} claims pending verification. Ensure actual times match the original job booking before authorizing payment.</p>
-                        </div>
-                    </div>
+  const refreshAll = async () => {
+    await Promise.all([loadTimesheets(), refresh()]);
+  };
 
-                    <Table
-                        data={pendingTimesheets}
-                        columns={columns}
-                        selectable
-                        selectedIds={selectedIds}
-                        onSelectionChange={setSelectedIds}
-                        onRowClick={openAuditHub}
-                        onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`, {
-                            state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Timesheet Review' },
-                        })}
-                        isLoading={loading}
-                        emptyMessage="No pending timesheets for review."
-                    />
+  const handleRecordManualTimesheet = async (row: ClaimRow) => {
+    try {
+      await BillingService.recordManualTimesheetReceived(row.job.id);
+      showToast('Manual claim recorded for finance review', 'success');
+      await refreshAll();
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record manual claim', 'error');
+    }
+  };
 
-                    <BulkActionBar
-                        selectedIds={selectedIds}
-                        selectedCount={selectedIds.length}
-                        totalCount={pendingTimesheets.length}
-                        entityLabel="claim"
-                        isLoading={isBulkLoading}
-                        onClearSelection={() => setSelectedIds([])}
-                        actions={[
-                            {
-                                label: 'Authorize All',
-                                icon: Zap,
-                                onClick: () => handleBulkVerify(selectedIds),
-                                variant: 'success',
-                            }
-                        ]}
-                    />
-                </div>
+  const handleVerify = async (row: ClaimRow) => {
+    if (!row.timesheet) return;
+    try {
+      await BillingService.approveTimesheet(row.timesheet.id);
+      showToast('Claim authorized for billing', 'success');
+      setSelectedRow(current => current?.id === row.id ? null : current);
+      await refreshAll();
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to authorize claim', 'error');
+    }
+  };
 
-                <div className="space-y-6">
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Integrity Summary</h3>
-                        <div className="space-y-4">
-                            <div className="flex justify-between items-center">
-                                <span className="text-sm text-slate-600 dark:text-slate-400">Claims Verified Today</span>
-                                <span className="text-sm font-bold text-slate-900 dark:text-white">42</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-sm text-slate-600 dark:text-slate-400">Flagged Exceptions</span>
-                                <span className="text-sm font-bold text-red-500 underline decoration-red-200">3</span>
-                            </div>
-                            <div className="h-px bg-slate-100 dark:bg-slate-800" />
-                            <div className="flex items-center space-x-2 text-blue-600">
-                                <Info size={14} />
-                                <span className="text-[10px] font-bold uppercase">Auto-verify active for 1hr+</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+  const handleBulkVerify = async (ids: string[]) => {
+    setIsBulkLoading(true);
+    let done = 0;
+    await Promise.allSettled(ids.map(async id => {
+      const row = rows.find(item => item.id === id);
+      if (!row?.timesheet || row.stage !== 'SUBMITTED') return;
+      await BillingService.approveTimesheet(row.timesheet.id);
+      done++;
+    }));
+    setIsBulkLoading(false);
+    setSelectedIds([]);
+    await refreshAll();
+    showToast(`${done} claim${done !== 1 ? 's' : ''} authorized for billing`, 'success');
+  };
+
+  const isLoading = bookingsLoading || loadingTimesheets;
+
+  return (
+    <div className="space-y-5 pb-20">
+      <PageHeader
+        title="Claims Workbench"
+        subtitle="Hybrid control for interpreter app submissions, manual staff claims and Airtable mirrored timesheets."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => navigate('/admin/billing?view=fin-timesheets&lane=interpreterPayables')} icon={ArrowUpRight} variant="secondary" size="sm">
+            Finance view
+          </Button>
+          <Button onClick={refreshAll} icon={FileCheck} variant="secondary" size="sm">
+            Refresh
+          </Button>
+        </div>
+      </PageHeader>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        {[
+          ['Missing claim', summary.needsClaim, 'Admin must record'],
+          ['Review', summary.review, 'Awaiting approval'],
+          ['Ready', summary.ready, money(summary.clientReadyAmount)],
+          ['Invoiced', summary.invoiced, 'Client side'],
+          ['Paid', summary.paid, 'Closed'],
+          ['Issues', summary.issue, 'Blocked'],
+        ].map(([label, value, meta]) => (
+          <button
+            key={label}
+            onClick={() => setStageFilter(label === 'Missing claim' ? 'NEEDS_CLAIM' : label === 'Review' ? 'SUBMITTED' : label === 'Ready' ? 'APPROVED' : label === 'Invoiced' ? 'CLIENT_INVOICED' : label === 'Paid' ? 'PAID' : label === 'Issues' ? 'ISSUE' : 'ALL')}
+            className="rounded-lg border border-slate-200 bg-white p-3 text-left transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
+          >
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+            <p className="mt-1 text-2xl font-black text-slate-950 dark:text-white">{value}</p>
+            <p className="mt-1 truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{meta}</p>
+          </button>
+        ))}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-3 dark:border-slate-800 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
+            <div className="relative min-w-0 flex-1">
+              <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Search job, client, interpreter, language, postcode"
+                className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-500/20"
+              />
+            </div>
+            <select
+              value={stageFilter}
+              onChange={event => setStageFilter(event.target.value as 'ALL' | ClaimStage)}
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
+            >
+              <option value="ALL">All stages</option>
+              <option value="NEEDS_CLAIM">Needs claim</option>
+              <option value="SUBMITTED">Review</option>
+              <option value="APPROVED">Ready for invoice</option>
+              <option value="CLIENT_INVOICED">Invoiced</option>
+              <option value="PAID">Paid</option>
+              <option value="ISSUE">Issue</option>
+            </select>
+            <select
+              value={sourceFilter}
+              onChange={event => setSourceFilter(event.target.value as 'ALL' | ClaimRow['source'])}
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
+            >
+              <option value="ALL">All sources</option>
+              <option value="INTERPRETER_APP">Interpreter app</option>
+              <option value="STAFF_MANUAL">Staff manual</option>
+              <option value="AIRTABLE_MIRROR">Airtable mirror</option>
+              <option value="MISSING">Missing</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+            <Filter size={14} />
+            {filteredRows.length} of {rows.length} claims
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1120px] border-collapse text-left">
+            <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-950">
+              <tr className="border-b border-slate-200 dark:border-slate-800">
+                <th className="w-12 px-4 py-3">
+                  <button
+                    onClick={() => setSelectedIds(selectedIds.length === filteredRows.length ? [] : filteredRows.map(row => row.id))}
+                    className={`h-5 w-5 rounded border ${selectedIds.length === filteredRows.length && filteredRows.length ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900'}`}
+                    aria-label="Select all visible claims"
+                  >
+                    {selectedIds.length === filteredRows.length && filteredRows.length ? <CheckCircle2 size={13} className="m-auto text-white" /> : null}
+                  </button>
+                </th>
+                {['Job', 'Stage', 'Schedule', 'Interpreter', 'Client billing', 'Interpreter pay', 'Source', 'Action'].map(header => (
+                  <th key={header} className="px-4 py-3 text-[11px] font-black uppercase tracking-wide text-slate-400">{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {isLoading ? (
+                [1, 2, 3, 4, 5].map(item => (
+                  <tr key={item}>
+                    <td colSpan={9} className="px-4 py-5">
+                      <div className="h-6 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+                    </td>
+                  </tr>
+                ))
+              ) : filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-14 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                    No claims match this view.
+                  </td>
+                </tr>
+              ) : filteredRows.map(row => {
+                const selected = selectedIds.includes(row.id);
+                const clientAmount = row.timesheet?.clientAmountCalculated || row.job.totalAmount || 0;
+                const interpreterAmount = row.timesheet?.interpreterAmountCalculated || row.timesheet?.totalToPay || 0;
+
+                return (
+                  <tr
+                    key={row.id}
+                    onClick={() => setSelectedRow(row)}
+                    onDoubleClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}
+                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${selected ? 'bg-blue-50/50 dark:bg-blue-500/10' : ''}`}
+                  >
+                    <td className="px-4 py-4" onClick={event => event.stopPropagation()}>
+                      <button
+                        onClick={() => setSelectedIds(current => current.includes(row.id) ? current.filter(id => id !== row.id) : [...current, row.id])}
+                        className={`h-5 w-5 rounded border ${selected ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900'}`}
+                        aria-label="Select claim"
+                      >
+                        {selected ? <CheckCircle2 size={13} className="m-auto text-white" /> : null}
+                      </button>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col">
+                        <span className="font-black text-slate-950 dark:text-white">{getJobRef(row.job)}</span>
+                        <span className="max-w-[220px] truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{row.job.clientName}</span>
+                        {row.timesheet?.nonExecutionReason && (
+                          <span className="mt-1 w-fit rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                            Exception
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${getStageClass(row.stage)}`}>
+                        {getStageLabel(row.stage)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <p className="text-sm font-black text-slate-900 dark:text-slate-100">{formatDate(row.job.date)}</p>
+                      <p className="text-xs font-semibold text-blue-600 dark:text-blue-300">
+                        {row.timesheet ? `${formatTime(row.timesheet.actualStart)} - ${formatTime(row.timesheet.actualEnd)}` : `${formatTime(row.job.startTime)} · ${row.job.durationMinutes || 0}m`}
+                      </p>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-2">
+                        <UserAvatar name={row.job.interpreterName || 'Unassigned'} src={row.job.interpreterPhotoUrl} size="sm" />
+                        <span className="max-w-[180px] truncate text-sm font-bold text-slate-900 dark:text-slate-100">{row.job.interpreterName || 'Unassigned'}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-sm font-black text-slate-900 dark:text-slate-100">{money(clientAmount)}</td>
+                    <td className="px-4 py-4 text-sm font-black text-slate-900 dark:text-slate-100">{money(interpreterAmount)}</td>
+                    <td className="px-4 py-4">
+                      <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        {row.source.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4" onClick={event => event.stopPropagation()}>
+                      {row.stage === 'NEEDS_CLAIM' ? (
+                        <Button size="sm" variant="secondary" icon={FileText} onClick={() => handleRecordManualTimesheet(row)}>Record</Button>
+                      ) : row.stage === 'SUBMITTED' ? (
+                        <Button size="sm" icon={ShieldCheck} onClick={() => handleVerify(row)}>Authorize</Button>
+                      ) : (
+                        <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}>Open</Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <BulkActionBar
+        selectedIds={selectedIds}
+        selectedCount={selectedIds.length}
+        totalCount={filteredRows.length}
+        entityLabel="claim"
+        isLoading={isBulkLoading}
+        onClearSelection={() => setSelectedIds([])}
+        actions={[
+          {
+            label: `Authorize ${selectedActionableIds.length || ''}`.trim(),
+            icon: ShieldCheck,
+            onClick: () => handleBulkVerify(selectedActionableIds),
+            variant: 'success',
+            disabled: selectedActionableIds.length === 0,
+          },
+        ]}
+      />
+
+      <Modal
+        isOpen={Boolean(selectedRow)}
+        onClose={() => setSelectedRow(null)}
+        type="drawer"
+        title={selectedRow ? `Claim ${getJobRef(selectedRow.job)}` : 'Claim'}
+        maxWidth="4xl"
+      >
+        {selectedRow && (
+          <div className="space-y-5">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Current stage</p>
+                <span className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${getStageClass(selectedRow.stage)}`}>
+                  {getStageLabel(selectedRow.stage)}
+                </span>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Client billing</p>
+                <p className="mt-2 text-xl font-black text-slate-950 dark:text-white">{money(selectedRow.timesheet?.clientAmountCalculated || selectedRow.job.totalAmount || 0)}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Interpreter pay</p>
+                <p className="mt-2 text-xl font-black text-slate-950 dark:text-white">{money(selectedRow.timesheet?.interpreterAmountCalculated || selectedRow.timesheet?.totalToPay || 0)}</p>
+              </div>
             </div>
 
-            {/* Audit Sidebar Hub */}
-            <Modal
-                isOpen={isAuditModalOpen}
-                onClose={() => setIsAuditModalOpen(false)}
-                type="drawer"
-                title="Visual Compliance Audit"
-                maxWidth="4xl"
-            >
-                {selectedJob && (
-                    <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
-                        {/* Comparison Grid */}
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Original Booking */}
-                            <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
-                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Original Job Record</h4>
-                                <div className="space-y-4">
-                                    <div>
-                                        <p className="text-[10px] text-slate-500 uppercase font-bold">Planned Schedule</p>
-                                        <p className="text-sm font-bold text-slate-900 dark:text-white">{selectedJob.date}</p>
-                                        <p className="text-lg font-black text-slate-700 dark:text-slate-300">{selectedJob.startTime}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-slate-500 uppercase font-bold">
-                                            {selectedJob.serviceCategory === ServiceCategory.TRANSLATION ? 'Target Volume' : 'Allocated Duration'}
-                                        </p>
-                                        <p className="text-sm font-bold text-slate-900 dark:text-white">
-                                            {selectedJob.serviceCategory === ServiceCategory.TRANSLATION ? 'As per source' : `${selectedJob.durationMinutes} minutes`}
-                                        </p>
-                                    </div>
-                                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800">
-                                        <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Service Type</p>
-                                        <p className="text-xs font-bold text-blue-600 uppercase">{selectedJob.serviceType}</p>
-                                    </div>
-                                </div>
-                            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <div className="mb-4 flex items-center gap-2">
+                  <Clock size={17} className="text-slate-400" />
+                  <h3 className="text-sm font-black text-slate-950 dark:text-white">Original job</h3>
+                </div>
+                <dl className="space-y-3 text-sm">
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Client</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.clientName}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Service</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.languageFrom} to {selectedRow.job.languageTo}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Booked</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatDate(selectedRow.job.date)} {formatTime(selectedRow.job.startTime)}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Duration</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.durationMinutes || 0} min</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Category</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.serviceCategory}</dd></div>
+                </dl>
+              </section>
 
-                            {/* Interpreter Claim */}
-                            <div className="p-5 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800 shadow-lg shadow-blue-500/5">
-                                <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-4">Interpreter Claim</h4>
-                                <div className="space-y-4">
-                                    <div>
-                                        <p className="text-[10px] text-blue-500 uppercase font-bold">Actual Attendance</p>
-                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-200">
-                                            {selectedTimesheet?.actualStart ? new Date(selectedTimesheet.actualStart).toLocaleDateString() : selectedJob.date}
-                                        </p>
-                                        <p className="text-lg font-black text-blue-700 dark:text-blue-100">
-                                            {selectedTimesheet?.actualStart ? new Date(selectedTimesheet.actualStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : selectedJob.startTime}
-                                            {selectedTimesheet?.actualEnd ? ` - ${new Date(selectedTimesheet.actualEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-blue-500 uppercase font-bold">
-                                            {selectedJob.serviceCategory === ServiceCategory.TRANSLATION ? 'Delivery Volume' : 'Session Mode'}
-                                        </p>
-                                        <p className="text-sm font-bold text-blue-900 dark:text-blue-200">
-                                            {selectedJob.serviceCategory === ServiceCategory.TRANSLATION 
-                                                ? `${selectedTimesheet?.wordCount || 0} ${selectedTimesheet?.units || 'words'}`
-                                                : (selectedTimesheet?.sessionMode || 'Standard')}
-                                        </p>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <p className="text-[10px] text-blue-500 uppercase font-bold">Travel</p>
-                                            <p className="text-sm font-bold text-blue-900 dark:text-blue-200">{selectedTimesheet?.travelTimeMinutes || 0}m (£{selectedTimesheet?.travelFees || 0})</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[10px] text-blue-500 uppercase font-bold">Mileage</p>
-                                            <p className="text-sm font-bold text-blue-900 dark:text-blue-200">{selectedTimesheet?.mileage || 0}m (£{selectedTimesheet?.mileageFees || 0})</p>
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                         <div>
-                                            <p className="text-[10px] text-blue-500 uppercase font-bold">Parking/Transport</p>
-                                            <p className="text-sm font-bold text-blue-900 dark:text-blue-200">£{(selectedTimesheet?.parking || 0) + (selectedTimesheet?.transport || 0)}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[10px] text-blue-500 uppercase font-bold text-right">Total Claim</p>
-                                            <p className="text-lg font-black text-blue-700 dark:text-blue-100 text-right">£{selectedTimesheet?.totalToPay?.toFixed(2) || '0.00'}</p>
-                                        </div>
-                                    </div>
-                                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-blue-200 dark:border-blue-800">
-                                        <p className="text-[10px] text-green-600 uppercase font-black mb-1">Comparison Result</p>
-                                        <div className="flex items-center space-x-2">
-                                            <CheckCircle2 size={14} className="text-green-500" />
-                                            <p className="text-xs font-bold text-slate-900 dark:text-white uppercase">
-                                                {selectedTimesheet?.nonExecutionReason ? `Exception: ${selectedTimesheet.nonExecutionReason}` : 'Ready for Verification'}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Supporting Evidence */}
-                        <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Supporting Evidence</h4>
-                            <div className="flex items-center justify-center min-h-40 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 overflow-hidden">
-                                {selectedTimesheet?.supportingDocumentUrl ? (
-                                    <div className="w-full">
-                                        {selectedTimesheet.supportingDocumentUrl.toLowerCase().endsWith('.pdf') ? (
-                                            <div className="flex flex-col items-center p-4">
-                                                <div className="w-16 h-16 bg-red-100 text-red-600 rounded-lg flex items-center justify-center mb-3">
-                                                    <FileCheck size={32} />
-                                                </div>
-                                                <p className="text-sm font-bold text-slate-700 mb-4">PDF Document Attached</p>
-                                                <a
-                                                    href={selectedTimesheet.supportingDocumentUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors"
-                                                >
-                                                    View Evidence PDF
-                                                </a>
-                                            </div>
-                                        ) : (
-                                            <div className="relative group">
-                                                <img
-                                                    src={selectedTimesheet.supportingDocumentUrl}
-                                                    alt="Supporting Evidence"
-                                                    className="max-w-full h-auto rounded-lg shadow-sm"
-                                                />
-                                                <a
-                                                    href={selectedTimesheet.supportingDocumentUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity rounded-lg"
-                                                >
-                                                    <span className="bg-white text-slate-900 px-4 py-2 rounded-lg text-xs font-bold">Open Full Screen</span>
-                                                </a>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="text-center p-8">
-                                        <AlertCircle className="mx-auto text-slate-300 mb-2" size={24} />
-                                        <p className="text-xs text-slate-400 italic">No digital timesheet image attached.</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Audit Actions */}
-                        <div className="flex gap-3 justify-end pt-6 border-t border-slate-100 dark:border-slate-800">
-                            <Button variant="outline" className="text-red-600 border-red-100 hover:bg-red-50">
-                                <XCircle size={16} className="mr-2" />
-                                Reject Claim
-                            </Button>
-                            <Button className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-500/20" onClick={() => handleVerify(selectedJob)}>
-                                <CheckCircle2 size={16} className="mr-2" />
-                                Authorize for Billing
-                            </Button>
-                        </div>
-                    </div>
+              <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-500/30 dark:bg-blue-500/10">
+                <div className="mb-4 flex items-center gap-2">
+                  <Receipt size={17} className="text-blue-600 dark:text-blue-300" />
+                  <h3 className="text-sm font-black text-slate-950 dark:text-white">Claim record</h3>
+                </div>
+                {selectedRow.timesheet ? (
+                  <dl className="space-y-3 text-sm">
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Actual time</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatTime(selectedRow.timesheet.actualStart)} - {formatTime(selectedRow.timesheet.actualEnd)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Session</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.timesheet.sessionDurationMinutes || 0} min</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Travel</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.timesheet.travelTimeMinutes || 0} min · {money(selectedRow.timesheet.travelFees)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Expenses</dt><dd className="text-right font-black text-slate-900 dark:text-white">{money(Number(selectedRow.timesheet.parking || 0) + Number(selectedRow.timesheet.transport || 0))}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Submitted</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatDate(selectedRow.timesheet.submittedAt)}</dd></div>
+                  </dl>
+                ) : (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    No claim exists yet. Record a manual staff claim if the interpreter sent the timesheet outside the app.
+                  </div>
                 )}
-            </Modal>
+              </section>
+            </div>
+
+            {selectedRow.timesheet?.supportingDocumentUrl ? (
+              <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <div className="mb-3 flex items-center gap-2">
+                  <FileCheck size={17} className="text-emerald-600" />
+                  <h3 className="text-sm font-black text-slate-950 dark:text-white">Supporting evidence</h3>
+                </div>
+                <a href={selectedRow.timesheet.supportingDocumentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-bold text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800">
+                  Open attached document <ArrowUpRight size={14} />
+                </a>
+              </section>
+            ) : (
+              <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
+                  <AlertCircle size={17} />
+                  No digital evidence attached.
+                </div>
+              </section>
+            )}
+
+            <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
+              <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${selectedRow.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}>
+                Open job
+              </Button>
+              {selectedRow.stage === 'NEEDS_CLAIM' && (
+                <Button icon={FileText} onClick={() => handleRecordManualTimesheet(selectedRow)}>
+                  Record manual claim
+                </Button>
+              )}
+              {selectedRow.stage === 'SUBMITTED' && (
+                <Button icon={ShieldCheck} onClick={() => handleVerify(selectedRow)}>
+                  Authorize for billing
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+        <div className="flex items-start gap-3">
+          <UserCheck size={18} className="mt-0.5 text-emerald-700 dark:text-emerald-300" />
+          <div>
+            <p className="text-sm font-black text-emerald-950 dark:text-emerald-100">Hybrid rule</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-emerald-800 dark:text-emerald-200">
+              Interpreter app submissions and staff-recorded claims feed the same financial pipeline. Authorizing a claim moves the job to ready for invoice and marks both client billing and interpreter payable readiness.
+            </p>
+          </div>
         </div>
-    );
+      </div>
+    </div>
+  );
 };

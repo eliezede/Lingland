@@ -263,6 +263,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         const params = new URLSearchParams(location.search);
         const requestedView = params.get('view');
         const requestedLane = params.get('lane') as FinanceLane | null;
+        const requestedClientId = params.get('clientId');
+        const requestedInterpreterId = params.get('interpreterId');
 
         if (requestedView && views.some(view => view.id === requestedView)) {
             setActiveViewId(requestedView);
@@ -275,6 +277,11 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             && (requestedLane === 'clientBilling' || requestedLane === 'interpreterPayables')
         ) {
             setFinanceLane(requestedLane);
+            setCurrentPage(1);
+        }
+
+        if (requestedClientId || requestedInterpreterId) {
+            setQuickFilter('ALL');
             setCurrentPage(1);
         }
     }, [location.search, views, setActiveViewId, isFinanceWorkspace]);
@@ -643,10 +650,18 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         ? 'min-w-[1280px]'
         : hiddenColumns.has('location') ? 'min-w-[1040px]' : 'min-w-[1170px]';
 
+    const clientScopeId = useMemo(() => new URLSearchParams(location.search).get('clientId'), [location.search]);
+    const interpreterScopeId = useMemo(() => new URLSearchParams(location.search).get('interpreterId'), [location.search]);
+
     const searchFilteredBookings = useMemo(() => {
+        const scopedBookings = bookings.filter(b => {
+            if (clientScopeId && b.clientId !== clientScopeId) return false;
+            if (interpreterScopeId && b.interpreterId !== interpreterScopeId) return false;
+            return true;
+        });
         const query = searchQuery.trim().toLowerCase();
-        if (!query) return bookings;
-        return bookings.filter(b => (
+        if (!query) return scopedBookings;
+        return scopedBookings.filter(b => (
             b.bookingRef?.toLowerCase().includes(query) ||
             b.jobNumber?.toLowerCase().includes(query) ||
             b.displayRef?.toLowerCase().includes(query) ||
@@ -661,7 +676,19 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             b.interpreterName?.toLowerCase().includes(query) ||
             b.postcode?.toLowerCase().includes(query)
         ));
-    }, [bookings, searchQuery]);
+    }, [bookings, clientScopeId, interpreterScopeId, searchQuery]);
+
+    const scopedClientName = useMemo(() => {
+        if (!clientScopeId) return '';
+        const matchingBooking = bookings.find(job => job.clientId === clientScopeId);
+        return getClientCompany(clientScopeId, matchingBooking?.clientName || 'Client account');
+    }, [bookings, clientScopeId, getClientCompany]);
+
+    const scopedInterpreterName = useMemo(() => {
+        if (!interpreterScopeId) return '';
+        const matchingBooking = bookings.find(job => job.interpreterId === interpreterScopeId);
+        return matchingBooking?.interpreterName || 'Professional';
+    }, [bookings, interpreterScopeId]);
 
     const viewFilteredBookings = useMemo(
         () => filterBookings(searchFilteredBookings, activeView),
@@ -1331,7 +1358,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL'} onClick={() => setActiveToolPanel(activeToolPanel === 'filter' ? null : 'filter')} />
                         <ToolButton icon={Group} label="Group" active={activeToolPanel === 'group' || groupField !== 'view'} onClick={() => setActiveToolPanel(activeToolPanel === 'group' ? null : 'group')} />
                         <ToolButton icon={ArrowUpDown} label="Sort" active={activeToolPanel === 'sort'} onClick={() => setActiveToolPanel(activeToolPanel === 'sort' ? null : 'sort')} />
-                        <ToolButton icon={Maximize2} label="Open" onClick={() => navigate('/admin/bookings')} />
+                        <ToolButton icon={Maximize2} label={clientScopeId || interpreterScopeId ? 'All jobs' : 'Open'} onClick={() => navigate(workspacePath)} />
                         <ToolPanelContent />
                     </div>
 
@@ -1357,6 +1384,22 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 </div>
 
             </div>
+
+            {(clientScopeId || interpreterScopeId) && (
+                <div className="flex items-center justify-between gap-3 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+                    <div className="flex items-center gap-2 font-semibold">
+                        <Building2 size={14} />
+                        Showing jobs for <span className="font-black">{clientScopeId ? scopedClientName : scopedInterpreterName}</span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => navigate(workspacePath)}
+                        className="rounded-md px-2 py-1 font-black uppercase tracking-widest hover:bg-blue-100 dark:hover:bg-blue-900/40"
+                    >
+                        Clear client scope
+                    </button>
+                </div>
+            )}
 
             {isFinanceWorkspace && (
                 <FinanceSummaryBar lane={financeLane} recordCount={sortedBookings.length} summary={financeSummary} />
