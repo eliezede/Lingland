@@ -177,6 +177,7 @@ export const AdminBookingDetails = () => {
   const actionsRef = useRef<HTMLDivElement>(null);
   const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
   const returnLabel = routeState?.returnLabel || 'Previous page';
+  const bookingContextState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Booking record' };
   const goBackToContext = () => {
     if (routeState?.returnTo) {
       navigate(routeState.returnTo);
@@ -513,7 +514,7 @@ export const AdminBookingDetails = () => {
       label: 'Billing reference',
       ok: Boolean(booking.costCode),
       detail: booking.costCode || 'Missing PO / cost code',
-      action: () => navigate(`/admin/bookings/edit/${id}`, { state: { returnTo: `/admin/bookings/${id}`, returnLabel: 'Booking record' } }),
+      action: () => navigate(`/admin/bookings/edit/${id}`, { state: bookingContextState }),
     },
     {
       label: 'Claim recorded',
@@ -525,7 +526,7 @@ export const AdminBookingDetails = () => {
         BookingStatus.PAID,
       ].includes(booking.status)),
       detail: timesheet ? claimSourceLabel : 'No claim yet',
-      action: () => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`),
+      action: () => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState }),
     },
     {
       label: 'Billing issue',
@@ -742,7 +743,7 @@ export const AdminBookingDetails = () => {
                   size="sm"
                   variant="secondary"
                   icon={ArrowUpRight}
-                  onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`)}
+                  onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}
                 >
                   Claims
                 </Button>
@@ -961,7 +962,7 @@ export const AdminBookingDetails = () => {
                       size="sm"
                       variant="ghost"
                       icon={ArrowUpRight}
-                      onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`)}
+                      onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}
                     >
                       Open
                     </Button>
@@ -971,7 +972,7 @@ export const AdminBookingDetails = () => {
                   <Button
                     variant="secondary"
                     icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`)}
+                    onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`, { state: bookingContextState })}
                     className="w-full"
                   >
                     Open client invoice
@@ -981,13 +982,13 @@ export const AdminBookingDetails = () => {
                   <Button
                     variant="secondary"
                     icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing/interpreter-invoices/${booking.interpreterInvoiceId}`)}
+                    onClick={() => navigate(`/admin/billing/interpreter-invoices/${booking.interpreterInvoiceId}`, { state: bookingContextState })}
                     className="w-full"
                   >
                     Open interpreter invoice
                   </Button>
                 )}
-                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing')} className="w-full">Open finance board</Button>
+                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing', { state: bookingContextState })} className="w-full">Open finance board</Button>
               </div>
             </Section>
 

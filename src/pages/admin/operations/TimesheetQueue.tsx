@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -81,6 +81,7 @@ const getTimesheetStage = (timesheet: Timesheet, job?: Booking): ClaimStage => {
 
 export const TimesheetQueue = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const { bookings = [], loading: bookingsLoading, refresh } = useBookings();
@@ -92,6 +93,10 @@ export const TimesheetQueue = () => {
   const [query, setQuery] = useState(searchParams.get('jobId') || '');
   const [stageFilter, setStageFilter] = useState<'ALL' | ClaimStage>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | ClaimRow['source']>('ALL');
+  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+  const claimsReturnState = routeState?.returnTo
+    ? routeState
+    : { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Claims Workbench' };
 
   const loadTimesheets = async () => {
     setLoadingTimesheets(true);
@@ -348,7 +353,7 @@ export const TimesheetQueue = () => {
                   <tr
                     key={row.id}
                     onClick={() => setSelectedRow(row)}
-                    onDoubleClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}
+                    onDoubleClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: claimsReturnState })}
                     className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${selected ? 'bg-blue-50/50 dark:bg-blue-500/10' : ''}`}
                   >
                     <td className="px-4 py-4" onClick={event => event.stopPropagation()}>
@@ -401,7 +406,7 @@ export const TimesheetQueue = () => {
                       ) : row.stage === 'SUBMITTED' ? (
                         <Button size="sm" icon={ShieldCheck} onClick={() => handleVerify(row)}>Authorize</Button>
                       ) : (
-                        <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}>Open</Button>
+                        <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: claimsReturnState })}>Open</Button>
                       )}
                     </td>
                   </tr>
@@ -512,7 +517,7 @@ export const TimesheetQueue = () => {
             )}
 
             <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
-              <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${selectedRow.job.id}`, { state: { returnTo: '/admin/operations/timesheets', returnLabel: 'Claims Workbench' } })}>
+              <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/bookings/${selectedRow.job.id}`, { state: claimsReturnState })}>
                 Open job
               </Button>
               {selectedRow.stage === 'NEEDS_CLAIM' && (
