@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import { ClientService } from '../../../services/clientService';
 import { BookingService } from '../../../services/bookingService';
 import { BillingService } from '../../../services/billingService';
@@ -27,6 +27,7 @@ type Tab = 'ACTIVITY' | 'FINANCE' | 'ACCOUNT';
 export const AdminClientDetails = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const { openThread } = useChat();
     const { showToast } = useToast();
@@ -46,6 +47,16 @@ export const AdminClientDetails = () => {
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
     const [deleting, setDeleting] = useState(false);
+    const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+    const profileReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Client profile' };
+
+    const goBack = () => {
+        if (routeState?.returnTo) {
+            navigate(routeState.returnTo);
+            return;
+        }
+        navigate('/admin/clients');
+    };
 
     useEffect(() => {
         if (id) {
@@ -181,7 +192,7 @@ export const AdminClientDetails = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div className="flex items-center gap-4">
                     <button
-                        onClick={() => navigate('/admin/clients')}
+                        onClick={goBack}
                         className="w-10 h-10 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-400 hover:text-slate-900 transition-all hover:shadow-md"
                     >
                         <ChevronLeft size={20} />
@@ -293,7 +304,7 @@ export const AdminClientDetails = () => {
                             <Button
                                 variant="outline"
                                 icon={ArrowUpRight}
-                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`)}
+                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`, { state: profileReturnState })}
                                 className="w-full mt-2"
                             >
                                 Open client jobs
@@ -362,7 +373,7 @@ export const AdminClientDetails = () => {
                                         {jobs.length > 10 && (
                                             <button
                                                 type="button"
-                                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`)}
+                                                onClick={() => navigate(`/admin/bookings?clientId=${client.id}`, { state: profileReturnState })}
                                                 className="w-full rounded-xl border border-dashed border-slate-200 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-500 hover:border-blue-200 hover:text-blue-600"
                                             >
                                                 View all {jobs.length} jobs in Jobs Board
@@ -399,7 +410,7 @@ export const AdminClientDetails = () => {
                                             <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Recent client invoices</h4>
                                             <p className="text-xs font-semibold text-slate-500">Open invoice details for the complete ledger.</p>
                                         </div>
-                                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/client-invoices')}>
+                                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/client-invoices', { state: profileReturnState })}>
                                             Finance
                                         </Button>
                                     </div>

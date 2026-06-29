@@ -46,6 +46,8 @@ const inputClass = 'h-9 w-full rounded-md border border-slate-200 bg-white px-3 
 const textareaClass = 'min-h-32 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white';
 
 const serviceOptions = Object.values(ServiceType);
+const normalizeServiceType = (value?: string): ServiceType =>
+    serviceOptions.includes(value as ServiceType) ? value as ServiceType : ServiceType.FACE_TO_FACE;
 const genderOptions: Array<'None' | 'Male' | 'Female'> = ['None', 'Male', 'Female'];
 const translationFormats = ['Only Word', 'PDF', 'Certified', 'Other'];
 
@@ -148,6 +150,8 @@ export const AdminNewBooking = () => {
     const [clientSource, setClientSource] = useState<ClientSource>('GUEST');
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [selectedInterpreter, setSelectedInterpreter] = useState<Interpreter | null>(null);
+    const [interpreterTouched, setInterpreterTouched] = useState(false);
+    const [serviceTypeTouched, setServiceTypeTouched] = useState(false);
 
     const [formData, setFormData] = useState({
         costCode: '',
@@ -218,10 +222,12 @@ export const AdminNewBooking = () => {
             }
 
             setOriginalBooking(booking);
+            setInterpreterTouched(false);
+            setServiceTypeTouched(false);
             setOrganizationId(booking.organizationId || '');
             setFormData({
                 costCode: booking.costCode || '',
-                serviceType: booking.serviceType as ServiceType,
+                serviceType: normalizeServiceType(booking.serviceType),
                 languageFrom: booking.languageFrom || 'English',
                 languageTo: booking.languageTo || '',
                 date: booking.date || '',
@@ -336,6 +342,7 @@ export const AdminNewBooking = () => {
     };
 
     const selectServiceType = (serviceType: ServiceType) => {
+        setServiceTypeTouched(true);
         setFormData(prev => ({
             ...prev,
             serviceType,
@@ -352,9 +359,16 @@ export const AdminNewBooking = () => {
 
         setLoading(true);
         try {
+            const shouldPreserveLegacyServiceType = Boolean(
+                isEditMode &&
+                originalBooking?.serviceType &&
+                !serviceTypeTouched &&
+                !serviceOptions.includes(originalBooking.serviceType as ServiceType)
+            );
             const bookingData: any = {
+                ...(isEditMode && originalBooking ? originalBooking : {}),
                 costCode: formData.costCode,
-                serviceType: formData.serviceType,
+                serviceType: shouldPreserveLegacyServiceType ? originalBooking?.serviceType : formData.serviceType,
                 languageFrom: formData.languageFrom,
                 languageTo: formData.languageTo,
                 date: formData.date,
@@ -403,12 +417,15 @@ export const AdminNewBooking = () => {
             if (selectedInterpreter) {
                 bookingData.interpreterId = selectedInterpreter.id;
                 bookingData.interpreterName = selectedInterpreter.name;
-            } else if (isEditMode && originalBooking?.interpreterId) {
+                bookingData.interpreterPhotoUrl = selectedInterpreter.photoUrl || originalBooking?.interpreterPhotoUrl || null;
+            } else if (isEditMode && interpreterTouched) {
                 bookingData.interpreterId = null;
                 bookingData.interpreterName = null;
+                bookingData.interpreterPhotoUrl = null;
             }
 
             if (isEditMode) {
+                delete bookingData.id;
                 await BookingService.update(id!, bookingData);
                 showToast('Booking updated successfully', 'success');
                 returnToEditOrigin();
@@ -421,7 +438,7 @@ export const AdminNewBooking = () => {
                     await BookingService.createAssignment(createdBooking.id, selectedInterpreter.id);
                 }
                 showToast('Booking created successfully', 'success');
-                navigate('/admin/bookings');
+                navigate(routeState?.returnTo || '/admin/bookings');
             }
         } catch {
             showToast(isEditMode ? 'Failed to update booking' : 'Failed to create booking', 'error');
@@ -475,6 +492,12 @@ export const AdminNewBooking = () => {
             </div>
 
             <div className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
+                {isEditMode && originalBooking?.sourceSystem === 'AIRTABLE' && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+                        Airtable mirror job. Saving changes preserves the Airtable source record, legacy references and sync metadata while updating Lingland operational fields.
+                    </div>
+                )}
+
                 <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <div className="grid sm:grid-cols-2 lg:grid-cols-5">
                         <MetricCell icon={Building2} label="Requester" value={selectedClientLabel} tone={hasClient ? 'default' : 'warning'} />
@@ -699,7 +722,15 @@ export const AdminNewBooking = () => {
                                                 <p className="truncate text-sm font-semibold text-emerald-950 dark:text-emerald-100">{selectedInterpreter.name}</p>
                                                 <p className="truncate text-xs text-emerald-700 dark:text-emerald-300">{(selectedInterpreter.languages || []).slice(0, 4).join(', ')}</p>
                                             </div>
-                                            <button type="button" onClick={() => setSelectedInterpreter(null)} className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40" aria-label="Remove interpreter">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setSelectedInterpreter(null);
+                                                    setInterpreterTouched(true);
+                                                }}
+                                                className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
+                                                aria-label="Remove interpreter"
+                                            >
                                                 <X size={16} />
                                             </button>
                                         </div>
@@ -724,6 +755,7 @@ export const AdminNewBooking = () => {
                                                 type="button"
                                                 onClick={() => {
                                                     setSelectedInterpreter(interpreter);
+                                                    setInterpreterTouched(true);
                                                     setSearchingInterpreter('');
                                                 }}
                                                 className="flex w-full items-center justify-between gap-3 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800"

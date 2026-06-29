@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import {
   InterpreterService, BookingService, BillingService, ChatService, NotificationService, EmailService, UserService
 } from '../../../services/api';
@@ -31,6 +31,7 @@ type EditModalTab = 'PERSONAL' | 'FINANCE' | 'COMPLIANCE' | 'QUALIFICATIONS' | '
 export const AdminInterpreterDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { openThread } = useChat();
   const { showToast } = useToast();
@@ -54,6 +55,16 @@ export const AdminInterpreterDetails = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+  const profileReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Interpreter profile' };
+
+  const goBack = () => {
+    if (routeState?.returnTo) {
+      navigate(routeState.returnTo);
+      return;
+    }
+    navigate('/admin/interpreters');
+  };
 
   useEffect(() => {
     if (id) {
@@ -325,7 +336,7 @@ export const AdminInterpreterDetails = () => {
       <div className="space-y-4 pb-20">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
         <div className="flex items-center">
-          <button onClick={() => navigate('/admin/interpreters')} className="mr-3 p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500">
+          <button onClick={goBack} className="mr-3 p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500">
             <ChevronLeft size={20} />
           </button>
           <div className="flex items-center">
@@ -831,7 +842,7 @@ export const AdminInterpreterDetails = () => {
                           <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Recent payable documents</h4>
                           <p className="text-xs font-semibold text-slate-500">Open invoice details for full line-item review.</p>
                         </div>
-                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/interpreter-invoices')}>
+                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/interpreter-invoices', { state: profileReturnState })}>
                           Invoices
                         </Button>
                       </div>
@@ -869,7 +880,7 @@ export const AdminInterpreterDetails = () => {
                           <p className="text-sm font-bold text-red-600">Bank details missing</p>
                         )}
                       </div>
-                      <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables')} className="w-full">
+                      <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables', { state: profileReturnState })} className="w-full">
                         Open payables board
                       </Button>
                       <Button variant="outline" icon={Edit} onClick={() => { setEditModalTab('FINANCE'); setIsEditModalOpen(true); }} className="w-full">
