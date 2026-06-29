@@ -19,7 +19,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import {
-  ChevronLeft, Mail, Phone, MapPin, Languages,
+  Briefcase, ChevronLeft, Mail, Phone, MapPin, Languages,
   Award, ShieldCheck, ArrowUpRight, FileText, UserCircle2, Edit, Check, MessageSquare,
   Globe2, Zap, Clock, Banknote, Car, Info, AlertCircle, ExternalLink,
   User2, Home, Settings, Trash2
@@ -50,6 +50,8 @@ export const AdminInterpreterDetails = () => {
   const [saving, setSaving] = useState(false);
   const [processingChat, setProcessingChat] = useState(false);
   const [sendingInvite, setSendingInvite] = useState(false);
+  const [processingJobId, setProcessingJobId] = useState<string | null>(null);
+  const [processingClaimId, setProcessingClaimId] = useState<string | null>(null);
 
   // Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -314,6 +316,91 @@ export const AdminInterpreterDetails = () => {
   if (loading) return <div className="p-12 flex justify-center"><Spinner size="lg" /></div>;
   if (!interpreter) return <div className="p-12 text-center text-red-500 font-bold">Interpreter not found.</div>;
 
+  const address = (interpreter.address || {}) as NonNullable<Interpreter['address']>;
+  const qualifications = interpreter.qualifications || [];
+  const communicationMode = settings.platformMode?.communicationMode || 'SUPPRESSED';
+  const isExternalEmailLive = communicationMode === 'LIVE';
+  const formatDate = (value?: string) => {
+    if (!value) return 'No date';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const handleRecordManualTimesheet = async (job: Booking) => {
+    if (!id) return;
+    setProcessingClaimId(job.id);
+    try {
+      await BillingService.recordManualTimesheetReceived(job.id);
+      showToast('Manual claim recorded for review', 'success');
+      await loadData(id);
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record manual claim', 'error');
+    } finally {
+      setProcessingClaimId(null);
+    }
+  };
+
+  const handleApproveTimesheet = async (timesheet: Timesheet) => {
+    if (!id) return;
+    setProcessingClaimId(timesheet.id);
+    try {
+      await BillingService.approveTimesheet(timesheet.id);
+      showToast('Claim approved and moved to finance', 'success');
+      await loadData(id);
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to approve claim', 'error');
+    } finally {
+      setProcessingClaimId(null);
+    }
+  };
+
+  const handleRecordInterpreterResponse = async (job: Booking, accepted: boolean) => {
+    if (!id) return;
+    setProcessingJobId(job.id);
+    try {
+      await BookingService.recordInterpreterResponseByStaff(job.id, accepted);
+      showToast(accepted ? 'Interpreter acceptance recorded' : 'Interpreter decline recorded', 'success');
+      await loadData(id);
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record interpreter response', 'error');
+    } finally {
+      setProcessingJobId(null);
+    }
+  };
+
+  const handleRecordSessionCompleted = async (job: Booking) => {
+    if (!id) return;
+    setProcessingJobId(job.id);
+    try {
+      await BookingService.recordSessionCompletedByStaff(job.id);
+      showToast('Session completion recorded', 'success');
+      await loadData(id);
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to record session completion', 'error');
+    } finally {
+      setProcessingJobId(null);
+    }
+  };
+  const formatJobDate = (job: Booking) => {
+    const parsed = new Date([job.date, job.startTime].filter(Boolean).join(' '));
+    if (Number.isNaN(parsed.getTime())) return { day: job.date || 'No date', time: job.startTime || '' };
+    return {
+      day: parsed.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }),
+      time: job.startTime || parsed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    };
+  };
+  const openInterpreterJobs = () => {
+    navigate(`/admin/bookings?interpreterId=${interpreter.id}`, { state: profileReturnState });
+  };
+  const timesheetsByBookingId = new Map(timesheets.map(timesheet => [timesheet.bookingId, timesheet]));
+  const claimAmount = (timesheet: Timesheet) => Number(timesheet.interpreterAmountCalculated || timesheet.totalToPay || timesheet.sessionFees || 0);
+  const claimStatusLabel = (timesheet?: Timesheet) => {
+    if (!timesheet) return 'Missing';
+    if (timesheet.adminApproved || ['APPROVED', 'INVOICING', 'INVOICED'].includes(String(timesheet.status))) return 'Approved';
+    return 'Review';
+  };
+
   const upcomingJobsCount = jobs.filter(j => new Date(j.date) >= new Date() && ['BOOKED', 'ASSIGNMENT_PENDING', 'PENDING_ASSIGNMENT'].includes(String(j.status))).length;
   const completedJobsCount = jobs.filter(j => ['TIMESHEET_SUBMITTED', 'VERIFIED', 'INVOICING', 'INVOICED', 'PAID'].includes(String(j.status))).length;
   const money = (amount?: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -346,7 +433,7 @@ export const AdminInterpreterDetails = () => {
                 <h1 className="text-xl font-bold text-slate-900 tracking-tight">{interpreter.name}</h1>
                 <StatusBadge status={interpreter.status} />
               </div>
-              <p className="text-slate-500 text-xs font-medium">ID: {interpreter.id.toUpperCase()} • Joined: {interpreter.joinedDate ? new Date(interpreter.joinedDate).toLocaleDateString() : 'N/A'}</p>
+              <p className="text-slate-500 text-xs font-medium">ID: {interpreter.id.toUpperCase()} - Joined: {formatDate(interpreter.joinedDate)}</p>
             </div>
           </div>
         </div>
@@ -355,12 +442,14 @@ export const AdminInterpreterDetails = () => {
             <div className="flex flex-col items-end gap-1">
               <Button 
                 variant="outline" 
-                className={interpreter.activationEmailSentAt ? "border-amber-200 text-amber-700 hover:bg-amber-50" : "border-indigo-200 text-indigo-700 hover:bg-indigo-50"}
-                icon={interpreter.activationEmailSentAt ? Check : Mail} 
+                className={!isExternalEmailLive ? "border-slate-200 text-slate-400" : interpreter.activationEmailSentAt ? "border-amber-200 text-amber-700 hover:bg-amber-50" : "border-indigo-200 text-indigo-700 hover:bg-indigo-50"}
+                icon={!isExternalEmailLive ? Info : interpreter.activationEmailSentAt ? Check : Mail} 
                 isLoading={sendingInvite} 
+                disabled={!isExternalEmailLive}
                 onClick={handleSendActivation}
+                title={!isExternalEmailLive ? `External activation email blocked by ${communicationMode} mode` : undefined}
               >
-                {interpreter.activationEmailSentAt ? 'Resend Activation' : 'Send Activation'}
+                {!isExternalEmailLive ? 'Email Suppressed' : interpreter.activationEmailSentAt ? 'Resend Activation' : 'Send Activation'}
               </Button>
               {interpreter.activationEmailSentAt && (
                 <span className="text-[9px] font-bold text-slate-400 uppercase">
@@ -370,9 +459,16 @@ export const AdminInterpreterDetails = () => {
             </div>
           )}
           <Button variant="outline" icon={MessageSquare} isLoading={processingChat} onClick={handleStartChat}>Message</Button>
+          <Button variant="outline" icon={Briefcase} onClick={openInterpreterJobs}>Jobs</Button>
           <Button variant="primary" icon={Edit} onClick={handleEdit}>Edit Profile</Button>
         </div>
       </div>
+
+      {interpreter.status === 'IMPORTED' && !isExternalEmailLive && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+          Passive interpreter in {communicationMode} mode. Staff can assign jobs, record accepted work, process claims and invoices here without sending external activation emails.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <button
@@ -389,7 +485,7 @@ export const AdminInterpreterDetails = () => {
         >
           <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Work history</p>
           <p className="text-xl font-black text-slate-900">{jobs.length} jobs</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">{upcomingJobsCount} open · {completedJobsCount} delivered</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">{upcomingJobsCount} open - {completedJobsCount} delivered</p>
         </button>
         <button
           onClick={() => setActiveTab('FINANCE')}
@@ -405,7 +501,7 @@ export const AdminInterpreterDetails = () => {
         >
           <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-widest mb-1">Payables</p>
           <p className="text-xl font-black text-emerald-800">{money(payablePending)}</p>
-          <p className="mt-1 text-xs font-semibold text-emerald-700">{openInvoices} open invoices · {paidInvoices} paid</p>
+          <p className="mt-1 text-xs font-semibold text-emerald-700">{openInvoices} open invoices - {paidInvoices} paid</p>
         </button>
       </div>
 
@@ -425,7 +521,7 @@ export const AdminInterpreterDetails = () => {
                     <Mail size={12} className="mr-1.5 text-slate-400" /> {interpreter.email}
                   </div>
                   <div className="flex items-center text-xs font-semibold text-slate-700">
-                    <Phone size={12} className="mr-1.5 text-slate-400" /> {interpreter.phone}
+                    <Phone size={12} className="mr-1.5 text-slate-400" /> {interpreter.phone || 'No phone'}
                   </div>
                 </div>
               </div>
@@ -435,11 +531,11 @@ export const AdminInterpreterDetails = () => {
                   <Home size={10} className="text-slate-400" /> Residential Address
                 </label>
                 <div className="mt-1.5 p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                  <p className="text-xs font-bold text-slate-800">{interpreter.address.street || 'No street'}</p>
+                  <p className="text-xs font-bold text-slate-800">{address?.street || 'No street'}</p>
                   <p className="text-[10px] text-slate-500 font-medium">
-                    {interpreter.address.town}{interpreter.address.county ? `, ${interpreter.address.county}` : ''}
+                    {address?.town || 'No town'}{address?.county ? `, ${address.county}` : ''}
                   </p>
-                  <p className="text-[10px] text-blue-600 font-black tracking-widest">{interpreter.address.postcode}</p>
+                  <p className="text-[10px] text-blue-600 font-black tracking-widest">{address?.postcode || 'No postcode'}</p>
                 </div>
               </div>
 
@@ -472,11 +568,13 @@ export const AdminInterpreterDetails = () => {
               <div>
                 <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Qualifications</label>
                 <div className="mt-1.5 space-y-1.5">
-                  {interpreter.qualifications.map(qual => (
-                    <div key={qual} className="text-[11px] font-semibold text-slate-700 flex items-center">
-                      <Award size={12} className="mr-1.5 text-yellow-600" /> {qual}
-                    </div>
-                  ))}
+                  {qualifications.length === 0 ? (
+                    <p className="text-[10px] font-semibold text-slate-400">No qualifications recorded</p>
+                  ) : qualifications.map(qual => (
+                      <div key={qual} className="text-[11px] font-semibold text-slate-700 flex items-center">
+                        <Award size={12} className="mr-1.5 text-yellow-600" /> {qual}
+                      </div>
+                    ))}
                 </div>
               </div>
             </div>
@@ -491,7 +589,7 @@ export const AdminInterpreterDetails = () => {
               <div>
                 <p className="text-[9px] text-orange-700 uppercase font-bold tracking-widest">DBS Level / Expiry</p>
                 <p className={`text-xs font-bold mt-0.5 ${interpreter.dbs?.renewDate && new Date(interpreter.dbs.renewDate) < new Date() ? 'text-red-600' : 'text-slate-900'}`}>
-                  {interpreter.dbs?.level || 'N/A'} • {interpreter.dbs?.renewDate ? new Date(interpreter.dbs.renewDate).toLocaleDateString() : 'No date'}
+                  {interpreter.dbs?.level || 'N/A'} - {formatDate(interpreter.dbs?.renewDate)}
                   {interpreter.dbs?.renewDate && new Date(interpreter.dbs.renewDate) < new Date() && ' (EXPIRED)'}
                 </p>
               </div>
@@ -538,33 +636,134 @@ export const AdminInterpreterDetails = () => {
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50/80">
                       <tr>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Job</th>
                         <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
                         <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Client</th>
                         <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Workflow</th>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Claim</th>
                         <th className="px-6 py-4 text-right"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {jobs.length === 0 ? (
-                        <tr><td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-medium">No assigned jobs.</td></tr>
+                        <tr><td colSpan={7} className="px-6 py-12 text-center text-slate-400 font-medium">No assigned jobs.</td></tr>
                       ) : (
-                        jobs.map(job => (
-                          <tr key={job.id} className="hover:bg-slate-50/50 transition-colors">
+                        jobs.map(job => {
+                          const schedule = formatJobDate(job);
+                          const claim = timesheetsByBookingId.get(job.id);
+                          const canRecordResponse = Boolean(job.interpreterId && [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status));
+                          const canCompleteSession = job.status === BookingStatus.BOOKED;
+                          const canRecordClaim = job.status === BookingStatus.SESSION_COMPLETED && !claim;
+                          const canApproveClaim = Boolean(claim && !claim.adminApproved && String(claim.status) === 'SUBMITTED');
+                          return (
+                          <tr
+                            key={job.id}
+                            onDoubleClick={() => navigate(`/admin/bookings/${job.id}`, { state: profileReturnState })}
+                            className="hover:bg-slate-50/50 transition-colors"
+                          >
                             <td className="px-6 py-4">
-                              <div className="text-sm font-black text-slate-900">{new Date(job.date).toLocaleDateString()}</div>
-                              <div className="text-[10px] text-slate-500 font-bold uppercase">{job.startTime}</div>
+                              <div className="max-w-[150px] truncate text-sm font-black text-slate-900">{job.displayRef || job.jobNumber || job.bookingRef || job.id}</div>
+                              <div className="text-[10px] text-slate-500 font-bold uppercase">{job.serviceCategory || job.serviceType || 'Service'}</div>
                             </td>
                             <td className="px-6 py-4">
-                              <div className="text-sm font-bold text-slate-700">{job.clientName}</div>
-                              <div className="text-[10px] text-blue-600 font-black uppercase tracking-tighter">{job.languageTo}</div>
+                              <div className="text-sm font-black text-slate-900">{schedule.day}</div>
+                              <div className="text-[10px] text-slate-500 font-bold uppercase">{schedule.time}</div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="max-w-[220px] truncate text-sm font-bold text-slate-700">{job.clientName || job.guestContact?.organisation || 'No client'}</div>
+                              <div className="text-[10px] text-blue-600 font-black uppercase tracking-tighter">{job.languageFrom} to {job.languageTo}</div>
                             </td>
                             <td className="px-6 py-4">
                               <StatusBadge status={job.status} />
                             </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {canRecordResponse ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleRecordInterpreterResponse(job, true);
+                                      }}
+                                      disabled={processingJobId === job.id}
+                                      className="rounded-md border border-emerald-200 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                                    >
+                                      Accept
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleRecordInterpreterResponse(job, false);
+                                      }}
+                                      disabled={processingJobId === job.id}
+                                      className="rounded-md border border-red-200 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                    >
+                                      Decline
+                                    </button>
+                                  </>
+                                ) : canCompleteSession ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRecordSessionCompleted(job);
+                                    }}
+                                    disabled={processingJobId === job.id}
+                                    className="rounded-md border border-blue-200 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                  >
+                                    Complete
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">No action</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
+                                  claim?.adminApproved
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : claim
+                                      ? 'bg-amber-50 text-amber-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                  {claimStatusLabel(claim)}
+                                </span>
+                                {canRecordClaim && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRecordManualTimesheet(job);
+                                    }}
+                                    disabled={processingClaimId === job.id}
+                                    className="rounded-md border border-blue-200 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                  >
+                                    Record
+                                  </button>
+                                )}
+                                {canApproveClaim && claim && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleApproveTimesheet(claim);
+                                    }}
+                                    disabled={processingClaimId === claim.id}
+                                    className="rounded-md border border-emerald-200 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                                  >
+                                    Verify
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-6 py-4 text-right">
                               <button
                                 onClick={() => navigate(`/admin/bookings/${job.id}`, {
-                                  state: { returnTo: `/admin/interpreters/${id}`, returnLabel: 'Interpreter profile' },
+                                  state: profileReturnState,
                                 })}
                                 className="p-2 text-slate-400 hover:text-blue-600 transition-all"
                               >
@@ -572,7 +771,7 @@ export const AdminInterpreterDetails = () => {
                               </button>
                             </td>
                           </tr>
-                        ))
+                        )})
                       )}
                     </tbody>
                   </table>
@@ -766,7 +965,7 @@ export const AdminInterpreterDetails = () => {
                     </div>
                     <div className="text-right">
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Last Updated</p>
-                      <p className="text-xs font-bold text-slate-700">22 Mar 2024</p>
+                      <p className="text-xs font-bold text-slate-700">{formatDate((interpreter as any).updatedAt || (interpreter as any).lastUpdatedAt || interpreter.joinedDate)}</p>
                     </div>
                   </div>
 
@@ -816,33 +1015,88 @@ export const AdminInterpreterDetails = () => {
               )}
 
               {activeTab === 'FINANCE' && (
-                <div className="p-8 animate-in fade-in duration-300">
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Approved not invoiced</p>
-                      <p className="mt-2 text-2xl font-black text-slate-900">{money(payablePending)}</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">Claims ready for interpreter invoice</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Claims in review</p>
-                      <p className="mt-2 text-2xl font-black text-slate-900">{claimsInReview}</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">{timesheets.length} total claims</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Paid history</p>
-                      <p className="mt-2 text-2xl font-black text-slate-900">{money(paidTotal)}</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">{paidInvoices} paid invoices</p>
+                <div className="p-5 animate-in fade-in duration-300">
+                  <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-3 md:divide-x md:divide-y-0">
+                      {[
+                        { label: 'Ready for payable', value: money(payablePending), detail: 'Approved claims' },
+                        { label: 'Review queue', value: String(claimsInReview), detail: `${timesheets.length} total claims` },
+                        { label: 'Paid history', value: money(paidTotal), detail: `${paidInvoices} paid invoices` },
+                      ].map(item => (
+                        <div key={item.label} className="flex items-center justify-between gap-3 py-3 md:px-4 md:first:pl-0 md:last:pr-0">
+                          <div className="min-w-0">
+                            <p className="truncate text-[10px] font-black uppercase tracking-widest text-slate-400">{item.label}</p>
+                            <p className="truncate text-xs font-semibold text-slate-500">{item.detail}</p>
+                          </div>
+                          <p className="shrink-0 text-lg font-black text-slate-950">{item.value}</p>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6">
+                    <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Recent claims</h4>
+                          <p className="text-xs font-semibold text-slate-500">Staff-recorded and app-submitted timesheets for this professional.</p>
+                        </div>
+                        <Button size="sm" variant="secondary" icon={FileText} onClick={() => navigate(`/admin/operations/timesheets?interpreterId=${encodeURIComponent(interpreter.id)}`, { state: profileReturnState })}>
+                          Claims
+                        </Button>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {timesheets.length === 0 ? (
+                          <div className="px-5 py-10 text-center text-sm font-semibold text-slate-400">No claims recorded yet.</div>
+                        ) : timesheets.slice(0, 6).map(timesheet => {
+                          const job = jobs.find(item => item.id === timesheet.bookingId);
+                          const canApprove = !timesheet.adminApproved && String(timesheet.status) === 'SUBMITTED';
+                          return (
+                            <div key={timesheet.id} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                              <button
+                                type="button"
+                                onClick={() => timesheet.bookingId && navigate(`/admin/bookings/${timesheet.bookingId}`, { state: profileReturnState })}
+                                className="min-w-0 text-left"
+                              >
+                                <p className="truncate text-sm font-black text-slate-900">
+                                  {job?.displayRef || job?.jobNumber || job?.bookingRef || timesheet.bookingId}
+                                </p>
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                  {formatDate(timesheet.submittedAt || timesheet.createdAt)} - {timesheet.source || 'INTERPRETER_APP'} - {claimAmount(timesheet) ? money(claimAmount(timesheet)) : 'No amount'}
+                                </p>
+                              </button>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
+                                  timesheet.adminApproved ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                  {claimStatusLabel(timesheet)}
+                                </span>
+                                {canApprove && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    icon={ShieldCheck}
+                                    isLoading={processingClaimId === timesheet.id}
+                                    onClick={() => handleApproveTimesheet(timesheet)}
+                                  >
+                                    Verify
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                       <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                         <div>
                           <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Recent payable documents</h4>
                           <p className="text-xs font-semibold text-slate-500">Open invoice details for full line-item review.</p>
                         </div>
-                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/interpreter-invoices', { state: profileReturnState })}>
+                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing/interpreter-invoices?interpreterId=${encodeURIComponent(interpreter.id)}`, { state: profileReturnState })}>
                           Invoices
                         </Button>
                       </div>
@@ -852,12 +1106,12 @@ export const AdminInterpreterDetails = () => {
                         ) : invoices.slice(0, 6).map(inv => (
                           <button
                             key={inv.id}
-                            onClick={() => navigate(`/admin/billing/interpreter-invoices/${inv.id}`)}
+                            onClick={() => navigate(`/admin/billing/interpreter-invoices/${inv.id}`, { state: profileReturnState })}
                             className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50"
                           >
                             <div className="min-w-0">
                               <p className="truncate text-sm font-black text-slate-900">{inv.externalInvoiceReference || inv.id.substring(0, 8)}</p>
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{new Date(inv.issueDate).toLocaleDateString()}</p>
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{formatDate(inv.issueDate)}</p>
                             </div>
                             <div className="flex shrink-0 items-center gap-3">
                               <span className="text-sm font-black text-slate-900">{money(inv.totalAmount)}</span>
@@ -867,6 +1121,7 @@ export const AdminInterpreterDetails = () => {
                         ))}
                       </div>
                     </div>
+                    </div>
 
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -874,13 +1129,13 @@ export const AdminInterpreterDetails = () => {
                         {interpreter.bankDetails ? (
                           <div className="space-y-2">
                             <p className="text-sm font-black text-slate-900">{interpreter.bankDetails.accountName || 'Account name missing'}</p>
-                            <p className="text-xs font-bold text-slate-500 tracking-widest">{interpreter.bankDetails.sortCode || 'No sort code'} · {interpreter.bankDetails.accountNumber || 'No account'}</p>
+                            <p className="text-xs font-bold text-slate-500 tracking-widest">{interpreter.bankDetails.sortCode || 'No sort code'} - {interpreter.bankDetails.accountNumber || 'No account'}</p>
                           </div>
                         ) : (
                           <p className="text-sm font-bold text-red-600">Bank details missing</p>
                         )}
                       </div>
-                      <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables', { state: profileReturnState })} className="w-full">
+                      <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables&interpreterId=${encodeURIComponent(interpreter.id)}`, { state: profileReturnState })} className="w-full">
                         Open payables board
                       </Button>
                       <Button variant="outline" icon={Edit} onClick={() => { setEditModalTab('FINANCE'); setIsEditModalOpen(true); }} className="w-full">
@@ -903,7 +1158,7 @@ export const AdminInterpreterDetails = () => {
           <div className="flex items-center gap-4 px-1 mt-1 mb-4 pb-4 border-b border-slate-100">
             <UserAvatar src={formData.photoUrl} name={formData.name || ''} size="md" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-slate-800 truncate">{formData.name || 'Loading…'}</p>
+              <p className="text-sm font-bold text-slate-800 truncate">{formData.name || 'Loading...'}</p>
               <p className="text-xs text-slate-400 font-medium">{formData.email || ''}</p>
             </div>
             <span className={`shrink-0 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wide ${getStatusBadgeClass(formData.status || '')}`}>{formData.status}</span>

@@ -649,6 +649,173 @@ export const BillingService = {
     }
   },
 
+  recordManualInterpreterInvoiceReceived: async (bookingId: string): Promise<void> => {
+    try {
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+      const booking = { id: bookingSnap.id, ...bookingSnap.data() } as Booking;
+
+      const timesheet = await BillingService.getTimesheetByBookingId(bookingId);
+      if (!timesheet || !timesheet.adminApproved) {
+        throw new Error('Approved timesheet required before recording an interpreter invoice.');
+      }
+      if (!booking.interpreterId && !timesheet.interpreterId) {
+        throw new Error('Interpreter required before recording an interpreter invoice.');
+      }
+
+      const interpreterId = booking.interpreterId || timesheet.interpreterId;
+      const interpreterName = booking.interpreterName || 'Interpreter';
+      const manualRef = booking.interpreterInvoiceReference || booking.interpreterInvoiceNumber || `INT-${booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id.slice(0, 8)}`;
+      const payableAmount = getTimesheetInterpreterAmount(timesheet);
+      const now = new Date().toISOString();
+
+      const invoiceRef = doc(collection(db, 'interpreterInvoices'));
+      const lineRef = doc(collection(db, 'interpreterInvoiceLines'));
+      const batch = writeBatch(db);
+
+      batch.set(invoiceRef, {
+        organizationId: booking.organizationId || timesheet.organizationId || 'lingland-main',
+        createdAt: now,
+        updatedAt: now,
+        interpreterId,
+        interpreterName,
+        model: 'UPLOAD',
+        status: InvoiceStatus.SUBMITTED,
+        externalInvoiceReference: manualRef,
+        totalAmount: payableAmount,
+        issueDate: now,
+        items: [],
+        currency: booking.currency || 'GBP'
+      });
+
+      batch.set(lineRef, {
+        interpreterInvoiceId: invoiceRef.id,
+        timesheetId: timesheet.id,
+        bookingId,
+        description: `Interpreter payable ${booking.displayRef || booking.jobNumber || booking.bookingRef || booking.id}`,
+        units: timesheet.unitsPayableToInterpreter || timesheet.sessionDurationMinutes || timesheet.wordCount || 1,
+        rate: 0,
+        total: payableAmount,
+        createdAt: now
+      });
+
+      batch.update(doc(db, 'timesheets', timesheet.id), {
+        status: 'INVOICED',
+        interpreterInvoiceId: invoiceRef.id,
+        readyForInterpreterInvoice: false,
+        updatedAt: serverTimestamp()
+      });
+
+      batch.update(bookingRef, {
+        interpreterInvoiceId: invoiceRef.id,
+        interpreterInvoiceReference: manualRef,
+        interpreterInvoiceNumber: manualRef,
+        updatedAt: serverTimestamp()
+      });
+
+      await batch.commit();
+
+      await addDoc(collection(db, 'jobEvents'), {
+        jobId: booking.id,
+        organizationId: booking.organizationId || 'lingland-main',
+        type: 'INTERPRETER_INVOICE_RECEIVED',
+        source: 'admin',
+        description: 'Interpreter invoice was recorded manually by staff.',
+        metadata: {
+          interpreterInvoiceId: invoiceRef.id,
+          interpreterInvoiceReference: manualRef,
+          recordedByStaff: true,
+          source: 'manual_staff'
+        },
+        createdAt: now
+      });
+    } catch (e) {
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+      const mockTimesheet = MOCK_TIMESHEETS.find(t => t.bookingId === bookingId);
+      if (mockBooking && mockTimesheet && mockTimesheet.adminApproved) {
+        const manualRef = mockBooking.interpreterInvoiceReference || mockBooking.interpreterInvoiceNumber || `INT-${mockBooking.displayRef || mockBooking.jobNumber || mockBooking.bookingRef || mockBooking.id.slice(0, 8)}`;
+        const invoiceId = `inv-int-${Date.now()}`;
+        mockTimesheet.status = 'INVOICED';
+        mockTimesheet.interpreterInvoiceId = invoiceId;
+        mockTimesheet.readyForInterpreterInvoice = false;
+        mockBooking.interpreterInvoiceId = invoiceId;
+        mockBooking.interpreterInvoiceReference = manualRef;
+        mockBooking.interpreterInvoiceNumber = manualRef;
+        MOCK_INTERPRETER_INVOICES.push({
+          id: invoiceId,
+          organizationId: mockBooking.organizationId || 'lingland-main',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          interpreterId: mockBooking.interpreterId || mockTimesheet.interpreterId,
+          interpreterName: mockBooking.interpreterName || 'Interpreter',
+          model: 'UPLOAD',
+          status: InvoiceStatus.SUBMITTED,
+          externalInvoiceReference: manualRef,
+          totalAmount: getTimesheetInterpreterAmount(mockTimesheet),
+          issueDate: new Date().toISOString(),
+          items: [],
+          currency: mockBooking.currency || 'GBP'
+        } as InterpreterInvoice);
+        saveMockData();
+        return;
+      }
+      throw e;
+    }
+  },
+
+  recordManualInterpreterPaymentSent: async (bookingId: string): Promise<void> => {
+    try {
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+      if (!bookingSnap.exists()) throw new Error('Booking not found');
+      const booking = { id: bookingSnap.id, ...bookingSnap.data() } as Booking;
+      if (!booking.interpreterInvoiceId) {
+        throw new Error('Interpreter invoice must be recorded before marking it paid.');
+      }
+
+      const now = new Date().toISOString();
+      await updateDoc(doc(db, 'interpreterInvoices', booking.interpreterInvoiceId), {
+        status: InvoiceStatus.PAID,
+        paidAt: now,
+        updatedAt: serverTimestamp()
+      });
+
+      await updateDoc(bookingRef, {
+        interpreterPaymentStatus: 'PAID',
+        interpreterPaidAt: now,
+        updatedAt: serverTimestamp()
+      } as any);
+
+      await addDoc(collection(db, 'jobEvents'), {
+        jobId: booking.id,
+        organizationId: booking.organizationId || 'lingland-main',
+        type: 'INTERPRETER_PAYMENT_SENT',
+        source: 'admin',
+        description: 'Interpreter payment was recorded manually by staff.',
+        metadata: {
+          interpreterInvoiceId: booking.interpreterInvoiceId,
+          recordedByStaff: true,
+          source: 'manual_staff'
+        },
+        createdAt: now
+      });
+    } catch (e) {
+      const mockBooking = MOCK_BOOKINGS.find(b => b.id === bookingId);
+      const invoice = mockBooking?.interpreterInvoiceId
+        ? MOCK_INTERPRETER_INVOICES.find(inv => inv.id === mockBooking.interpreterInvoiceId)
+        : null;
+      if (mockBooking && invoice) {
+        invoice.status = InvoiceStatus.PAID;
+        (mockBooking as any).interpreterPaymentStatus = 'PAID';
+        (mockBooking as any).interpreterPaidAt = new Date().toISOString();
+        saveMockData();
+        return;
+      }
+      throw e;
+    }
+  },
+
   recordManualPaymentReceived: async (bookingId: string): Promise<void> => {
     try {
       const bookingRef = doc(db, 'bookings', bookingId);

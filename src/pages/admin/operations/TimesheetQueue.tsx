@@ -93,6 +93,7 @@ export const TimesheetQueue = () => {
   const [query, setQuery] = useState(searchParams.get('jobId') || '');
   const [stageFilter, setStageFilter] = useState<'ALL' | ClaimStage>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | ClaimRow['source']>('ALL');
+  const scopedInterpreterId = searchParams.get('interpreterId') || '';
   const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
   const claimsReturnState = routeState?.returnTo
     ? routeState
@@ -138,12 +139,18 @@ export const TimesheetQueue = () => {
         source: 'MISSING' as const,
       }));
 
-    return [...missingClaimRows, ...timesheetRows].sort((a, b) => {
+    const scopedRows = [...missingClaimRows, ...timesheetRows].filter(row =>
+      scopedInterpreterId
+        ? row.job.interpreterId === scopedInterpreterId || row.timesheet?.interpreterId === scopedInterpreterId
+        : true
+    );
+
+    return scopedRows.sort((a, b) => {
       const aDate = a.timesheet?.submittedAt || `${a.job.date}T${a.job.startTime || '00:00'}:00`;
       const bDate = b.timesheet?.submittedAt || `${b.job.date}T${b.job.startTime || '00:00'}:00`;
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
-  }, [bookings, timesheets]);
+  }, [bookings, scopedInterpreterId, timesheets]);
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -235,7 +242,7 @@ export const TimesheetQueue = () => {
     <div className="space-y-5 pb-20">
       <PageHeader
         title="Claims Workbench"
-        subtitle="Hybrid control for interpreter app submissions, manual staff claims and Airtable mirrored timesheets."
+        subtitle={scopedInterpreterId ? 'Claims filtered from an interpreter profile.' : 'Hybrid control for interpreter app submissions, manual staff claims and Airtable mirrored timesheets.'}
       >
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => navigate('/admin/billing?view=fin-timesheets&lane=interpreterPayables')} icon={ArrowUpRight} variant="secondary" size="sm">
@@ -280,6 +287,11 @@ export const TimesheetQueue = () => {
                 className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-500/20"
               />
             </div>
+            {scopedInterpreterId && (
+              <div className="flex h-10 items-center rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-black uppercase tracking-wide text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
+                Interpreter scoped
+              </div>
+            )}
             <select
               value={stageFilter}
               onChange={event => setStageFilter(event.target.value as 'ALL' | ClaimStage)}
@@ -384,7 +396,7 @@ export const TimesheetQueue = () => {
                     <td className="px-4 py-4">
                       <p className="text-sm font-black text-slate-900 dark:text-slate-100">{formatDate(row.job.date)}</p>
                       <p className="text-xs font-semibold text-blue-600 dark:text-blue-300">
-                        {row.timesheet ? `${formatTime(row.timesheet.actualStart)} - ${formatTime(row.timesheet.actualEnd)}` : `${formatTime(row.job.startTime)} · ${row.job.durationMinutes || 0}m`}
+                        {row.timesheet ? `${formatTime(row.timesheet.actualStart)} - ${formatTime(row.timesheet.actualEnd)}` : `${formatTime(row.job.startTime)} - ${row.job.durationMinutes || 0}m`}
                       </p>
                     </td>
                     <td className="px-4 py-4">
@@ -485,7 +497,7 @@ export const TimesheetQueue = () => {
                   <dl className="space-y-3 text-sm">
                     <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Actual time</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatTime(selectedRow.timesheet.actualStart)} - {formatTime(selectedRow.timesheet.actualEnd)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Session</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.timesheet.sessionDurationMinutes || 0} min</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Travel</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.timesheet.travelTimeMinutes || 0} min · {money(selectedRow.timesheet.travelFees)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Travel</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.timesheet.travelTimeMinutes || 0} min - {money(selectedRow.timesheet.travelFees)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Expenses</dt><dd className="text-right font-black text-slate-900 dark:text-white">{money(Number(selectedRow.timesheet.parking || 0) + Number(selectedRow.timesheet.transport || 0))}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="font-bold text-blue-500">Submitted</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatDate(selectedRow.timesheet.submittedAt)}</dd></div>
                   </dl>

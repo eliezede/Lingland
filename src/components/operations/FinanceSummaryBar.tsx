@@ -4,8 +4,10 @@ export type FinanceLane = 'clientBilling' | 'interpreterPayables';
 
 interface FinanceSummary {
     totalClientCharge: number;
+    totalProfessionalCost: number;
     readyCount: number;
     readyAmount: number;
+    payRunReadyAmount: number;
     awaitingPaymentCount: number;
     awaitingPaymentAmount: number;
     missingCostCodeCount: number;
@@ -30,9 +32,9 @@ export const FinanceSummaryBar: React.FC<FinanceSummaryBarProps> = ({ lane, reco
                 <p className="mt-0.5 text-base font-black text-slate-950 dark:text-white">{recordCount}</p>
             </div>
             <div className="border-r border-slate-200 px-3 py-2 dark:border-slate-800">
-                <p className="font-bold uppercase tracking-wide text-slate-400">{isPayables ? 'Professionals' : 'Client Charge'}</p>
+                <p className="font-bold uppercase tracking-wide text-slate-400">{isPayables ? 'Payable Total' : 'Client Charge'}</p>
                 <p className="mt-0.5 text-base font-black text-slate-950 dark:text-white">
-                    {isPayables ? summary.uniqueProfessionalCount : `GBP ${summary.totalClientCharge.toFixed(2)}`}
+                    GBP {(isPayables ? summary.totalProfessionalCost : summary.totalClientCharge).toFixed(2)}
                 </p>
             </div>
             <div className="border-r border-slate-200 px-3 py-2 dark:border-slate-800">
@@ -62,7 +64,11 @@ export const FinanceSummaryBar: React.FC<FinanceSummaryBarProps> = ({ lane, reco
                         ? 'text-slate-950 dark:text-white'
                         : summary.missingCostCodeCount > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-950 dark:text-white'
                 }`}>
-                    {isPayables ? summary.readyCount : summary.missingCostCodeCount}
+                    {isPayables ? (
+                        <>
+                            {summary.readyCount} <span className="text-xs text-slate-500">/ GBP {summary.payRunReadyAmount.toFixed(2)}</span>
+                        </>
+                    ) : summary.missingCostCodeCount}
                 </p>
             </div>
         </div>

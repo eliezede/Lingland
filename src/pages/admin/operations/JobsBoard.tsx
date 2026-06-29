@@ -30,6 +30,7 @@ import {
     Search,
     SlidersHorizontal,
     Trash2,
+    User,
     UserCheck,
     UserPlus,
     Video,
@@ -551,15 +552,16 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 const paymentStatus = (job as any).paymentStatus;
                 const paymentLabels: Record<string, string> = {
                     NOT_READY: 'Not ready',
-                    READY_FOR_INVOICE: 'Invoice ready',
-                    INVOICED: 'Awaiting payment',
+                    READY_FOR_INVOICE: financeLane === 'interpreterPayables' ? 'Pay run ready' : 'Invoice ready',
+                    INVOICED: financeLane === 'interpreterPayables' ? 'Awaiting payout' : 'Awaiting payment',
                     PAID: 'Paid',
                     ISSUE: 'Billing issue',
                 };
                 const label = (job as any).billingIssueFlag ? 'Billing issue' :
                     paymentStatus && paymentLabels[paymentStatus] ? paymentLabels[paymentStatus] :
+                    financeLane === 'interpreterPayables' && ((job as any).interpreterInvoiceId || (job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference) ? 'Interpreter invoiced' :
                     job.clientInvoiceId || job.clientInvoiceNumber || job.clientInvoiceReference ? 'Awaiting payment' :
-                    job.timesheetVerifiedAt || job.billingReadyAt || invoiceWorkStatuses.includes(job.status) ? 'Invoice ready' :
+                    job.timesheetVerifiedAt || job.billingReadyAt || invoiceWorkStatuses.includes(job.status) ? (financeLane === 'interpreterPayables' ? 'Pay run ready' : 'Invoice ready') :
                     job.timesheetId || job.status === BookingStatus.TIMESHEET_SUBMITTED ? 'Timesheet review' :
                     job.status === BookingStatus.SESSION_COMPLETED ? 'Timesheet needed' :
                     'Not ready';
@@ -571,14 +573,20 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             label: 'Invoice Ref',
             width: 'minmax(122px, .68fr)',
             icon: Receipt,
-            getSortValue: job => (job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceId || '',
+            getSortValue: job => financeLane === 'interpreterPayables'
+                ? ((job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference || (job as any).interpreterInvoiceId || '')
+                : ((job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceId || ''),
             render: job => {
                 const invoiceRef = (job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceReference || (job as any).clientInvoiceId;
                 const interpreterRef = (job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference || (job as any).interpreterInvoiceId;
+                const primaryRef = financeLane === 'interpreterPayables' ? interpreterRef : invoiceRef;
+                const secondaryRef = financeLane === 'interpreterPayables'
+                    ? (invoiceRef ? `Client ${invoiceRef}` : 'Interpreter payable')
+                    : (interpreterRef ? `INT ${interpreterRef}` : 'Client invoice');
                 return (
                     <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{invoiceRef || 'Not issued'}</p>
-                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{interpreterRef ? `INT ${interpreterRef}` : 'Client invoice'}</p>
+                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{primaryRef || 'Not issued'}</p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{secondaryRef}</p>
                     </div>
                 );
             },
@@ -600,11 +608,18 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                     if (job.status === BookingStatus.TIMESHEET_SUBMITTED) {
                         return <Button size="sm" variant="secondary" icon={FileText} onClick={(e) => { e.stopPropagation(); handleVerifyTimesheet(job); }}>Verify</Button>;
                     }
+                    if (financeLane === 'interpreterPayables' && (job as any).interpreterInvoiceId && (job as any).interpreterPaymentStatus !== 'PAID') {
+                        return <Button size="sm" variant="secondary" icon={PoundSterling} onClick={(e) => { e.stopPropagation(); handleRecordInterpreterPaymentSent(job); }}>Paid</Button>;
+                    }
                     if (invoiceWorkStatuses.includes(job.status)) {
-                        return <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInvoiceIssued(job); }}>Invoice</Button>;
+                        return financeLane === 'interpreterPayables'
+                            ? <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInterpreterInvoiceReceived(job); }}>Payable</Button>
+                            : <Button size="sm" variant="secondary" icon={Receipt} onClick={(e) => { e.stopPropagation(); handleRecordInvoiceIssued(job); }}>Invoice</Button>;
                     }
                     if (job.status === BookingStatus.INVOICED) {
-                        return <Button size="sm" variant="secondary" icon={PoundSterling} onClick={(e) => { e.stopPropagation(); handleRecordPaymentReceived(job); }}>Paid</Button>;
+                        return financeLane === 'interpreterPayables'
+                            ? <Button size="sm" variant="secondary" icon={PoundSterling} onClick={(e) => { e.stopPropagation(); handleRecordInterpreterPaymentSent(job); }}>Paid</Button>
+                            : <Button size="sm" variant="secondary" icon={PoundSterling} onClick={(e) => { e.stopPropagation(); handleRecordPaymentReceived(job); }}>Paid</Button>;
                     }
                     return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); openJobDetails(job); }}>Open</Button>;
                 }
@@ -635,7 +650,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 return <Button size="sm" variant="ghost" icon={ArrowUpRight} onClick={(e) => { e.stopPropagation(); openJobDetails(job); }}>Open</Button>;
             },
         },
-    ], [getClientCompany, isFinanceWorkspace]);
+    ], [financeLane, getClientCompany, isFinanceWorkspace]);
 
     const orderedColumns = useMemo(() => {
         if (!isFinanceWorkspace) return columns;
@@ -762,6 +777,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
 
     const financeSummary = useMemo(() => {
         const totalClientCharge = sortedBookings.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0);
+        const getProfessionalCost = (job: Booking) => Number((job as any).interpreterAmountCalculated || (job as any).professionalCost || 0);
+        const totalProfessionalCost = sortedBookings.reduce((sum, job) => sum + getProfessionalCost(job), 0);
         const readyForInvoice = sortedBookings.filter(job => invoiceWorkStatuses.includes(job.status));
         const awaitingPayment = sortedBookings.filter(job => job.status === BookingStatus.INVOICED);
         const missingCostCode = sortedBookings.filter(job => !job.costCode);
@@ -770,8 +787,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         const uniqueProfessionals = new Set(sortedBookings.map(job => job.interpreterId || job.interpreterName).filter(Boolean));
         return {
             totalClientCharge,
+            totalProfessionalCost,
             readyCount: readyForInvoice.length,
             readyAmount: readyForInvoice.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
+            payRunReadyAmount: readyForInvoice.reduce((sum, job) => sum + getProfessionalCost(job), 0),
             awaitingPaymentCount: awaitingPayment.length,
             awaitingPaymentAmount: awaitingPayment.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
             missingCostCodeCount: missingCostCode.length,
@@ -964,6 +983,42 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         }
     };
 
+    const handleRecordInterpreterInvoiceReceived = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Interpreter Invoice',
+            message: 'Use this when Accounts received or created the interpreter payable outside the platform.',
+            confirmLabel: 'Record Payable',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BillingService.recordManualInterpreterInvoiceReceived(job.id);
+            refresh();
+            showToast('Interpreter invoice recorded', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record interpreter invoice', 'error');
+        }
+    };
+
+    const handleRecordInterpreterPaymentSent = async (job: Booking) => {
+        const ok = await confirm({
+            title: 'Record Interpreter Payment',
+            message: 'Use this when Accounts confirmed the interpreter payable has been paid.',
+            confirmLabel: 'Mark Paid',
+            variant: 'primary',
+        });
+        if (!ok) return;
+
+        try {
+            await BillingService.recordManualInterpreterPaymentSent(job.id);
+            refresh();
+            showToast('Interpreter payment recorded', 'success');
+        } catch (e: any) {
+            showToast(e?.message || 'Failed to record interpreter payment', 'error');
+        }
+    };
+
     const handleRecordPaymentReceived = async (job: Booking) => {
         const ok = await confirm({
             title: 'Record Payment Received',
@@ -1088,11 +1143,26 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         ...(job.status === BookingStatus.SESSION_COMPLETED
             ? [{ label: 'Record Timesheet', icon: FileText, onClick: () => handleRecordManualTimesheet(job) }]
             : []),
+        ...(isFinanceWorkspace && financeLane === 'interpreterPayables' && (job as any).interpreterInvoiceId && (job as any).interpreterPaymentStatus !== 'PAID'
+            ? [{ label: 'Mark Interpreter Paid', icon: PoundSterling, onClick: () => handleRecordInterpreterPaymentSent(job) }]
+            : []),
         ...(invoiceWorkStatuses.includes(job.status)
-            ? [{ label: 'Mark Invoiced', icon: Receipt, onClick: () => handleRecordInvoiceIssued(job) }]
+            ? [{
+                label: isFinanceWorkspace && financeLane === 'interpreterPayables' ? 'Record Interpreter Invoice' : 'Mark Invoiced',
+                icon: Receipt,
+                onClick: () => isFinanceWorkspace && financeLane === 'interpreterPayables'
+                    ? handleRecordInterpreterInvoiceReceived(job)
+                    : handleRecordInvoiceIssued(job)
+            }]
             : []),
         ...(job.status === BookingStatus.INVOICED
-            ? [{ label: 'Mark Paid', icon: Receipt, onClick: () => handleRecordPaymentReceived(job) }]
+            ? [{
+                label: isFinanceWorkspace && financeLane === 'interpreterPayables' ? 'Mark Interpreter Paid' : 'Mark Paid',
+                icon: isFinanceWorkspace && financeLane === 'interpreterPayables' ? PoundSterling : Receipt,
+                onClick: () => isFinanceWorkspace && financeLane === 'interpreterPayables'
+                    ? handleRecordInterpreterPaymentSent(job)
+                    : handleRecordPaymentReceived(job)
+            }]
             : []),
         ...(isFinanceWorkspace
             ? [{ label: 'Flag Billing Issue', icon: AlertCircle, onClick: () => handleFlagBillingIssue(job) }]
@@ -1391,15 +1461,15 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             {(clientScopeId || interpreterScopeId) && (
                 <div className="flex items-center justify-between gap-3 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
                     <div className="flex items-center gap-2 font-semibold">
-                        <Building2 size={14} />
-                        Showing jobs for <span className="font-black">{clientScopeId ? scopedClientName : scopedInterpreterName}</span>
+                        {clientScopeId ? <Building2 size={14} /> : <User size={14} />}
+                        Showing {clientScopeId ? 'client jobs' : 'professional jobs'} for <span className="font-black">{clientScopeId ? scopedClientName : scopedInterpreterName}</span>
                     </div>
                     <button
                         type="button"
                         onClick={() => navigate(workspacePath)}
                         className="rounded-md px-2 py-1 font-black uppercase tracking-widest hover:bg-blue-100 dark:hover:bg-blue-900/40"
                     >
-                        Clear client scope
+                        Clear {clientScopeId ? 'client' : 'professional'} scope
                     </button>
                 </div>
             )}
@@ -1493,8 +1563,29 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 actions={isFinanceWorkspace ? [
                     { label: 'Timesheet', icon: FileText, onClick: (ids) => handleBulkManualStep(ids, 'Record Timesheet', async job => { await BillingService.recordManualTimesheetReceived(job.id); }) },
                     { label: 'Verify', icon: CheckCircle2, onClick: (ids) => handleBulkManualStep(ids, 'Verify Timesheet', job => BillingService.approveTimesheetByBookingId(job.id)), variant: 'success' },
-                    { label: 'Invoice', icon: Receipt, onClick: (ids) => handleBulkManualStep(ids, 'Mark Invoiced', job => BillingService.recordManualInvoiceIssued(job.id)) },
-                    { label: 'Paid', icon: PoundSterling, onClick: (ids) => handleBulkManualStep(ids, 'Mark Paid', job => BillingService.recordManualPaymentReceived(job.id)), variant: 'success' },
+                    {
+                        label: financeLane === 'interpreterPayables' ? 'Payable' : 'Invoice',
+                        icon: Receipt,
+                        onClick: (ids) => handleBulkManualStep(
+                            ids,
+                            financeLane === 'interpreterPayables' ? 'Record Interpreter Invoice' : 'Mark Invoiced',
+                            job => financeLane === 'interpreterPayables'
+                                ? BillingService.recordManualInterpreterInvoiceReceived(job.id)
+                                : BillingService.recordManualInvoiceIssued(job.id)
+                        )
+                    },
+                    {
+                        label: 'Paid',
+                        icon: PoundSterling,
+                        onClick: (ids) => handleBulkManualStep(
+                            ids,
+                            financeLane === 'interpreterPayables' ? 'Mark Interpreter Paid' : 'Mark Paid',
+                            job => financeLane === 'interpreterPayables'
+                                ? BillingService.recordManualInterpreterPaymentSent(job.id)
+                                : BillingService.recordManualPaymentReceived(job.id)
+                        ),
+                        variant: 'success'
+                    },
                     { label: 'Flag issue', icon: AlertCircle, onClick: (ids) => handleBulkManualStep(ids, 'Flag Billing Issue', async job => {
                         await BookingService.update(job.id, {
                             ...({
@@ -1563,11 +1654,18 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                 {selectedJob.status === BookingStatus.TIMESHEET_SUBMITTED && (
                                     <Button size="sm" onClick={() => handleVerifyTimesheet(selectedJob)} icon={FileText} className="col-span-2">Verify timesheet</Button>
                                 )}
+                                {isFinanceWorkspace && financeLane === 'interpreterPayables' && (selectedJob as any).interpreterInvoiceId && (selectedJob as any).interpreterPaymentStatus !== 'PAID' && (
+                                    <Button size="sm" onClick={() => handleRecordInterpreterPaymentSent(selectedJob)} icon={PoundSterling} className="col-span-2">Mark interpreter paid</Button>
+                                )}
                                 {invoiceWorkStatuses.includes(selectedJob.status) && (
-                                    <Button size="sm" onClick={() => handleRecordInvoiceIssued(selectedJob)} icon={Receipt} className="col-span-2">Mark invoiced</Button>
+                                    isFinanceWorkspace && financeLane === 'interpreterPayables'
+                                        ? <Button size="sm" onClick={() => handleRecordInterpreterInvoiceReceived(selectedJob)} icon={Receipt} className="col-span-2">Record payable</Button>
+                                        : <Button size="sm" onClick={() => handleRecordInvoiceIssued(selectedJob)} icon={Receipt} className="col-span-2">Mark invoiced</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.INVOICED && (
-                                    <Button size="sm" onClick={() => handleRecordPaymentReceived(selectedJob)} icon={Receipt} className="col-span-2">Mark paid</Button>
+                                    isFinanceWorkspace && financeLane === 'interpreterPayables'
+                                        ? <Button size="sm" onClick={() => handleRecordInterpreterPaymentSent(selectedJob)} icon={PoundSterling} className="col-span-2">Mark interpreter paid</Button>
+                                        : <Button size="sm" onClick={() => handleRecordPaymentReceived(selectedJob)} icon={Receipt} className="col-span-2">Mark paid</Button>
                                 )}
                                 {selectedJob.status === BookingStatus.PAID && (
                                     <p className="col-span-2 rounded-md bg-emerald-50 p-2 text-center text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">Completed and paid</p>

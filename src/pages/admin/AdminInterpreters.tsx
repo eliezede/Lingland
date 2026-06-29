@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { InterpreterService } from '../../services/interpreterService';
 import { BookingService } from '../../services/bookingService';
 import { BillingService } from '../../services/billingService';
@@ -23,6 +23,7 @@ import {
   Check,
   CreditCard,
   ExternalLink,
+  FileText,
   Languages,
   MessageSquare,
   Search,
@@ -37,6 +38,7 @@ interface InterpreterWithStats extends Interpreter {
   activeJobs: number;
   completedJobs: number;
   claimsInReview: number;
+  missingClaims: number;
   approvedClaims: number;
   payablePending: number;
   openInvoices: number;
@@ -47,6 +49,7 @@ interface InterpreterWithStats extends Interpreter {
 
 export const AdminInterpreters = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { openThread } = useChat();
   const { showToast } = useToast();
@@ -57,7 +60,9 @@ export const AdminInterpreters = () => {
   const [textFilter, setTextFilter] = useState('');
   const [langFilter, setLangFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED' | 'IMPORTED'>('ALL');
+  const [queueFilter, setQueueFilter] = useState<'ALL' | 'CLAIMS' | 'PAYABLES'>('ALL');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const crmReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Interpreter CRM' };
 
   useEffect(() => {
     loadInterpreters();
@@ -137,6 +142,8 @@ export const AdminInterpreters = () => {
       BookingStatus.PAID,
     ]);
     const payableTimesheets = timesheets.filter(ts => ts.adminApproved && !ts.interpreterInvoiceId);
+    const bookingsWithTimesheet = new Set(timesheets.map(ts => ts.bookingId));
+    const missingClaims = jobs.filter(job => job.status === BookingStatus.SESSION_COMPLETED && !bookingsWithTimesheet.has(job.id)).length;
     const sortedDates = jobs
       .map(job => new Date([job.date, job.startTime].filter(Boolean).join(' ')))
       .filter(date => !Number.isNaN(date.getTime()))
@@ -147,6 +154,7 @@ export const AdminInterpreters = () => {
       activeJobs: jobs.filter(job => activeStatuses.has(String(job.status))).length,
       completedJobs: jobs.filter(job => completedStatuses.has(String(job.status))).length,
       claimsInReview: timesheets.filter(ts => !ts.adminApproved && ts.status === 'SUBMITTED').length,
+      missingClaims,
       approvedClaims: timesheets.filter(ts => ts.adminApproved || ['INVOICING', 'INVOICED'].includes(String(ts.status))).length,
       payablePending: payableTimesheets.reduce((sum, ts) => sum + Number(ts.interpreterAmountCalculated || ts.totalToPay || 0), 0),
       openInvoices: invoices.filter(inv => inv.status !== InvoiceStatus.PAID && inv.status !== InvoiceStatus.CANCELLED).length,
@@ -164,14 +172,19 @@ export const AdminInterpreters = () => {
     const languageSource = i.languages?.length ? i.languages : i.languageProficiencies?.map(p => p.language) || [];
     const matchesLang = langFilter ? languageSource.some(l => l.toLowerCase().includes(langFilter.toLowerCase())) : true;
     const matchesStatus = statusFilter === 'ALL' ? true : i.status === statusFilter;
-    return matchesText && matchesLang && matchesStatus;
+    const matchesQueue = queueFilter === 'ALL'
+      ? true
+      : queueFilter === 'CLAIMS'
+        ? i.claimsInReview > 0 || i.missingClaims > 0
+        : i.payablePending > 0 || i.openInvoices > 0;
+    return matchesText && matchesLang && matchesStatus && matchesQueue;
   });
 
   const summary = {
     total: interpreters.length,
     active: interpreters.filter(i => i.status === 'ACTIVE').length,
     passive: interpreters.filter(i => i.status === 'IMPORTED').length,
-    claims: interpreters.reduce((sum, i) => sum + i.claimsInReview, 0),
+    claims: interpreters.reduce((sum, i) => sum + i.claimsInReview + i.missingClaims, 0),
     payables: interpreters.reduce((sum, i) => sum + i.payablePending, 0),
   };
 
@@ -236,7 +249,19 @@ export const AdminInterpreters = () => {
   };
 
   const openInterpreterJobs = (interpreter: InterpreterWithStats) => {
-    navigate(`/admin/bookings?interpreterId=${interpreter.id}`);
+    navigate(`/admin/bookings?interpreterId=${interpreter.id}`, { state: crmReturnState });
+  };
+
+  const openInterpreterProfile = (interpreter: InterpreterWithStats) => {
+    navigate(`/admin/interpreters/${interpreter.id}`, { state: crmReturnState });
+  };
+
+  const openInterpreterClaims = (interpreter: InterpreterWithStats) => {
+    navigate(`/admin/operations/timesheets?interpreterId=${interpreter.id}`, { state: crmReturnState });
+  };
+
+  const openInterpreterPayables = (interpreter: InterpreterWithStats) => {
+    navigate(`/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables&interpreterId=${interpreter.id}`, { state: crmReturnState });
   };
 
   const interpreterColumns = [
@@ -293,6 +318,11 @@ export const AdminInterpreters = () => {
             <Badge variant={i.claimsInReview > 0 ? 'warning' : 'neutral'} className="text-[10px] py-0 px-1.5">
               {i.claimsInReview} review
             </Badge>
+            {i.missingClaims > 0 && (
+              <Badge variant="danger" className="text-[10px] py-0 px-1.5">
+                {i.missingClaims} missing
+              </Badge>
+            )}
             <span className="text-xs font-black text-slate-900 dark:text-white">{money(i.payablePending)}</span>
           </div>
           <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -326,20 +356,20 @@ export const AdminInterpreters = () => {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
         {[
-          { label: 'Pool', value: summary.total, detail: 'professionals', icon: UserCircle2, tone: 'bg-slate-50 text-slate-700 border-slate-200' },
-          { label: 'Active', value: summary.active, detail: 'platform ready', icon: ShieldCheck, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-          { label: 'Passive import', value: summary.passive, detail: 'staff managed', icon: Languages, tone: 'bg-blue-50 text-blue-700 border-blue-100' },
-          { label: 'Claims', value: summary.claims, detail: 'need review', icon: Briefcase, tone: summary.claims ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-700 border-slate-200' },
-          { label: 'Payables', value: money(summary.payables), detail: 'approved not invoiced', icon: WalletCards, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+          { label: 'Pool', value: summary.total, detail: 'professionals', icon: UserCircle2, tone: 'bg-slate-50 text-slate-700 border-slate-200', onClick: () => { setStatusFilter('ALL'); setQueueFilter('ALL'); } },
+          { label: 'Active', value: summary.active, detail: 'platform ready', icon: ShieldCheck, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100', onClick: () => { setStatusFilter('ACTIVE'); setQueueFilter('ALL'); } },
+          { label: 'Passive import', value: summary.passive, detail: 'staff managed', icon: Languages, tone: 'bg-blue-50 text-blue-700 border-blue-100', onClick: () => { setStatusFilter('IMPORTED'); setQueueFilter('ALL'); } },
+          { label: 'Claims', value: summary.claims, detail: 'missing or review', icon: Briefcase, tone: summary.claims ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-700 border-slate-200', onClick: () => { setStatusFilter('ALL'); setQueueFilter('CLAIMS'); } },
+          { label: 'Payables', value: money(summary.payables), detail: 'approved not invoiced', icon: WalletCards, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100', onClick: () => { setStatusFilter('ALL'); setQueueFilter('PAYABLES'); } },
         ].map(card => (
-          <div key={card.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <button key={card.label} onClick={card.onClick} className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800">
             <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg border ${card.tone}`}>
               <card.icon size={18} />
             </div>
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{card.label}</p>
             <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{card.value}</p>
             <p className="text-xs font-semibold text-slate-500">{card.detail}</p>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -376,6 +406,15 @@ export const AdminInterpreters = () => {
             <option value="SUSPENDED" className="dark:bg-slate-900">Suspended</option>
           </select>
         </div>
+        {queueFilter !== 'ALL' && (
+          <button
+            type="button"
+            onClick={() => setQueueFilter('ALL')}
+            className="h-10 rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-black uppercase tracking-wide text-blue-700 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200"
+          >
+            {queueFilter === 'CLAIMS' ? 'Claims queue' : 'Payables queue'} ×
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -399,11 +438,12 @@ export const AdminInterpreters = () => {
             selectable
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
-            onRowClick={(interpreter) => navigate(`/admin/interpreters/${interpreter.id}`)}
+            onRowClick={openInterpreterProfile}
             renderContextMenu={(interpreter) => [
-              { label: 'Open profile', icon: ExternalLink, onClick: () => navigate(`/admin/interpreters/${interpreter.id}`) },
+              { label: 'Open profile', icon: ExternalLink, onClick: () => openInterpreterProfile(interpreter) },
               { label: 'Open assigned jobs', icon: Briefcase, onClick: () => openInterpreterJobs(interpreter) },
-              { label: 'Open payables board', icon: CreditCard, onClick: () => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables') },
+              { label: 'Open claims', icon: FileText, onClick: () => openInterpreterClaims(interpreter) },
+              { label: 'Open payables board', icon: CreditCard, onClick: () => openInterpreterPayables(interpreter) },
               { label: 'Message', icon: MessageSquare, onClick: () => handleStartChat(undefined, interpreter.id, interpreter.name, interpreter.photoUrl) },
             ]}
           />

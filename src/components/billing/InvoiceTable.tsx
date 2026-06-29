@@ -8,15 +8,16 @@ import { UserAvatar } from '../ui/UserAvatar';
 interface Props {
   invoices: (ClientInvoice | InterpreterInvoice)[];
   type: 'CLIENT' | 'INTERPRETER';
+  boardPath?: string;
 }
 
 const money = (amount: number, currency = 'GBP') => (
   `${currency} ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 );
 
-export const InvoiceTable: React.FC<Props> = ({ invoices, type }) => {
+export const InvoiceTable: React.FC<Props> = ({ invoices, type, boardPath }) => {
   const basePath = type === 'CLIENT' ? '/admin/billing/client-invoices' : '/admin/billing/interpreter-invoices';
-  const boardPath = type === 'CLIENT'
+  const defaultBoardPath = type === 'CLIENT'
     ? '/admin/billing?view=fin-awaiting-payment&lane=clientBilling'
     : '/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables';
 
@@ -87,7 +88,7 @@ export const InvoiceTable: React.FC<Props> = ({ invoices, type }) => {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      <Link to={boardPath} className="inline-flex items-center text-xs font-bold text-slate-500 hover:text-blue-600">
+                      <Link to={boardPath || defaultBoardPath} className="inline-flex items-center text-xs font-bold text-slate-500 hover:text-blue-600">
                         Board <ArrowUpRight size={13} className="ml-1" />
                       </Link>
                       <Link to={`${basePath}/${inv.id}`} className="inline-flex items-center text-sm font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300">
