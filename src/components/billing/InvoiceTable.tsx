@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ArrowUpRight, Eye, FileText } from 'lucide-react';
 import { ClientInvoice, InterpreterInvoice } from '../../types';
 import { InvoiceStatusBadge } from './InvoiceStatusBadge';
@@ -16,10 +16,15 @@ const money = (amount: number, currency = 'GBP') => (
 );
 
 export const InvoiceTable: React.FC<Props> = ({ invoices, type, boardPath }) => {
+  const location = useLocation();
   const basePath = type === 'CLIENT' ? '/admin/billing/client-invoices' : '/admin/billing/interpreter-invoices';
   const defaultBoardPath = type === 'CLIENT'
     ? '/admin/billing?view=fin-awaiting-payment&lane=clientBilling'
     : '/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables';
+  const returnState = {
+    returnTo: `${location.pathname}${location.search}`,
+    returnLabel: type === 'CLIENT' ? 'Client Invoices' : 'Interpreter Invoices',
+  };
 
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900">
@@ -88,10 +93,10 @@ export const InvoiceTable: React.FC<Props> = ({ invoices, type, boardPath }) => 
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      <Link to={boardPath || defaultBoardPath} className="inline-flex items-center text-xs font-bold text-slate-500 hover:text-blue-600">
+                      <Link to={boardPath || defaultBoardPath} state={returnState} className="inline-flex items-center text-xs font-bold text-slate-500 hover:text-blue-600">
                         Board <ArrowUpRight size={13} className="ml-1" />
                       </Link>
-                      <Link to={`${basePath}/${inv.id}`} className="inline-flex items-center text-sm font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300">
+                      <Link to={`${basePath}/${inv.id}`} state={returnState} className="inline-flex items-center text-sm font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300">
                         <Eye size={16} className="mr-1" /> View
                       </Link>
                     </div>

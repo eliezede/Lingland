@@ -354,7 +354,7 @@ export const AdminClients = () => {
             renderContextMenu={(client) => [
               { label: 'Open profile', icon: ExternalLink, onClick: () => navigate(`/admin/clients/${client.id}`) },
               { label: 'Open client jobs', icon: Briefcase, onClick: () => navigate(`/admin/bookings?clientId=${client.id}`) },
-              { label: 'Open finance board', icon: CreditCard, onClick: () => navigate(`/admin/billing?lane=clientBilling`) },
+              { label: 'Open finance board', icon: CreditCard, onClick: () => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling&clientId=${encodeURIComponent(client.id)}`) },
               { label: 'Message', icon: MessageSquare, onClick: () => handleStartChat(undefined, client.id, client.companyName, client.photoUrl) },
             ]}
           />

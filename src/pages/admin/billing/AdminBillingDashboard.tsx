@@ -134,7 +134,7 @@ export const AdminBillingDashboard = () => {
           </p>
         </div>
         <Link
-          to="/admin/billing"
+          to="/admin/billing?view=fin-billing-queue&lane=clientBilling"
           className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
         >
           <PoundSterling size={16} /> Open Finance Board

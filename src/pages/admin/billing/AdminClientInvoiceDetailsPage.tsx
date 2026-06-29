@@ -85,6 +85,8 @@ export const AdminClientInvoiceDetailsPage = () => {
 
   const total = invoice.totalAmount || summary.subtotal;
   const currency = invoice.currency || 'GBP';
+  const currentPath = `${location.pathname}${location.search}`;
+  const financeBoardPath = `/admin/billing?view=fin-awaiting-payment&lane=clientBilling${invoice.clientId ? `&clientId=${encodeURIComponent(invoice.clientId)}` : ''}`;
 
   return (
     <div className="space-y-5">
@@ -111,7 +113,8 @@ export const AdminClientInvoiceDetailsPage = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling"
+            to={financeBoardPath}
+            state={{ returnTo: currentPath, returnLabel: 'Client Invoice' }}
             className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             Finance Board <ArrowUpRight size={15} />
@@ -218,7 +221,7 @@ export const AdminClientInvoiceDetailsPage = () => {
                     {item.bookingId ? (
                       <Link
                         to={`/admin/bookings/${item.bookingId}`}
-                        state={{ returnTo: `/admin/billing/client-invoices/${invoice.id}`, returnLabel: 'Client Invoice' }}
+                        state={{ returnTo: currentPath, returnLabel: 'Client Invoice' }}
                         className="inline-flex items-center gap-1 text-sm font-black text-blue-600 hover:text-blue-700 dark:text-blue-300"
                       >
                         {item.bookingReference || item.jobNumber || item.bookingId}

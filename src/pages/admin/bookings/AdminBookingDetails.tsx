@@ -988,7 +988,24 @@ export const AdminBookingDetails = () => {
                     Open interpreter invoice
                   </Button>
                 )}
-                <Button variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing', { state: bookingContextState })} className="w-full">Open finance board</Button>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Button
+                    variant="secondary"
+                    icon={ArrowUpRight}
+                    onClick={() => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling${booking.clientId ? `&clientId=${encodeURIComponent(booking.clientId)}` : ''}`, { state: bookingContextState })}
+                    className="w-full"
+                  >
+                    Client billing
+                  </Button>
+                  <Button
+                    variant="outline"
+                    icon={ArrowUpRight}
+                    onClick={() => navigate(`/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables${booking.interpreterId ? `&interpreterId=${encodeURIComponent(booking.interpreterId)}` : ''}`, { state: bookingContextState })}
+                    className="w-full"
+                  >
+                    Payables
+                  </Button>
+                </div>
               </div>
             </Section>
 

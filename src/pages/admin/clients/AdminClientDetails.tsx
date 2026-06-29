@@ -410,7 +410,7 @@ export const AdminClientDetails = () => {
                                             <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Recent client invoices</h4>
                                             <p className="text-xs font-semibold text-slate-500">Open invoice details for the complete ledger.</p>
                                         </div>
-                                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate('/admin/billing/client-invoices', { state: profileReturnState })}>
+                                        <Button size="sm" variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing/client-invoices?clientId=${encodeURIComponent(client.id)}`, { state: profileReturnState })}>
                                             Finance
                                         </Button>
                                     </div>

@@ -90,9 +90,10 @@ export const TimesheetQueue = () => {
   const [selectedRow, setSelectedRow] = useState<ClaimRow | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkLoading, setIsBulkLoading] = useState(false);
-  const [query, setQuery] = useState(searchParams.get('jobId') || '');
+  const [query, setQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<'ALL' | ClaimStage>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | ClaimRow['source']>('ALL');
+  const scopedJobId = searchParams.get('jobId') || '';
   const scopedInterpreterId = searchParams.get('interpreterId') || '';
   const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
   const claimsReturnState = routeState?.returnTo
@@ -139,18 +140,18 @@ export const TimesheetQueue = () => {
         source: 'MISSING' as const,
       }));
 
-    const scopedRows = [...missingClaimRows, ...timesheetRows].filter(row =>
-      scopedInterpreterId
-        ? row.job.interpreterId === scopedInterpreterId || row.timesheet?.interpreterId === scopedInterpreterId
-        : true
-    );
+    const scopedRows = [...missingClaimRows, ...timesheetRows].filter(row => {
+      if (scopedJobId && row.job.id !== scopedJobId && row.timesheet?.bookingId !== scopedJobId) return false;
+      if (scopedInterpreterId && row.job.interpreterId !== scopedInterpreterId && row.timesheet?.interpreterId !== scopedInterpreterId) return false;
+      return true;
+    });
 
     return scopedRows.sort((a, b) => {
       const aDate = a.timesheet?.submittedAt || `${a.job.date}T${a.job.startTime || '00:00'}:00`;
       const bDate = b.timesheet?.submittedAt || `${b.job.date}T${b.job.startTime || '00:00'}:00`;
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
-  }, [bookings, scopedInterpreterId, timesheets]);
+  }, [bookings, scopedInterpreterId, scopedJobId, timesheets]);
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -242,10 +243,19 @@ export const TimesheetQueue = () => {
     <div className="space-y-5 pb-20">
       <PageHeader
         title="Claims Workbench"
-        subtitle={scopedInterpreterId ? 'Claims filtered from an interpreter profile.' : 'Hybrid control for interpreter app submissions, manual staff claims and Airtable mirrored timesheets.'}
+        subtitle={scopedJobId
+          ? 'Claims filtered from a booking record.'
+          : scopedInterpreterId
+            ? 'Claims filtered from an interpreter profile.'
+            : 'Hybrid control for interpreter app submissions, manual staff claims and Airtable mirrored timesheets.'}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => navigate('/admin/billing?view=fin-timesheets&lane=interpreterPayables')} icon={ArrowUpRight} variant="secondary" size="sm">
+          {(scopedJobId || scopedInterpreterId) && (
+            <Button onClick={() => navigate('/admin/operations/timesheets')} variant="outline" size="sm">
+              Clear scope
+            </Button>
+          )}
+          <Button onClick={() => navigate(`/admin/billing?view=fin-timesheets&lane=interpreterPayables${scopedInterpreterId ? `&interpreterId=${encodeURIComponent(scopedInterpreterId)}` : ''}`)} icon={ArrowUpRight} variant="secondary" size="sm">
             Finance view
           </Button>
           <Button onClick={refreshAll} icon={FileCheck} variant="secondary" size="sm">
@@ -287,9 +297,9 @@ export const TimesheetQueue = () => {
                 className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-blue-500/20"
               />
             </div>
-            {scopedInterpreterId && (
+            {(scopedJobId || scopedInterpreterId) && (
               <div className="flex h-10 items-center rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-black uppercase tracking-wide text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
-                Interpreter scoped
+                {scopedJobId ? 'Job scoped' : 'Interpreter scoped'}
               </div>
             )}
             <select
