@@ -418,6 +418,12 @@ export const AdminInterpreterDetails = () => {
     ? (interpreter.activationEmailSentAt ? 'Activation sent' : 'Passive imported')
     : 'Platform active';
   const sourceLabel = (interpreter as any).sourceSystem === 'AIRTABLE' ? 'Airtable import' : ((interpreter as any).sourceSystem || 'Platform');
+  const profileSignals: Array<{ label: string; value: string | number; detail: string; tab: Tab; tone: string }> = [
+    { label: 'Mode', value: activationState, detail: sourceLabel, tab: 'COMPLIANCE', tone: 'text-slate-700 bg-slate-50 border-slate-100' },
+    { label: 'Jobs', value: jobs.length, detail: `${upcomingJobsCount} open - ${completedJobsCount} delivered`, tab: 'JOBS', tone: 'text-blue-700 bg-blue-50 border-blue-100' },
+    { label: 'Claims', value: `${claimsInReview} review`, detail: `${approvedClaims} authorized`, tab: 'FINANCE', tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+    { label: 'Payables', value: money(payablePending), detail: `${openInvoices} open - ${paidInvoices} paid`, tab: 'FINANCE', tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+  ];
   return (
     <>
       <div className="space-y-4 pb-20">
@@ -470,39 +476,28 @@ export const AdminInterpreterDetails = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <button
-          onClick={handleEdit}
-          className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:bg-slate-50"
-        >
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Account mode</p>
-          <p className="text-xl font-black text-slate-900">{activationState}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">{sourceLabel}</p>
-        </button>
-        <button
-          onClick={() => setActiveTab('JOBS')}
-          className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:bg-slate-50"
-        >
-          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Work history</p>
-          <p className="text-xl font-black text-slate-900">{jobs.length} jobs</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">{upcomingJobsCount} open - {completedJobsCount} delivered</p>
-        </button>
-        <button
-          onClick={() => setActiveTab('FINANCE')}
-          className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 text-left shadow-sm hover:bg-blue-50"
-        >
-          <p className="text-blue-500 text-[10px] font-bold uppercase tracking-widest mb-1">Claims</p>
-          <p className="text-xl font-black text-blue-700">{claimsInReview} review</p>
-          <p className="mt-1 text-xs font-semibold text-blue-600">{approvedClaims} authorized</p>
-        </button>
-        <button
-          onClick={() => setActiveTab('FINANCE')}
-          className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-left shadow-sm hover:bg-emerald-50"
-        >
-          <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-widest mb-1">Payables</p>
-          <p className="text-xl font-black text-emerald-800">{money(payablePending)}</p>
-          <p className="mt-1 text-xs font-semibold text-emerald-700">{openInvoices} open invoices - {paidInvoices} paid</p>
-        </button>
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {profileSignals.map(signal => (
+            <button
+              key={signal.label}
+              type="button"
+              onClick={() => setActiveTab(signal.tab)}
+              className={`flex h-9 items-center gap-2 rounded-md border px-2.5 text-left transition-colors hover:bg-white ${signal.tone}`}
+            >
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{signal.label}</span>
+              <span className="max-w-[180px] truncate text-sm font-black text-slate-950">{signal.value}</span>
+              <span className="hidden text-[10px] font-bold text-slate-500 lg:inline">{signal.detail}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+          {interpreter.status === 'IMPORTED' ? (
+            <span className="inline-flex items-center gap-1"><Info size={13} /> Passive staff-managed profile</span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-emerald-700"><Check size={13} /> App-enabled profile</span>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -601,30 +596,30 @@ export const AdminInterpreterDetails = () => {
           </Card>
         </div>
 
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="flex border-b border-slate-200 bg-slate-50/50">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="flex flex-wrap gap-1 border-b border-slate-200 bg-slate-50/70 p-1">
               <button
                 onClick={() => setActiveTab('JOBS')}
-                className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'JOBS' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'JOBS' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 Jobs ({jobs.length})
               </button>
               <button
                 onClick={() => setActiveTab('FINANCE')}
-                className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'FINANCE' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'FINANCE' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 Claims & Pay
               </button>
               <button
                 onClick={() => setActiveTab('COMPLIANCE')}
-                className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'COMPLIANCE' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'COMPLIANCE' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 Compliance
               </button>
               <button
                 onClick={() => setActiveTab('RATES')}
-                className={`px-8 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'RATES' ? 'border-b-4 border-blue-600 text-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+                className={`rounded-md px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'RATES' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 Rates
               </button>

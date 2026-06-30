@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -47,6 +47,7 @@ type AssignmentFilter = 'ALL' | 'NEEDS_ASSIGNMENT' | 'WAITING_RESPONSE';
 
 export const AssignmentCenter = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
@@ -62,6 +63,7 @@ export const AssignmentCenter = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('ALL');
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const assignmentReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Assignment Center' };
 
   const visibleJobs = assignmentFilter === 'NEEDS_ASSIGNMENT'
     ? needsAssignment
@@ -79,7 +81,7 @@ export const AssignmentCenter = () => {
   const openAssignmentHub = (job: Booking) => {
     if (job.interpreterId) {
       navigate(`/admin/bookings/${job.id}`, {
-        state: { returnTo: '/admin/operations/assignments', returnLabel: 'Assignment Center' },
+        state: assignmentReturnState,
       });
       return;
     }
@@ -240,11 +242,11 @@ export const AssignmentCenter = () => {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => navigate('/admin/bookings?view=sys-unassigned')}
-                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-black uppercase tracking-wide text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
+                  <button
+                    type="button"
+                    onClick={() => navigate('/admin/bookings?view=sys-unassigned', { state: assignmentReturnState })}
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-black uppercase tracking-wide text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
                   <ArrowUpRight size={15} className="text-blue-500" />
                   Allocation view
                 </button>
@@ -286,7 +288,7 @@ export const AssignmentCenter = () => {
             onSelectionChange={setSelectedIds}
             onRowClick={openAssignmentHub}
             onRowDoubleClick={(job) => navigate(`/admin/bookings/${job.id}`, {
-              state: { returnTo: '/admin/operations/assignments', returnLabel: 'Assignment Center' },
+              state: assignmentReturnState,
             })}
             isLoading={loading}
             emptyMessage="No jobs require assignment action."

@@ -24,13 +24,10 @@ import {
   CreditCard,
   ExternalLink,
   FileText,
-  Languages,
   MessageSquare,
   Search,
-  ShieldCheck,
   Trash2,
   UserCircle2,
-  WalletCards,
 } from 'lucide-react';
 
 interface InterpreterWithStats extends Interpreter {
@@ -187,6 +184,14 @@ export const AdminInterpreters = () => {
     claims: interpreters.reduce((sum, i) => sum + i.claimsInReview + i.missingClaims, 0),
     payables: interpreters.reduce((sum, i) => sum + i.payablePending, 0),
   };
+
+  const filterChips = [
+    { label: 'All', value: summary.total, active: statusFilter === 'ALL' && queueFilter === 'ALL', onClick: () => { setStatusFilter('ALL'); setQueueFilter('ALL'); } },
+    { label: 'Active', value: summary.active, active: statusFilter === 'ACTIVE' && queueFilter === 'ALL', onClick: () => { setStatusFilter('ACTIVE'); setQueueFilter('ALL'); } },
+    { label: 'Passive', value: summary.passive, active: statusFilter === 'IMPORTED' && queueFilter === 'ALL', onClick: () => { setStatusFilter('IMPORTED'); setQueueFilter('ALL'); } },
+    { label: 'Claims', value: summary.claims, active: queueFilter === 'CLAIMS', onClick: () => { setStatusFilter('ALL'); setQueueFilter('CLAIMS'); } },
+    { label: 'Payables', value: money(summary.payables), active: queueFilter === 'PAYABLES', onClick: () => { setStatusFilter('ALL'); setQueueFilter('PAYABLES'); } },
+  ];
 
   const handleStartChat = async (e: React.MouseEvent | undefined, interpreterId: string, interpreterName: string, interpreterPhoto?: string) => {
     if (e) e.stopPropagation();
@@ -347,39 +352,40 @@ export const AdminInterpreters = () => {
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="flex h-full flex-1 flex-col bg-slate-50 transition-colors dark:bg-slate-950">
       <PageHeader
         title="Interpreter CRM"
         subtitle="Operational control for active, passive and imported professionals."
-        stats={{ label: 'Pool', value: interpreters.length }}
+        stats={{ label: 'Rows', value: filteredInterpreters.length }}
       />
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-        {[
-          { label: 'Pool', value: summary.total, detail: 'professionals', icon: UserCircle2, tone: 'bg-slate-50 text-slate-700 border-slate-200', onClick: () => { setStatusFilter('ALL'); setQueueFilter('ALL'); } },
-          { label: 'Active', value: summary.active, detail: 'platform ready', icon: ShieldCheck, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100', onClick: () => { setStatusFilter('ACTIVE'); setQueueFilter('ALL'); } },
-          { label: 'Passive import', value: summary.passive, detail: 'staff managed', icon: Languages, tone: 'bg-blue-50 text-blue-700 border-blue-100', onClick: () => { setStatusFilter('IMPORTED'); setQueueFilter('ALL'); } },
-          { label: 'Claims', value: summary.claims, detail: 'missing or review', icon: Briefcase, tone: summary.claims ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-slate-50 text-slate-700 border-slate-200', onClick: () => { setStatusFilter('ALL'); setQueueFilter('CLAIMS'); } },
-          { label: 'Payables', value: money(summary.payables), detail: 'approved not invoiced', icon: WalletCards, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100', onClick: () => { setStatusFilter('ALL'); setQueueFilter('PAYABLES'); } },
-        ].map(card => (
-          <button key={card.label} onClick={card.onClick} className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800">
-            <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg border ${card.tone}`}>
-              <card.icon size={18} />
-            </div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{card.label}</p>
-            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{card.value}</p>
-            <p className="text-xs font-semibold text-slate-500">{card.detail}</p>
-          </button>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900/50 lg:flex-row lg:items-center">
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 lg:px-5 lg:pb-5">
+      <div className="flex flex-col gap-2 border border-slate-200 bg-white p-2 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center">
+        <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap scrollbar-hide">
+          {filterChips.map(chip => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={chip.onClick}
+              className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-xs font-black uppercase tracking-wide transition-colors ${
+                chip.active
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              {chip.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${chip.active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                {chip.value}
+              </span>
+            </button>
+          ))}
+        </div>
         <div className="relative h-10 w-full flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
             placeholder="Search name or email..."
-            className="h-full w-full bg-transparent py-2 pl-10 pr-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:ring-0 dark:text-white dark:placeholder:text-slate-600"
+            className="h-full w-full rounded-md border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-600"
             value={textFilter}
             onChange={e => setTextFilter(e.target.value)}
           />
@@ -412,7 +418,7 @@ export const AdminInterpreters = () => {
             onClick={() => setQueueFilter('ALL')}
             className="h-10 rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-black uppercase tracking-wide text-blue-700 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200"
           >
-            {queueFilter === 'CLAIMS' ? 'Claims queue' : 'Payables queue'} ×
+            {queueFilter === 'CLAIMS' ? 'Claims queue' : 'Payables queue'} x
           </button>
         )}
       </div>
@@ -431,7 +437,7 @@ export const AdminInterpreters = () => {
           icon={UserCircle2}
         />
       ) : (
-        <div className="relative">
+        <div className="relative mt-3 min-h-0 flex-1 overflow-hidden">
           <Table
             data={filteredInterpreters}
             columns={interpreterColumns}
@@ -462,6 +468,7 @@ export const AdminInterpreters = () => {
           />
         </div>
       )}
+      </div>
     </div>
   );
 };

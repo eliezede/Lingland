@@ -6,7 +6,7 @@ import { StaffProfile } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { useToast } from '../../context/ToastContext';
 import { 
-  User, Heart, MapPin, Shield, Calendar, Phone, 
+  User, Heart, Shield, Calendar, Phone, 
   CheckCircle2, ArrowRight, ArrowLeft, Rocket, Camera
 } from 'lucide-react';
 import { UserAvatar } from '../../components/ui/UserAvatar';
@@ -77,13 +77,9 @@ export const StaffOnboarding = () => {
   }, [user, navigate]);
 
   const handleUpdate = (field: string, value: any) => {
-    console.log('handleUpdate called:', field, value);
     setProfile(prev => {
-      console.log('Previous profile:', prev);
       if (!prev) return null;
-      const next = { ...prev, [field]: value };
-      console.log('Next profile:', next);
-      return next;
+      return { ...prev, [field]: value };
     });
   };
 
@@ -206,8 +202,7 @@ export const StaffOnboarding = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
-      {/* Decorative Elements */}
+    <div className="relative flex min-h-screen items-center justify-center overflow-y-auto bg-slate-50 p-4 transition-colors dark:bg-slate-950 sm:p-6">
       <div className="absolute top-0 left-0 w-full h-1 bg-slate-200 dark:bg-slate-800">
         <div 
             className="h-full bg-blue-600 transition-all duration-500 ease-out" 
@@ -215,21 +210,21 @@ export const StaffOnboarding = () => {
         />
       </div>
       
-      <div className="max-w-xl w-full">
-        <div className="text-center mb-10">
-          <div className="w-16 h-16 bg-blue-600 rounded-3xl mx-auto flex items-center justify-center text-white shadow-xl shadow-blue-500/20 mb-6 group transition-transform hover:scale-105">
+      <div className="w-full max-w-2xl">
+        <div className="mb-5 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20">
             <Rocket className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
           </div>
-          <h1 className="text-3xl font-black text-slate-900 dark:text-white mb-2">Welcome to Lingland</h1>
-          <p className="text-slate-500 dark:text-slate-400 font-medium">Let's get your professional profile ready in just a few steps.</p>
+          <h1 className="mb-1 text-2xl font-black text-slate-900 dark:text-white">Welcome to Lingland</h1>
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Let's get your professional profile ready in just a few steps.</p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 p-8 md:p-12 shadow-2xl transition-all">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900 sm:p-6">
           
-          <div className="flex items-center justify-center mb-10 gap-2">
+          <div className="mb-6 flex items-center justify-center gap-2">
             {[1, 2, 3].map((s) => (
               <div key={s} className="flex items-center">
-                <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black transition-all ${s <= step ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                <div className={`flex h-8 w-8 items-center justify-center rounded-md text-xs font-black transition-all ${s <= step ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
                   {s < step ? <CheckCircle2 size={14} /> : s}
                 </div>
                 {s < 3 && <div className={`w-8 h-0.5 mx-1 rounded-full ${s < step ? 'bg-blue-600' : 'bg-slate-100 dark:bg-slate-800'}`} />}
@@ -239,8 +234,8 @@ export const StaffOnboarding = () => {
 
           <div className="space-y-6">
             {step === 1 && (
-              <div className="space-y-6 animate-in slide-in-from-right duration-500">
-                <div className="flex items-center gap-6 mb-8 p-6 bg-slate-50 dark:bg-slate-800/50 rounded-3xl border border-slate-100 dark:border-slate-800">
+              <div className="space-y-5 animate-in slide-in-from-right duration-500">
+                <div className="mb-6 flex items-center gap-4 rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                   <div className="relative group">
                     <UserAvatar 
                       name={user?.displayName || ''} 
@@ -259,14 +254,14 @@ export const StaffOnboarding = () => {
                     </label>
                   </div>
                   <div>
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white">Profile Photo</h2>
+                    <h2 className="text-base font-black text-slate-900 dark:text-white">Profile Photo</h2>
                     <p className="text-sm text-slate-500 dark:text-slate-400">Add a photo to help the team recognize you.</p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 mb-2">
                     <User className="text-blue-600" size={20} />
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white">Personal Details</h2>
+                    <h2 className="text-lg font-black text-slate-900 dark:text-white">Personal Details</h2>
                 </div>
                 <div>
                   <label htmlFor="phone" className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Phone Number</label>
@@ -278,7 +273,7 @@ export const StaffOnboarding = () => {
                       name="phone"
                       autoComplete="tel"
                       placeholder="+44 7xxx xxxxxx"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                      className="w-full rounded-lg border border-transparent bg-slate-50 py-3 pl-11 pr-4 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                       value={profile?.phone || ''}
                       onChange={e => handleUpdate('phone', e.target.value)}
                     />
@@ -293,7 +288,7 @@ export const StaffOnboarding = () => {
                       id="dob"
                       name="dob"
                       autoComplete="bday"
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                      className="w-full rounded-lg border border-transparent bg-slate-50 py-3 pl-11 pr-4 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                       value={profile?.dob || ''}
                       onChange={e => handleUpdate('dob', e.target.value)}
                     />
@@ -303,10 +298,10 @@ export const StaffOnboarding = () => {
             )}
 
             {step === 2 && (
-              <div className="space-y-6 animate-in slide-in-from-right duration-500">
+              <div className="space-y-5 animate-in slide-in-from-right duration-500">
                 <div className="flex items-center gap-3 mb-2">
                     <Shield className="text-blue-600" size={20} />
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white">Legal & HMRC Data</h2>
+                    <h2 className="text-lg font-black text-slate-900 dark:text-white">Legal & HMRC Data</h2>
                 </div>
                 <div>
                   <label htmlFor="niNumber" className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">National Insurance Number (NI)</label>
@@ -316,7 +311,7 @@ export const StaffOnboarding = () => {
                     name="niNumber"
                     autoComplete="off"
                     placeholder="e.g. QQ 12 34 56 C"
-                    className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20 uppercase font-mono tracking-wider"
+                    className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 font-mono text-sm font-semibold uppercase tracking-wider outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                     value={profile?.niNumber || ''}
                     onChange={e => handleUpdate('niNumber', e.target.value)}
                   />
@@ -332,47 +327,47 @@ export const StaffOnboarding = () => {
                   <div className="mb-4">
                     <PostcodeLookup onAddressSelected={handleAddressSelect} />
                     <p className="mt-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5 ml-1">
-                      <div className="w-1 h-1 rounded-full bg-blue-500" />
+                      <span className="h-1 w-1 rounded-full bg-blue-500" />
                       Include house number for exact matches (e.g. "10 SW1A 1AA")
                     </p>
                   </div>
 
                   <hr className="border-slate-100 dark:border-slate-800 my-4" />
 
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-1">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="sm:col-span-1">
                       <input 
                         id="houseNumber"
                         name="houseNumber"
                         autoComplete="address-line2"
                         aria-label="House or Flat Number"
                         placeholder="House/Flat #"
-                        className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                        className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                         value={profile?.address?.houseNumber || ''}
                         onChange={e => handleAddressUpdate('houseNumber', e.target.value)}
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <input 
                         id="street"
                         name="street"
                         autoComplete="address-line1"
                         aria-label="Street Address"
                         placeholder="Street Address"
-                        className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                        className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                         value={profile?.address?.street || ''}
                         onChange={e => handleAddressUpdate('street', e.target.value)}
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <input 
                       id="town"
                       name="town"
                       autoComplete="address-level2"
                       aria-label="Town or City"
                       placeholder="Town/City"
-                      className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                      className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                       value={profile?.address?.town || ''}
                       onChange={e => handleAddressUpdate('town', e.target.value)}
                     />
@@ -382,7 +377,7 @@ export const StaffOnboarding = () => {
                       autoComplete="address-level1"
                       aria-label="County"
                       placeholder="County"
-                      className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                      className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                       value={profile?.address?.county || ''}
                       onChange={e => handleAddressUpdate('county', e.target.value)}
                     />
@@ -394,7 +389,7 @@ export const StaffOnboarding = () => {
                       autoComplete="postal-code"
                       aria-label="Postcode"
                       placeholder="Postcode"
-                      className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20 uppercase"
+                      className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold uppercase outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                       value={profile?.address?.postcode || ''}
                       onChange={e => handleAddressUpdate('postcode', e.target.value)}
                     />
@@ -404,12 +399,12 @@ export const StaffOnboarding = () => {
             )}
 
             {step === 3 && (
-              <div className="space-y-6 animate-in slide-in-from-right duration-500">
+              <div className="space-y-5 animate-in slide-in-from-right duration-500">
                 <div className="flex items-center gap-3 mb-2">
                     <Heart className="text-red-500" size={20} />
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white">Emergency Contact</h2>
+                    <h2 className="text-lg font-black text-slate-900 dark:text-white">Emergency Contact</h2>
                 </div>
-                <div className="p-4 bg-red-50 dark:bg-red-500/5 rounded-2xl border border-red-100 dark:border-red-500/20 mb-4">
+                <div className="mb-4 rounded-lg border border-red-100 bg-red-50 p-3 dark:border-red-500/20 dark:bg-red-500/5">
                     <p className="text-[11px] text-red-600 dark:text-red-400 font-medium">We hope we never need to use this, but we need someone to contact in case of an emergency during work hours.</p>
                 </div>
                 <div>
@@ -418,19 +413,19 @@ export const StaffOnboarding = () => {
                     id="emergencyName"
                     name="emergencyName"
                     autoComplete="name"
-                    className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                    className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                     value={profile?.emergencyContact?.name || ''}
                     onChange={e => handleEmergencyUpdate('name', e.target.value)}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label htmlFor="emergencyRelationship" className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Relationship</label>
                       <input 
                         id="emergencyRelationship"
                         name="emergencyRelationship"
                         autoComplete="off"
-                        className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                        className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                         value={profile?.emergencyContact?.relationship || ''}
                         onChange={e => handleEmergencyUpdate('relationship', e.target.value)}
                       />
@@ -441,7 +436,7 @@ export const StaffOnboarding = () => {
                         id="emergencyPhone"
                         name="emergencyPhone"
                         autoComplete="tel"
-                        className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl outline-none focus:ring-2 ring-blue-500/20"
+                        className="w-full rounded-lg border border-transparent bg-slate-50 px-4 py-3 text-sm font-semibold outline-none ring-blue-500/20 transition-all focus:border-blue-200 focus:ring-2 dark:bg-slate-800 dark:text-white"
                         value={profile?.emergencyContact?.phone || ''}
                         onChange={e => handleEmergencyUpdate('phone', e.target.value)}
                       />
@@ -451,12 +446,12 @@ export const StaffOnboarding = () => {
             )}
           </div>
 
-          <div className="flex gap-4 mt-12 pt-6 border-t border-slate-50 dark:border-slate-800/50">
+          <div className="mt-8 flex gap-3 border-t border-slate-100 pt-5 dark:border-slate-800/50">
             {step > 1 && (
               <Button 
                 variant="outline" 
                 size="lg" 
-                className="px-8 border-none bg-slate-100 dark:bg-slate-800"
+                className="border-none bg-slate-100 px-5 dark:bg-slate-800"
                 onClick={() => setStep(step - 1)}
                 icon={ArrowLeft}
               >

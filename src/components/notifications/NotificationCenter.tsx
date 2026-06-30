@@ -3,7 +3,7 @@ import { Bell, CheckCheck, Inbox, MessageSquare, Briefcase, CreditCard } from 'l
 import { NotificationService } from '../../services/notificationService';
 import { Notification, NotificationType } from '../../types';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export const NotificationCenter = () => {
   const { user } = useAuth();
@@ -11,12 +11,18 @@ export const NotificationCenter = () => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleNotificationClick = (note: Notification) => {
     NotificationService.markAsRead(note.id);
     setIsOpen(false);
     if (note.link) {
-      navigate(note.link);
+      navigate(note.link, {
+        state: {
+          returnTo: `${location.pathname}${location.search}`,
+          returnLabel: 'Previous workspace',
+        },
+      });
     }
   };
 

@@ -15,11 +15,11 @@ import { useAuth } from '../../../context/AuthContext';
 import { useChat } from '../../../context/ChatContext';
 import { useToast } from '../../../context/ToastContext';
 import {
-    Building2, Mail, Phone, MapPin,
-    Briefcase, Clock, Calendar, MessageSquare,
+    Building2, Mail, Phone,
+    Clock, Calendar, MessageSquare,
     ChevronLeft, Edit, Trash2, ShieldCheck,
-    ExternalLink, BarChart3, CreditCard, ChevronRight, AlertCircle,
-    ArrowUpRight, FileText, CheckCircle2, WalletCards
+    BarChart3, ChevronRight, AlertCircle,
+    ArrowUpRight, FileText, CheckCircle2
 } from 'lucide-react';
 
 type Tab = 'ACTIVITY' | 'FINANCE' | 'ACCOUNT';
@@ -157,11 +157,11 @@ export const AdminClientDetails = () => {
         !client.paymentTermsDays ? 'Payment terms missing' : null,
     ].filter(Boolean) as string[];
 
-    const stats = [
-        { label: 'Demand', value: `${jobs.length} jobs`, detail: `${activeJobs.length} active now`, icon: Briefcase, className: 'bg-blue-50 text-blue-700 border-blue-100' },
-        { label: 'Billing queue', value: billingReadyJobs.length, detail: `${uninvoicedCompletedJobs.length} waiting handoff`, icon: WalletCards, className: 'bg-amber-50 text-amber-700 border-amber-100' },
-        { label: 'Outstanding', value: money(outstandingTotal), detail: `${outstandingInvoices.length} open invoices`, icon: CreditCard, className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-        { label: 'Account health', value: accountIssues.length ? `${accountIssues.length} issue${accountIssues.length > 1 ? 's' : ''}` : 'Ready', detail: `${client.paymentTermsDays || 30} day terms`, icon: accountIssues.length ? AlertCircle : CheckCircle2, className: accountIssues.length ? 'bg-red-50 text-red-700 border-red-100' : 'bg-slate-50 text-slate-700 border-slate-100' },
+    const signals: Array<{ label: string; value: string | number; detail: string; tab: Tab; tone: string }> = [
+        { label: 'Jobs', value: jobs.length, detail: `${activeJobs.length} active`, tab: 'ACTIVITY', tone: 'text-blue-700 bg-blue-50 border-blue-100' },
+        { label: 'Billing queue', value: billingReadyJobs.length, detail: `${uninvoicedCompletedJobs.length} handoff`, tab: 'FINANCE', tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+        { label: 'Outstanding', value: money(outstandingTotal), detail: `${outstandingInvoices.length} open`, tab: 'FINANCE', tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+        { label: 'Health', value: accountIssues.length ? `${accountIssues.length} issue${accountIssues.length > 1 ? 's' : ''}` : 'Ready', detail: `${client.paymentTermsDays || 30} day terms`, tab: 'ACCOUNT', tone: accountIssues.length ? 'text-red-700 bg-red-50 border-red-100' : 'text-slate-700 bg-slate-50 border-slate-100' },
     ];
 
     const formatJobDate = (job: Booking) => {
@@ -176,13 +176,13 @@ export const AdminClientDetails = () => {
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
-            state: { returnTo: `/admin/clients/${id}`, returnLabel: 'Client profile' },
+            state: profileReturnState,
         });
     };
 
     const openInvoiceDetails = (invoice: ClientInvoice) => {
         navigate(`/admin/billing/client-invoices/${invoice.id}`, {
-            state: { returnTo: `/admin/clients/${id}`, returnLabel: 'Client profile' },
+            state: profileReturnState,
         });
     };
 
@@ -228,24 +228,30 @@ export const AdminClientDetails = () => {
                 </div>
             </div>
 
-            {/* Cockpit cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                {stats.map((stat, i) => (
+            <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {signals.map((signal) => (
                     <button
-                        key={i}
-                        onClick={() => setActiveTab(i === 1 || i === 2 ? 'FINANCE' : i === 3 ? 'ACCOUNT' : 'ACTIVITY')}
-                        className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group flex items-center gap-4 text-left hover:bg-slate-50"
+                            key={signal.label}
+                            type="button"
+                            onClick={() => setActiveTab(signal.tab)}
+                            className={`flex h-9 items-center gap-2 rounded-md border px-2.5 text-left transition-colors hover:bg-white ${signal.tone}`}
                     >
-                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${stat.className}`}>
-                            <stat.icon size={20} />
-                        </div>
-                        <div>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">{stat.label}</p>
-                            <p className="text-lg font-black text-slate-900">{stat.value}</p>
-                            <p className="text-[11px] font-semibold text-slate-500">{stat.detail}</p>
-                        </div>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{signal.label}</span>
+                            <span className="text-sm font-black text-slate-950">{signal.value}</span>
+                            <span className="hidden text-[10px] font-bold text-slate-500 sm:inline">{signal.detail}</span>
                     </button>
                 ))}
+                </div>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    {accountIssues.length === 0 ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={13} /> Ready for bookings and billing</span>
+                    ) : (
+                        <button type="button" onClick={() => setActiveTab('ACCOUNT')} className="inline-flex items-center gap-1 text-red-700 hover:text-red-800">
+                            <AlertCircle size={13} /> Review account setup
+                        </button>
+                    )}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pb-12">
@@ -531,7 +537,7 @@ export const AdminClientDetails = () => {
                         </div>
                     </div>
                     <div className="pt-6 border-t flex justify-between items-center">
-                        <Button type="button" variant="ghost" className="text-red-500 hover:bg-red-50 text-[10px] font-bold uppercase tracking-widest" onClick={() => setIsDeleteModalOpen(true)}>Decommission Record</Button>
+                        <Button type="button" variant="ghost" className="text-red-500 hover:bg-red-50 text-[10px] font-bold uppercase tracking-widest" onClick={() => setIsDeleteModalOpen(true)} icon={Trash2}>Delete client</Button>
                         <div className="flex gap-2">
                             <Button type="button" variant="ghost" onClick={() => setIsEditModalOpen(false)}>Abort</Button>
                             <Button type="submit" isLoading={saving} className="px-6 shadow-sm shadow-blue-100">Commit Changes</Button>
@@ -540,11 +546,11 @@ export const AdminClientDetails = () => {
                 </form>
             </Modal>
 
-            <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Confirm Record Extermination" maxWidth="md">
+            <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Confirm client deletion" maxWidth="md">
                 <div className="space-y-6 py-4">
                     <div className="bg-red-50 p-6 rounded-lg border border-red-100 text-center">
                         <div className="w-12 h-12 bg-white rounded-xl text-red-500 shadow-sm mx-auto flex items-center justify-center mb-3 border border-red-50"><AlertCircle size={24} /></div>
-                        <h4 className="font-bold text-red-900 uppercase text-xs tracking-widest mb-1.5">Destructive Operation</h4>
+                        <h4 className="font-bold text-red-900 uppercase text-xs tracking-widest mb-1.5">Permanent deletion</h4>
                         <p className="text-red-700/80 text-xs font-medium leading-relaxed max-w-[280px] mx-auto">This will permanently remove <span className="text-red-900 font-bold">{client.companyName}</span> and all associated historical parameters.</p>
                     </div>
                     <div className="space-y-4 px-2">
@@ -563,7 +569,7 @@ export const AdminClientDetails = () => {
                                 } catch (e) { showToast('Operation failed', 'error'); }
                                 finally { setDeleting(false); }
                             }
-                        }}>Execute Deletion</Button>
+                        }}>Delete client</Button>
                     </div>
                 </div>
             </Modal>

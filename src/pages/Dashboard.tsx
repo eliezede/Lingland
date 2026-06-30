@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -144,6 +144,7 @@ const QueueButton = ({
 export const Dashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [stats, setStats] = useState<any>(null);
   const [jobs, setJobs] = useState<DashboardJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -249,7 +250,7 @@ export const Dashboard = () => {
 
   const openJobDetails = (job: Booking) => {
     navigate(`/admin/bookings/${job.id}`, {
-      state: { returnTo: '/admin/dashboard', returnLabel: 'Operations Command' },
+      state: { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Operations Command' },
     });
   };
 

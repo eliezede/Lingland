@@ -255,7 +255,7 @@ export const TimesheetQueue = () => {
               Clear scope
             </Button>
           )}
-          <Button onClick={() => navigate(`/admin/billing?view=fin-timesheets&lane=interpreterPayables${scopedInterpreterId ? `&interpreterId=${encodeURIComponent(scopedInterpreterId)}` : ''}`)} icon={ArrowUpRight} variant="secondary" size="sm">
+          <Button onClick={() => navigate(`/admin/billing?view=fin-timesheets&lane=interpreterPayables${scopedInterpreterId ? `&interpreterId=${encodeURIComponent(scopedInterpreterId)}` : ''}`, { state: claimsReturnState })} icon={ArrowUpRight} variant="secondary" size="sm">
             Finance view
           </Button>
           <Button onClick={refreshAll} icon={FileCheck} variant="secondary" size="sm">

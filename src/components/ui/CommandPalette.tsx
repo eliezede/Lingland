@@ -3,7 +3,7 @@ import {
     Search, Command, Zap, Users, Briefcase, FileText, Settings, ArrowRight,
     CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, Globe, Database
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole } from '../../types';
 
@@ -23,30 +23,32 @@ export const CommandPalette = () => {
     const [query, setQuery] = useState('');
     const [activeIndex, setActiveIndex] = useState(0);
     const navigate = useNavigate();
+    const location = useLocation();
     const { user } = useAuth();
     const inputRef = useRef<HTMLInputElement>(null);
     const canUseAdminCommands = user?.role === UserRole.ADMIN || user?.role === UserRole.SUPER_ADMIN;
 
     const close = useCallback(() => { setIsOpen(false); setQuery(''); setActiveIndex(0); }, []);
+    const commandReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Previous workspace' };
 
     const commands: CommandItem[] = [
         // Actions (first — most frequently used)
-        { id: 'new-booking', title: 'Create New Booking', subtitle: 'Launch booking wizard', icon: Zap, shortcut: 'N', category: 'Actions', keywords: ['new', 'create', 'request'], onSelect: () => navigate('/admin/bookings/new') },
+        { id: 'new-booking', title: 'Create New Booking', subtitle: 'Launch booking wizard', icon: Zap, shortcut: 'N', category: 'Actions', keywords: ['new', 'create', 'request'], onSelect: () => navigate('/admin/bookings/new', { state: commandReturnState }) },
         // Navigation
-        { id: 'jobs-board', title: 'Jobs Board', subtitle: 'View all bookings and statuses', icon: CalendarDays, category: 'Navigation', keywords: ['bookings', 'jobs', 'board'], onSelect: () => navigate('/admin/bookings') },
+        { id: 'jobs-board', title: 'Job Centre', subtitle: 'Work bookings, views and job status', icon: CalendarDays, category: 'Navigation', keywords: ['bookings', 'jobs', 'board', 'job centre'], onSelect: () => navigate('/admin/bookings') },
         { id: 'assignments', title: 'Assignment Center', subtitle: 'Allocate interpreters to jobs', icon: UserCheck, category: 'Navigation', keywords: ['assign', 'allocate', 'interpreters', 'operations'], onSelect: () => navigate('/admin/operations/assignments') },
         { id: 'timesheets', title: 'Timesheet Review', subtitle: 'Review and approve timesheets', icon: FileText, category: 'Navigation', keywords: ['timesheets', 'hours', 'review'], onSelect: () => navigate('/admin/operations/timesheets') },
         { id: 'interpreters', title: 'Interpreters', subtitle: 'Browse interpreter profiles', icon: Users, category: 'Navigation', keywords: ['interpreters', 'linguists', 'freelancers'], onSelect: () => navigate('/admin/interpreters') },
         { id: 'clients', title: 'Clients & Departments', subtitle: 'Manage client accounts', icon: Briefcase, category: 'Navigation', keywords: ['clients', 'departments', 'organisations'], onSelect: () => navigate('/admin/clients') },
-        { id: 'applications', title: 'Applications', subtitle: 'Review interpreter applications', icon: UserPlus, category: 'Navigation', keywords: ['applications', 'onboard', 'new interpreter'], onSelect: () => navigate('/admin/applications') },
+        { id: 'applications', title: 'Onboarding Desk', subtitle: 'Review applications and compliance documents', icon: UserPlus, category: 'Navigation', keywords: ['applications', 'onboard', 'new interpreter', 'compliance'], onSelect: () => navigate('/admin/applications') },
         { id: 'messages', title: 'Direct Messages', subtitle: 'Team communications', icon: Globe, category: 'Navigation', keywords: ['messages', 'chat', 'communications'], onSelect: () => navigate('/admin/messages') },
         // Finance
-        { id: 'client-invoices', title: 'Client Invoices', subtitle: 'Manage client billing', icon: PoundSterling, category: 'Finance', keywords: ['invoices', 'billing', 'clients'], onSelect: () => navigate('/admin/billing/client-invoices') },
-        { id: 'interpreter-payments', title: 'Interpreter Payments', subtitle: 'Manage remittances and payroll', icon: PoundSterling, category: 'Finance', keywords: ['payments', 'remittance', 'payroll', 'interpreters'], onSelect: () => navigate('/admin/billing/interpreter-invoices') },
-        { id: 'payroll', title: 'Payroll Center', subtitle: 'Process interpreter payroll batches', icon: PoundSterling, category: 'Finance', keywords: ['payroll', 'payout', 'remittance'], onSelect: () => navigate('/admin/finance/payroll') },
-        { id: 'statements', title: 'Financial Statements', subtitle: 'Auditing and transaction history', icon: FileText, category: 'Finance', keywords: ['statements', 'audit', 'history'], onSelect: () => navigate('/admin/finance/statements') },
-        { id: 'document-center', title: 'Document Center', subtitle: 'Financial document workspace', icon: FileText, category: 'Finance', keywords: ['documents', 'invoices', 'sheets'], onSelect: () => navigate('/admin/finance/documents') },
-        { id: 'financial-reports', title: 'Financial Reports', subtitle: 'Revenue analytics and reports', icon: BarChart3, category: 'Finance', keywords: ['reports', 'analytics', 'revenue', 'finance'], onSelect: () => navigate('/admin/finance/reports') },
+        { id: 'finance-board', title: 'Finance Board', subtitle: 'Open the accounts workspace', icon: PoundSterling, category: 'Finance', keywords: ['finance', 'accounts', 'billing'], onSelect: () => navigate('/admin/billing') },
+        { id: 'billing-queue', title: 'Billing Queue', subtitle: 'Work delivered jobs through billing', icon: PoundSterling, category: 'Finance', keywords: ['invoices', 'billing', 'clients', 'queue'], onSelect: () => navigate('/admin/billing?view=fin-billing-queue&lane=clientBilling') },
+        { id: 'ready-client-invoice', title: 'Ready to Invoice', subtitle: 'Client invoice preparation queue', icon: PoundSterling, category: 'Finance', keywords: ['invoice ready', 'client invoice', 'accounts receivable'], onSelect: () => navigate('/admin/billing?view=fin-ready-client-invoice&lane=clientBilling') },
+        { id: 'interpreter-payables', title: 'Interpreter Payables', subtitle: 'Timesheets and interpreter payment queue', icon: PoundSterling, category: 'Finance', keywords: ['payments', 'remittance', 'payroll', 'interpreters', 'timesheets'], onSelect: () => navigate('/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables') },
+        { id: 'awaiting-payment', title: 'Awaiting Payment', subtitle: 'Client invoices waiting for payment', icon: PoundSterling, category: 'Finance', keywords: ['paid', 'payment', 'outstanding', 'receivables'], onSelect: () => navigate('/admin/billing?view=fin-awaiting-payment&lane=clientBilling') },
+        { id: 'finance-overview', title: 'Finance Overview', subtitle: 'Accounts control room', icon: BarChart3, category: 'Finance', keywords: ['reports', 'analytics', 'revenue', 'finance'], onSelect: () => navigate('/admin/billing/overview') },
         // Admin
         { id: 'settings', title: 'System Config', subtitle: 'Platform settings and configuration', icon: Settings, category: 'Admin', keywords: ['settings', 'config', 'system'], onSelect: () => navigate('/admin/settings') },
         { id: 'users', title: 'Users & Roles', subtitle: 'Manage user accounts and permissions', icon: Shield, category: 'Admin', keywords: ['users', 'roles', 'permissions', 'accounts'], onSelect: () => navigate('/admin/users') },

@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useBookingViews } from '../../hooks/useBookingViews';
-import { BookingStatus, BookingWorkspace, FilterableField, SortableField, GroupableField, ViewFilterRule, ViewSortRule, ServiceType, Interpreter } from '../../types';
-import { Trash2, Save, Plus, X, Filter, ArrowUpDown, Layers } from 'lucide-react';
+import { BookingStatus, BookingWorkspace, FilterableField, SortableField, GroupableField, ViewFilterRule, ViewSortRule, ServiceType, Interpreter, BookingView } from '../../types';
+import { Trash2, Save, Plus, X, Filter, ArrowUpDown, Layers, Columns3, Pin, EyeOff, RotateCcw } from 'lucide-react';
 import { InterpreterService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -47,6 +47,33 @@ const GROUPABLE_FIELDS: { value: GroupableField | ''; label: string }[] = [
     { value: 'date', label: 'Date' }
 ];
 
+const GRID_FIELD_LABELS: Record<string, string> = {
+    jobNumber: 'Job Number',
+    status: 'Status',
+    bookedFor: 'Booked For',
+    client: 'Client',
+    language: 'Language',
+    interpreter: 'Professional',
+    location: 'Location',
+    service: 'Service',
+    duration: 'Duration',
+    contact: 'Contact',
+    amount: 'Client Charge',
+    professionalCost: 'Professional Cost',
+    margin: 'Margin',
+    costCode: 'Cost Code',
+    billingState: 'Billing State',
+    invoiceRef: 'Invoice Ref',
+    action: 'Action',
+};
+
+const formatLayoutFields = (fields?: string[]) => {
+    if (!fields || fields.length === 0) return 'None';
+    const labels = fields.map(field => GRID_FIELD_LABELS[field] || field);
+    if (labels.length <= 3) return labels.join(', ');
+    return `${labels.slice(0, 3).join(', ')} +${labels.length - 3}`;
+};
+
 export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
     isOpen,
     onClose,
@@ -62,6 +89,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
     const [sortRules, setSortRules] = useState<ViewSortRule[]>([]);
     const [groupBy, setGroupBy] = useState<GroupableField | ''>('');
     const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
+    const currentView = views.find(v => v.id === viewId) as BookingView | undefined;
 
     useEffect(() => {
         const loadInterpreters = async () => {
@@ -148,6 +176,23 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
     };
 
     const isSystem = views.find(v => v.id === viewId)?.isSystem;
+    const hasSavedLayout = Boolean(
+        currentView?.columnOrder?.length ||
+        Object.keys(currentView?.columnWidths || {}).length ||
+        currentView?.pinnedColumns?.length ||
+        currentView?.hiddenColumns?.length
+    );
+
+    const resetSavedLayout = () => {
+        if (!viewId) return;
+        updateCustomView(viewId, {
+            columnOrder: [],
+            columnWidths: {},
+            pinnedColumns: [],
+            hiddenColumns: undefined,
+        });
+        showToast('View layout reset', 'success');
+    };
 
     return (
         <Modal
@@ -348,6 +393,47 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                         {GROUPABLE_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
                 </section>
+
+                {viewId && (
+                    <section>
+                        <div className="mb-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Columns3 size={14} className="text-slate-400" />
+                                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Table Layout</label>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={resetSavedLayout}
+                                disabled={!hasSavedLayout}
+                                className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                            >
+                                <RotateCcw size={12} /> Reset
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                                <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <EyeOff size={12} /> Hidden
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{formatLayoutFields(currentView?.hiddenColumns)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                                <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <Pin size={12} /> Frozen
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{formatLayoutFields(currentView?.pinnedColumns)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                                <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                    <Columns3 size={12} /> Layout
+                                </div>
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                                    {(currentView?.columnOrder?.length || 0)} ordered / {Object.keys(currentView?.columnWidths || {}).length} resized
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+                )}
 
                 <div className="pt-8 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     {viewId && !isSystem ? (

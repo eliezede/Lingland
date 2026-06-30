@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ClientService } from '../../services/clientService';
 import { BookingService } from '../../services/bookingService';
 import { BillingService } from '../../services/billingService';
@@ -14,7 +14,7 @@ import { useChat } from '../../context/ChatContext';
 import {
   Search, Plus, Trash2, Briefcase,
   ExternalLink, MessageSquare, AlertCircle,
-  Building, Check, CreditCard, WalletCards
+  Building, Check, CreditCard
 } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Table } from '../../components/ui/Table';
@@ -36,6 +36,7 @@ interface ClientWithStats extends Client {
 
 export const AdminClients = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { openThread } = useChat();
   const { showToast } = useToast();
@@ -46,6 +47,7 @@ export const AdminClients = () => {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'GUEST' | 'SUSPENDED'>('ALL');
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const crmReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Client CRM' };
 
   // Fetch clients explicitly instead of relying on global lazy cache 
   useEffect(() => {
@@ -129,6 +131,15 @@ export const AdminClients = () => {
     readyForInvoice: clients.reduce((sum, c) => sum + c.readyForInvoice, 0),
     outstanding: clients.reduce((sum, c) => sum + c.outstandingTotal, 0),
   };
+
+  const filterChips = [
+    { label: 'All', value: summary.all, active: statusFilter === 'ALL', onClick: () => setStatusFilter('ALL') },
+    { label: 'Active', value: clients.filter(c => c.status === 'ACTIVE' || !c.status).length, active: statusFilter === 'ACTIVE', onClick: () => setStatusFilter('ACTIVE') },
+    { label: 'Guest', value: clients.filter(c => c.status === 'GUEST').length, active: statusFilter === 'GUEST', onClick: () => setStatusFilter('GUEST') },
+    { label: 'Setup issues', value: summary.readyIssues, active: false, onClick: () => setFilter('') },
+    { label: 'Ready invoice', value: summary.readyForInvoice, active: false, onClick: () => navigate('/admin/billing?view=fin-ready-client-invoice&lane=clientBilling', { state: crmReturnState }) },
+    { label: 'Outstanding', value: money(summary.outstanding), active: false, onClick: () => navigate('/admin/billing?view=fin-awaiting-payment&lane=clientBilling', { state: crmReturnState }) },
+  ];
 
   const handleStartChat = async (e: React.MouseEvent | undefined, clientId: string, clientName: string, clientPhoto?: string) => {
     if (e) e.stopPropagation();
@@ -268,65 +279,52 @@ export const AdminClients = () => {
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="flex h-full flex-1 flex-col bg-slate-50 transition-colors dark:bg-slate-950">
       <PageHeader
         title="Client CRM"
         subtitle="Account control for bookings, billing readiness and client data health."
-        stats={{ label: "Clients", value: clients.length }}
-      >
-        <Button
-          icon={Plus}
-          onClick={() => navigate('/admin/bookings/new')}
-          size="sm"
-        >
-          New Booking
-        </Button>
-      </PageHeader>
+        stats={{ label: "Rows", value: filteredClients.length }}
+      />
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-        {[
-          { label: 'Clients', value: summary.all, detail: 'total accounts', icon: Building, tone: 'bg-slate-50 text-slate-700 border-slate-200' },
-          { label: 'Setup issues', value: summary.readyIssues, detail: 'need account data', icon: AlertCircle, tone: summary.readyIssues ? 'bg-red-50 text-red-700 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-          { label: 'Active jobs', value: summary.activeJobs, detail: 'in operations', icon: Briefcase, tone: 'bg-blue-50 text-blue-700 border-blue-100' },
-          { label: 'Ready invoice', value: summary.readyForInvoice, detail: 'finance handoff', icon: WalletCards, tone: 'bg-amber-50 text-amber-700 border-amber-100' },
-          { label: 'Outstanding', value: money(summary.outstanding), detail: 'draft/sent invoices', icon: CreditCard, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-        ].map(card => (
-          <div key={card.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg border ${card.tone}`}>
-              <card.icon size={18} />
-            </div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{card.label}</p>
-            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{card.value}</p>
-            <p className="text-xs font-semibold text-slate-500">{card.detail}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-white dark:bg-slate-900/50 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row items-center gap-2 transition-colors">
-        <div className="flex-1 relative w-full h-10">
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 lg:px-5 lg:pb-5">
+      <div className="flex flex-col gap-2 border border-slate-200 bg-white p-2 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center">
+        <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap scrollbar-hide">
+          {filterChips.map(chip => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={chip.onClick}
+              className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-xs font-black uppercase tracking-wide transition-colors ${
+                chip.active
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              {chip.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${chip.active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                {chip.value}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="relative h-10 w-full flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
             placeholder="Search company, contact or email..."
-            className="pl-10 pr-4 py-2 bg-transparent text-sm w-full h-full outline-none focus:ring-0 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600"
+            className="h-full w-full rounded-md border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-600"
             value={filter}
             onChange={e => setFilter(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-2 border-t lg:border-t-0 lg:border-l border-slate-100 dark:border-slate-800 pl-2 lg:pl-2 w-full lg:w-auto overflow-x-auto py-2 lg:py-0">
-          {(['ALL', 'ACTIVE', 'GUEST'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${statusFilter === s
-                ? 'bg-slate-900 dark:bg-slate-800 text-white shadow-md'
-                : 'bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <Button
+          icon={Plus}
+          onClick={() => navigate('/admin/bookings/new', { state: crmReturnState })}
+          size="sm"
+          className="h-9"
+        >
+          New
+        </Button>
       </div>
 
       {loading ? (
@@ -343,18 +341,18 @@ export const AdminClients = () => {
           icon={Building}
         />
       ) : (
-        <div className="relative">
+        <div className="relative mt-3 min-h-0 flex-1 overflow-hidden">
           <Table
             data={filteredClients}
             columns={clientColumns}
             selectable
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
-            onRowClick={(client) => navigate(`/admin/clients/${client.id}`)}
+            onRowClick={(client) => navigate(`/admin/clients/${client.id}`, { state: crmReturnState })}
             renderContextMenu={(client) => [
-              { label: 'Open profile', icon: ExternalLink, onClick: () => navigate(`/admin/clients/${client.id}`) },
-              { label: 'Open client jobs', icon: Briefcase, onClick: () => navigate(`/admin/bookings?clientId=${client.id}`) },
-              { label: 'Open finance board', icon: CreditCard, onClick: () => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling&clientId=${encodeURIComponent(client.id)}`) },
+              { label: 'Open profile', icon: ExternalLink, onClick: () => navigate(`/admin/clients/${client.id}`, { state: crmReturnState }) },
+              { label: 'Open client jobs', icon: Briefcase, onClick: () => navigate(`/admin/bookings?clientId=${client.id}`, { state: crmReturnState }) },
+              { label: 'Open finance board', icon: CreditCard, onClick: () => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling&clientId=${encodeURIComponent(client.id)}`, { state: crmReturnState }) },
               { label: 'Message', icon: MessageSquare, onClick: () => handleStartChat(undefined, client.id, client.companyName, client.photoUrl) },
             ]}
           />
@@ -373,6 +371,7 @@ export const AdminClients = () => {
           />
         </div>
       )}
+      </div>
     </div>
   );
 };

@@ -178,6 +178,7 @@ const App = () => {
                           <AdminLayout>
                             <Routes>
                               <Route path="dashboard" element={<Dashboard />} />
+                              <Route path="operations" element={<Navigate to="/admin/bookings" replace />} />
                               <Route path="messages" element={<AdminMessages />} />
                               <Route path="bookings" element={<JobsBoard />} />
                               <Route path="operations/assignments" element={<AssignmentCenter />} />

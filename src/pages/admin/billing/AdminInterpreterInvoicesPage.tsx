@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Calculator, FileText, Loader2 } from 'lucide-react';
+import { ArrowUpRight, Calculator, FileText, Loader2, Search } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
 import { BillingService } from '../../../services/billingService';
 import { functions } from '../../../services/firebaseConfig';
@@ -11,12 +11,12 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 import { useToast } from '../../../context/ToastContext';
 import { PageHeader } from '../../../components/layout/PageHeader';
 
-const money = (amount: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 export const AdminInterpreterInvoicesPage = () => {
   const [invoices, setInvoices] = useState<InterpreterInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const scopedInterpreterId = searchParams.get('interpreterId') || '';
@@ -35,19 +35,22 @@ export const AdminInterpreterInvoicesPage = () => {
     fetchInvoices();
   }, [scopedInterpreterId]);
 
-  const summary = useMemo(() => {
-    const submitted = invoices.filter(inv => inv.status === InvoiceStatus.SUBMITTED);
-    const approved = invoices.filter(inv => inv.status === InvoiceStatus.APPROVED);
-    const paid = invoices.filter(inv => inv.status === InvoiceStatus.PAID);
-    const payable = invoices.filter(inv => [InvoiceStatus.SUBMITTED, InvoiceStatus.APPROVED].includes(inv.status));
-    return {
-      total: invoices.length,
-      submitted: submitted.length,
-      approved: approved.length,
-      paid: paid.length,
-      payableAmount: payable.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0),
-    };
-  }, [invoices]);
+  const filteredInvoices = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return invoices.filter(invoice => {
+      const matchesStatus = statusFilter === 'ALL' || invoice.status === statusFilter;
+      if (!matchesStatus) return false;
+      if (!query) return true;
+      return [
+        invoice.externalInvoiceReference,
+        invoice.id,
+        invoice.interpreterName,
+        invoice.currency,
+        invoice.status,
+        invoice.model,
+      ].filter(Boolean).some(value => String(value).toLowerCase().includes(query));
+    });
+  }, [invoices, searchTerm, statusFilter]);
 
   const handleGenerateInvoices = async () => {
     setIsGenerating(true);
@@ -74,8 +77,8 @@ export const AdminInterpreterInvoicesPage = () => {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Interpreter Invoices"
-        subtitle={scopedInterpreterId ? 'Payables filtered from an interpreter profile.' : 'Payables and self-billed invoices connected to interpreter timesheets.'}
+        title="Interpreter Invoice Documents"
+        subtitle={scopedInterpreterId ? 'Payable documents filtered from an interpreter profile.' : 'Document registry for uploaded and self-billed interpreter invoices.'}
       >
         <div className="flex flex-wrap items-center gap-2">
           {scopedInterpreterId && (
@@ -84,7 +87,7 @@ export const AdminInterpreterInvoicesPage = () => {
             </Link>
           )}
           <Link to={payablesBoardPath} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800">
-            Payables queue <ArrowUpRight size={15} />
+            Finance queue <ArrowUpRight size={15} />
           </Link>
           {!scopedInterpreterId && (
             <button
@@ -105,20 +108,28 @@ export const AdminInterpreterInvoicesPage = () => {
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-2 divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0 dark:divide-slate-800">
-          {[
-            ['Invoices', summary.total],
-            ['Submitted', summary.submitted],
-            ['Approved', summary.approved],
-            ['Paid', summary.paid],
-            ['Payable', money(summary.payableAmount)],
-          ].map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between gap-3 py-2 md:px-4 md:first:pl-0 md:last:pr-0">
-              <p className="truncate text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-              <p className="truncate text-base font-black text-slate-950 dark:text-white">{value}</p>
-            </div>
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+            placeholder="Search invoice, interpreter, reference"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={event => setStatusFilter(event.target.value as 'ALL' | InvoiceStatus)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+        >
+          <option value="ALL">All statuses</option>
+          {[InvoiceStatus.SUBMITTED, InvoiceStatus.APPROVED, InvoiceStatus.PAID, InvoiceStatus.REJECTED, InvoiceStatus.CANCELLED].map(status => (
+            <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>
           ))}
+        </select>
+        <div className="shrink-0 rounded-md bg-slate-100 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+          {filteredInvoices.length} of {invoices.length}
         </div>
       </div>
 
@@ -126,8 +137,10 @@ export const AdminInterpreterInvoicesPage = () => {
         <TableSkeleton rows={8} />
       ) : invoices.length === 0 ? (
         <EmptyState title="No Interpreter Invoices" description="There are no interpreter invoices submitted yet." icon={FileText} />
+      ) : filteredInvoices.length === 0 ? (
+        <EmptyState title="No Matching Documents" description="No interpreter invoices match the current search or status." icon={FileText} />
       ) : (
-        <InvoiceTable invoices={invoices} type="INTERPRETER" boardPath={payablesBoardPath} />
+        <InvoiceTable invoices={filteredInvoices} type="INTERPRETER" boardPath={payablesBoardPath} />
       )}
     </div>
   );

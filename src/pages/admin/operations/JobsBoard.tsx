@@ -23,6 +23,8 @@ import {
     MapPin,
     Maximize2,
     Pencil,
+    Pin,
+    PinOff,
     Plus,
     PoundSterling,
     RefreshCw,
@@ -66,6 +68,7 @@ type QuickFilter = 'ALL' | 'INTERPRETING' | 'TRANSLATIONS' | 'OVERDUE' | 'TODAY'
 type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
 type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter' | 'serviceCategory';
 type ToolPanel = 'hide' | 'filter' | 'group' | 'sort' | null;
+type ColumnFilter = { columnId: string; value: string } | null;
 
 const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef'];
 const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin'];
@@ -83,6 +86,9 @@ const FINANCE_COLUMN_ORDER = [
     'invoiceRef',
     'action',
 ];
+
+const MIN_COLUMN_WIDTH = 72;
+const MAX_COLUMN_WIDTH = 520;
 
 interface GridColumn {
     id: string;
@@ -216,8 +222,28 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const { showToast } = useToast();
     const { confirm } = useConfirm();
     const { bookings = [], loading, refresh } = useBookings();
-    const { views, activeView, setActiveViewId, reorderViews, toggleViewFavorite } = useBookingViews(user?.id || '', workspace);
+    const { views, activeView, setActiveViewId, updateCustomView, reorderViews, toggleViewFavorite } = useBookingViews(user?.id || '', workspace);
     const actionsDeps = createDependencies((user as any)?.organizationId || 'lingland-main');
+    const activeViewId = activeView?.id || 'default';
+    const gridLayoutStorageKey = `lingland:${workspace}:job-grid-layout:${activeViewId}`;
+
+    const readStoredGridLayout = () => {
+        if (activeView?.columnWidths || activeView?.columnOrder || activeView?.pinnedColumns || activeView?.hiddenColumns) {
+            return {
+                widths: activeView.columnWidths || {},
+                order: activeView.columnOrder || [],
+                pinned: activeView.pinnedColumns || [],
+                hidden: activeView.hiddenColumns || [],
+            };
+        }
+
+        try {
+            const stored = localStorage.getItem(gridLayoutStorageKey);
+            return stored ? JSON.parse(stored) as { widths?: Record<string, number>; order?: string[]; pinned?: string[]; hidden?: string[] } : {};
+        } catch {
+            return {};
+        }
+    };
 
     const [selectedJob, setSelectedJob] = useState<Booking | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -231,9 +257,23 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
     const [groupField, setGroupField] = useState<GroupField>('view');
+    const [columnFilter, setColumnFilter] = useState<ColumnFilter>(null);
     const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
-        new Set(isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS)
+        new Set(readStoredGridLayout().hidden || (isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS))
     );
+    const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+        const stored = readStoredGridLayout();
+        return stored.widths || {};
+    });
+    const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+        const stored = readStoredGridLayout();
+        return stored.order || [];
+    });
+    const [pinnedColumns, setPinnedColumns] = useState<string[]>(() => {
+        const stored = readStoredGridLayout();
+        return stored.pinned || [];
+    });
+    const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
     const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel>(null);
     const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
     const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -246,6 +286,45 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [viewSearchQuery, setViewSearchQuery] = useState('');
     const viewsMenuRef = useRef<HTMLDivElement>(null);
     const toolsRef = useRef<HTMLDivElement>(null);
+    const gridScrollRef = useRef<HTMLDivElement>(null);
+    const isApplyingStoredLayoutRef = useRef(false);
+    const scrollAnimationRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        isApplyingStoredLayoutRef.current = true;
+        const stored = readStoredGridLayout();
+        setColumnWidths(stored.widths || {});
+        setColumnOrder(stored.order || []);
+        setPinnedColumns(stored.pinned || []);
+        setHiddenColumns(new Set(stored.hidden || (isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS)));
+        window.setTimeout(() => {
+            isApplyingStoredLayoutRef.current = false;
+        }, 0);
+    }, [gridLayoutStorageKey, activeView?.columnWidths, activeView?.columnOrder, activeView?.pinnedColumns, activeView?.hiddenColumns, isFinanceWorkspace]);
+
+    useEffect(() => {
+        if (isApplyingStoredLayoutRef.current) return;
+        const hidden = Array.from(hiddenColumns);
+        try {
+            localStorage.setItem(gridLayoutStorageKey, JSON.stringify({ widths: columnWidths, order: columnOrder, pinned: pinnedColumns, hidden }));
+        } catch {
+            // Grid layout is an ergonomic preference; storage failure should not block the board.
+        }
+    }, [gridLayoutStorageKey, columnWidths, columnOrder, pinnedColumns, hiddenColumns]);
+
+    const saveGridLayoutPreference = (widths: Record<string, number>, order: string[], pinned = pinnedColumns, hidden = Array.from(hiddenColumns)) => {
+        try {
+            localStorage.setItem(gridLayoutStorageKey, JSON.stringify({ widths, order, pinned, hidden }));
+        } catch {
+            // Preference sync is best-effort.
+        }
+        updateCustomView(activeViewId, {
+            columnWidths: widths,
+            columnOrder: order,
+            pinnedColumns: pinned,
+            hiddenColumns: hidden,
+        });
+    };
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -253,11 +332,39 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             if (viewsMenuRef.current && !viewsMenuRef.current.contains(target)) setIsViewsMenuOpen(false);
             if (toolsRef.current && !toolsRef.current.contains(target)) {
                 setActiveToolPanel(null);
-                setActiveColumnMenu(null);
+            }
+            if (target instanceof Element && activeColumnMenu) {
+                const activeColumn = target.closest(`[data-column-id="${activeColumnMenu}"]`);
+                const activeMenu = target.closest('[data-column-menu="true"]');
+                if (!activeColumn && !activeMenu) setActiveColumnMenu(null);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeColumnMenu]);
+
+    useEffect(() => {
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setActiveColumnMenu(null);
+                setActiveToolPanel(null);
+                setIsViewsMenuOpen(false);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+        return () => document.removeEventListener('keydown', handleEscape);
+    }, []);
+
+    const syncFrozenScrollOffset = (scrollLeft = gridScrollRef.current?.scrollLeft || 0) => {
+        gridScrollRef.current?.style.setProperty('--grid-scroll-left', `${scrollLeft}px`);
+    };
+
+    useEffect(() => {
+        syncFrozenScrollOffset();
+    }, [activeViewId, pinnedColumns.length]);
+
+    useEffect(() => () => {
+        if (scrollAnimationRef.current !== null) cancelAnimationFrame(scrollAnimationRef.current);
     }, []);
 
     useEffect(() => {
@@ -288,11 +395,52 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     }, [location.search, views, setActiveViewId, isFinanceWorkspace]);
 
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
+    const getColumnFilterValue = (job: Booking, columnId: string) => {
+        switch (columnId) {
+            case 'jobNumber':
+                return [job.displayRef, job.jobNumber, job.bookingRef, job.legacyAirtableRef, job.id].filter(Boolean).join(' ');
+            case 'status':
+                return String(job.status || '').replace(/_/g, ' ');
+            case 'bookedFor':
+                return `${formatDate(job.date)} ${job.date || ''} ${job.startTime || ''}`;
+            case 'client':
+                return `${getCompanyName(job)} ${job.guestContact?.name || (job as any).contactName || ''}`;
+            case 'language':
+                return `${job.languageFrom || ''} ${job.languageTo || ''}`;
+            case 'interpreter':
+                return `${job.interpreterName || ''} ${job.interpreterId ? 'assigned' : 'unassigned'}`;
+            case 'location':
+                return `${job.locationType || ''} ${job.postcode || ''} ${job.address || ''} ${job.location || ''} ${job.onlineLink || ''}`;
+            case 'service':
+                return `${isTranslationJob(job) ? 'translation' : 'interpreting'} ${job.serviceCategory || ''} ${job.serviceType || ''}`;
+            case 'duration':
+                return `${job.durationMinutes || ''} ${(job as any).wordCount || ''} ${(job as any).numberOfDocs || ''}`;
+            case 'contact':
+                return `${job.guestContact?.name || ''} ${(job as any).contactName || ''}`;
+            case 'amount':
+                return `${job.totalAmount || ''} ${job.currency || 'GBP'}`;
+            case 'professionalCost':
+                return `${(job as any).interpreterAmountCalculated || ''} ${(job as any).professionalCost || ''}`;
+            case 'margin': {
+                const revenue = Number(job.totalAmount) || 0;
+                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                return `${revenue - cost}`;
+            }
+            case 'costCode':
+                return job.costCode || '';
+            case 'billingState':
+                return `${(job as any).paymentStatus || ''} ${job.status || ''} ${(job as any).billingIssueFlag ? 'billing issue' : ''}`;
+            case 'invoiceRef':
+                return `${(job as any).clientInvoiceNumber || ''} ${(job as any).invoiceNumber || ''} ${(job as any).clientInvoiceReference || ''} ${(job as any).interpreterInvoiceNumber || ''} ${(job as any).interpreterInvoiceReference || ''}`;
+            default:
+                return String((job as any)[columnId] || '');
+        }
+    };
     const workspacePath = isFinanceWorkspace ? '/admin/billing' : '/admin/bookings';
     const workspaceReturnPath = `${location.pathname}${location.search}`;
     const workspaceLabel = location.search
-        ? (isFinanceWorkspace ? 'Filtered Finance Board' : 'Filtered Jobs Board')
-        : (isFinanceWorkspace ? 'Finance Board' : 'Jobs Board');
+        ? (isFinanceWorkspace ? 'Filtered Finance Centre' : 'Filtered Job Centre')
+        : (isFinanceWorkspace ? 'Finance Centre' : 'Job Centre');
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
@@ -652,7 +800,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         },
     ], [financeLane, getClientCompany, isFinanceWorkspace]);
 
-    const orderedColumns = useMemo(() => {
+    const defaultOrderedColumns = useMemo(() => {
         if (!isFinanceWorkspace) return columns;
         const columnById = new Map(columns.map(column => [column.id, column]));
         const ordered = FINANCE_COLUMN_ORDER
@@ -662,11 +810,173 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         return [...ordered, ...remaining];
     }, [columns, isFinanceWorkspace]);
 
+    const orderedColumns = useMemo(() => {
+        if (columnOrder.length === 0) return defaultOrderedColumns;
+        const columnById = new Map(defaultOrderedColumns.map(column => [column.id, column]));
+        const ordered = columnOrder
+            .map(columnId => columnById.get(columnId))
+            .filter(Boolean) as GridColumn[];
+        const remaining = defaultOrderedColumns.filter(column => !columnOrder.includes(column.id));
+        return [...ordered, ...remaining];
+    }, [columnOrder, defaultOrderedColumns]);
+
     const visibleColumns = orderedColumns.filter(column => column.primary || !hiddenColumns.has(column.id));
-    const gridTemplateColumns = `44px ${visibleColumns.map(column => column.width).join(' ')}`;
+    const displayColumns = useMemo(() => {
+        const visibleIds = new Set(visibleColumns.map(column => column.id));
+        const activePinned = pinnedColumns.filter(columnId => visibleIds.has(columnId));
+        return [
+            ...visibleColumns.filter(column => activePinned.includes(column.id)),
+            ...visibleColumns.filter(column => !activePinned.includes(column.id)),
+        ];
+    }, [pinnedColumns, visibleColumns]);
+    const getDefaultColumnWidthPx = (column: GridColumn) => {
+        const match = column.width.match(/(\d+)px/);
+        return match ? Number(match[1]) : 120;
+    };
+    const getColumnWidthPx = (column: GridColumn) => columnWidths[column.id] || getDefaultColumnWidthPx(column);
+    const getColumnTrack = (column: GridColumn) => pinnedColumns.includes(column.id)
+        ? `${getColumnWidthPx(column)}px`
+        : columnWidths[column.id] ? `${columnWidths[column.id]}px` : column.width;
+    const gridTemplateColumns = `44px ${displayColumns.map(getColumnTrack).join(' ')}`;
     const gridMinWidth = isFinanceWorkspace
         ? 'min-w-[1280px]'
         : hiddenColumns.has('location') ? 'min-w-[1040px]' : 'min-w-[1170px]';
+
+    const freezeUpToColumn = (columnId: string) => {
+        const columnIndex = visibleColumns.findIndex(column => column.id === columnId);
+        if (columnIndex === -1) return;
+        const nextPinned = visibleColumns.slice(0, columnIndex + 1).map(column => column.id);
+        setPinnedColumns(nextPinned);
+        setActiveColumnMenu(null);
+        saveGridLayoutPreference(columnWidths, columnOrder, nextPinned);
+        showToast(`Frozen through ${visibleColumns[columnIndex].label}`, 'success');
+    };
+
+    const unfreezeColumns = () => {
+        setPinnedColumns([]);
+        setActiveColumnMenu(null);
+        saveGridLayoutPreference(columnWidths, columnOrder, []);
+    };
+
+    const getFrozenCellStyle = (columnId: string): React.CSSProperties => (
+        pinnedColumns.includes(columnId)
+            ? { transform: 'translate3d(var(--grid-scroll-left, 0px), 0, 0)', willChange: 'transform' }
+            : {}
+    );
+
+    const getFrozenIndexStyle = (): React.CSSProperties => ({
+        transform: 'translate3d(var(--grid-scroll-left, 0px), 0, 0)',
+        willChange: 'transform',
+    });
+
+    const startColumnResize = (event: React.MouseEvent, column: GridColumn) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const headerCell = event.currentTarget.closest('[data-column-id]') as HTMLElement | null;
+        const startX = event.clientX;
+        const startWidth = columnWidths[column.id] || headerCell?.getBoundingClientRect().width || MIN_COLUMN_WIDTH;
+        let latestWidths = { ...columnWidths, [column.id]: Math.round(startWidth) };
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const nextWidth = Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(startWidth + moveEvent.clientX - startX)));
+            latestWidths = { ...latestWidths, [column.id]: nextWidth };
+            setColumnWidths(prev => ({ ...prev, [column.id]: nextWidth }));
+        };
+
+        const onMouseUp = () => {
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+            saveGridLayoutPreference(latestWidths, columnOrder);
+        };
+
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    };
+
+    const resetColumnWidth = (event: React.MouseEvent, columnId: string) => {
+        event.preventDefault();
+        event.stopPropagation();
+        let nextWidths: Record<string, number> = {};
+        setColumnWidths(prev => {
+            nextWidths = { ...prev };
+            delete nextWidths[columnId];
+            return nextWidths;
+        });
+        saveGridLayoutPreference(nextWidths, columnOrder);
+    };
+
+    const moveColumn = (sourceColumnId: string, targetColumnId: string) => {
+        if (!sourceColumnId || sourceColumnId === targetColumnId) return;
+
+        let persistedOrder: string[] = [];
+        setColumnOrder(prev => {
+            const currentOrder = prev.length > 0 ? prev : defaultOrderedColumns.map(column => column.id);
+            const normalizedOrder = [
+                ...currentOrder.filter(columnId => defaultOrderedColumns.some(column => column.id === columnId)),
+                ...defaultOrderedColumns.map(column => column.id).filter(columnId => !currentOrder.includes(columnId)),
+            ];
+            const next = normalizedOrder.filter(columnId => columnId !== sourceColumnId);
+            const targetIndex = next.indexOf(targetColumnId);
+            if (targetIndex === -1) return normalizedOrder;
+            next.splice(targetIndex, 0, sourceColumnId);
+            persistedOrder = next;
+            return next;
+        });
+        if (persistedOrder.length > 0) saveGridLayoutPreference(columnWidths, persistedOrder);
+    };
+
+    const startColumnReorder = (event: React.MouseEvent, column: GridColumn) => {
+        if (event.button !== 0) return;
+        const target = event.target as HTMLElement;
+        if (target.closest('button')) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startX = event.clientX;
+        let didMove = false;
+        setDraggedColumnId(column.id);
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            if (Math.abs(moveEvent.clientX - startX) > 6) didMove = true;
+        };
+
+        const onMouseUp = (upEvent: MouseEvent) => {
+            const targetColumn = document
+                .elementFromPoint(upEvent.clientX, upEvent.clientY)
+                ?.closest('[data-column-id]') as HTMLElement | null;
+            const targetColumnId = targetColumn?.dataset.columnId;
+
+            if (didMove && targetColumnId) moveColumn(column.id, targetColumnId);
+
+            setDraggedColumnId(null);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    };
+
+    const resetColumnLayout = () => {
+        const defaultHiddenColumns = isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS;
+        setColumnOrder([]);
+        setColumnWidths({});
+        setPinnedColumns([]);
+        setHiddenColumns(new Set(defaultHiddenColumns));
+        setActiveColumnMenu(null);
+        saveGridLayoutPreference({}, [], [], defaultHiddenColumns);
+        showToast('Column layout reset for this view', 'success');
+    };
 
     const clientScopeId = useMemo(() => new URLSearchParams(location.search).get('clientId'), [location.search]);
     const interpreterScopeId = useMemo(() => new URLSearchParams(location.search).get('interpreterId'), [location.search]);
@@ -751,10 +1061,44 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         CANCELLED: applyQuickFilter(laneFilteredBookings, 'CANCELLED').length,
     }), [laneFilteredBookings]);
 
-    const filteredBookings = useMemo(
-        () => applyQuickFilter(laneFilteredBookings, quickFilter),
-        [laneFilteredBookings, quickFilter]
+    const quickFilterLabel = useMemo(() => {
+        const labels: Record<QuickFilter, string> = {
+            ALL: 'All',
+            INTERPRETING: 'Interpreting',
+            TRANSLATIONS: 'Translations',
+            OVERDUE: 'Overdue',
+            TODAY: 'Today',
+            UNASSIGNED: 'Unassigned',
+            COMPLETED: 'Completed',
+            TIMESHEET: 'Timesheets',
+            INVOICE_READY: 'Invoice ready',
+            AWAITING_PAYMENT: 'Awaiting payment',
+            CANCELLED: 'Cancelled',
+        };
+        return labels[quickFilter];
+    }, [quickFilter]);
+
+    const columnFilterColumn = useMemo(
+        () => columnFilter ? orderedColumns.find(column => column.id === columnFilter.columnId) : null,
+        [columnFilter, orderedColumns]
     );
+
+    const hasActiveGridFilters = Boolean(searchQuery.trim() || quickFilter !== 'ALL' || columnFilter?.value.trim());
+
+    const clearGridFilters = () => {
+        setSearchQuery('');
+        setQuickFilter('ALL');
+        setColumnFilter(null);
+        setCurrentPage(1);
+    };
+
+    const filteredBookings = useMemo(() => {
+        const quickFiltered = applyQuickFilter(laneFilteredBookings, quickFilter);
+        if (!columnFilter?.value.trim()) return quickFiltered;
+
+        const needle = columnFilter.value.trim().toLowerCase();
+        return quickFiltered.filter(job => getColumnFilterValue(job, columnFilter.columnId).toLowerCase().includes(needle));
+    }, [laneFilteredBookings, quickFilter, columnFilter]);
 
     const sortedBookings = useMemo(() => {
         const column = columns.find(c => {
@@ -835,17 +1179,28 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     }, [paginatedBookings, groupField, activeView.groupBy]);
 
     const toggleColumn = (columnId: string) => {
+        let nextHidden: string[] = [];
         setHiddenColumns(prev => {
             const next = new Set(prev);
             if (next.has(columnId)) next.delete(columnId);
             else next.add(columnId);
+            nextHidden = Array.from(next);
             return next;
         });
+        saveGridLayoutPreference(columnWidths, columnOrder, pinnedColumns, nextHidden);
     };
 
     const clearLocalFilters = () => {
         setSearchQuery('');
         setQuickFilter('ALL');
+        setColumnFilter(null);
+        setCurrentPage(1);
+    };
+
+    const selectWorkspaceView = (viewId: string) => {
+        setActiveViewId(viewId);
+        setColumnFilter(null);
+        setCurrentPage(1);
     };
 
     const openViewEditor = (viewId: string | null) => {
@@ -1172,12 +1527,22 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     ];
 
     const ColumnMenu = ({ column }: { column: GridColumn }) => (
-        <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-            <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">
-                <Pencil size={15} /> Edit field
+        <div data-column-menu="true" className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <button
+                onClick={() => { setActiveToolPanel('hide'); setActiveColumnMenu(null); }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+                <Pencil size={15} /> Field settings
             </button>
-            <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800">
-                <Copy size={15} /> Duplicate field
+            <button
+                onClick={async () => {
+                    await navigator.clipboard?.writeText(column.label);
+                    showToast(`Copied "${column.label}"`, 'success');
+                    setActiveColumnMenu(null);
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+                <Copy size={15} /> Copy field name
             </button>
             <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
             <button
@@ -1199,10 +1564,43 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 <Group size={15} /> Group by this field
             </button>
             <button
-                onClick={() => { setQuickFilter(column.id === 'status' ? 'UNASSIGNED' : quickFilter); setActiveColumnMenu(null); }}
+                onClick={() => {
+                    setColumnFilter(current => current?.columnId === column.id ? current : { columnId: column.id, value: '' });
+                    setActiveToolPanel('filter');
+                    setActiveColumnMenu(null);
+                }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <Filter size={15} /> Filter by this field
+            </button>
+            <button
+                onClick={() => freezeUpToColumn(column.id)}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+                <Pin size={15} /> Freeze up to this field
+            </button>
+            {pinnedColumns.length > 0 && (
+                <button
+                    onClick={unfreezeColumns}
+                    className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                    <PinOff size={15} /> Unfreeze fields
+                </button>
+            )}
+            <button
+                onClick={(event) => {
+                    resetColumnWidth(event, column.id);
+                    setActiveColumnMenu(null);
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+                <Maximize2 size={15} /> Reset column width
+            </button>
+            <button
+                onClick={resetColumnLayout}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+                <LayoutGrid size={15} /> Reset view layout
             </button>
             <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
             {!column.primary && (
@@ -1240,6 +1638,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         }
 
         if (activeToolPanel === 'filter') {
+            const filteredColumn = columnFilter ? orderedColumns.find(column => column.id === columnFilter.columnId) : null;
             const operationsQuickFilterOptions: Array<[QuickFilter, string, number]> = [
                 ['ALL', 'All', quickCounts.ALL],
                 ['INTERPRETING', 'Interpreting', quickCounts.INTERPRETING],
@@ -1266,14 +1665,44 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             const quickFilterOptions = isFinanceWorkspace ? financeQuickFilterOptions : operationsQuickFilterOptions;
             return (
                 <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+                    {filteredColumn && (
+                        <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 p-2 dark:border-blue-900/50 dark:bg-blue-950/30">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <p className="truncate text-xs font-black uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                                    Filter: {filteredColumn.label}
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => setColumnFilter(null)}
+                                    className="rounded px-1.5 py-1 text-[10px] font-black uppercase text-blue-600 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                            <input
+                                value={columnFilter?.value || ''}
+                                onChange={(event) => {
+                                    const value = event.target.value;
+                                    setColumnFilter(current => current ? { ...current, value } : { columnId: filteredColumn.id, value });
+                                    setCurrentPage(1);
+                                }}
+                                placeholder={`Contains ${filteredColumn.label.toLowerCase()}...`}
+                                className="h-9 w-full rounded-md border border-blue-200 bg-white px-3 text-sm font-semibold text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-blue-900/60 dark:bg-slate-950 dark:text-white"
+                                autoFocus
+                            />
+                        </div>
+                    )}
                     <div className="mb-2 flex items-center justify-between">
                         <p className="text-xs font-semibold text-slate-500">Quick filters</p>
-                        {quickFilter !== 'ALL' && (
+                        {(quickFilter !== 'ALL' || columnFilter) && (
                             <button
-                                onClick={() => setQuickFilter('ALL')}
+                                onClick={() => {
+                                    setQuickFilter('ALL');
+                                    setColumnFilter(null);
+                                }}
                                 className="rounded-md px-2 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
                             >
-                                Clear
+                                Clear all
                             </button>
                         )}
                     </div>
@@ -1281,7 +1710,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         {quickFilterOptions.map(([value, label, count]) => (
                             <button
                                 key={value}
-                                onClick={() => setQuickFilter(value)}
+                                onClick={() => {
+                                    setQuickFilter(value);
+                                    setCurrentPage(1);
+                                }}
                                 className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm font-semibold ${quickFilter === value ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                             >
                                 <span>{label}</span>
@@ -1338,14 +1770,27 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const renderGridRow = (job: Booking, rowIndex: number) => {
         const selected = selectedIds.includes(job.id);
         const translation = isTranslationJob(job);
+        const rowBgClass = selected
+            ? 'bg-blue-50 dark:bg-blue-950/30'
+            : translation
+                ? 'bg-violet-50/35 hover:bg-violet-50 dark:bg-violet-950/10 dark:hover:bg-violet-950/20'
+                : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60';
+        const frozenCellBgClass = selected
+            ? 'bg-amber-50 dark:bg-amber-950/80'
+            : translation
+                ? 'bg-amber-50 dark:bg-amber-950/80'
+                : 'bg-amber-50 dark:bg-amber-950/80';
         const row = (
             <div
-                className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${selected ? 'bg-blue-50 dark:bg-blue-950/30' : translation ? 'bg-violet-50/35 hover:bg-violet-50 dark:bg-violet-950/10 dark:hover:bg-violet-950/20' : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60'}`}
+                className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${rowBgClass}`}
                 style={{ gridTemplateColumns }}
                 onClick={() => handleRowClick(job)}
                 onDoubleClick={() => openJobDetails(job)}
             >
-                <div className="flex items-center justify-center border-r border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+                <div
+                    className="relative z-40 flex items-center justify-center border-r border-slate-200 bg-slate-50 text-xs text-slate-500 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
+                    style={getFrozenIndexStyle()}
+                >
                     <button
                         onClick={(e) => {
                             e.stopPropagation();
@@ -1358,8 +1803,12 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                     </button>
                     {!selected && <span className="ml-2">{rowIndex + 1}</span>}
                 </div>
-                {visibleColumns.map(column => (
-                    <div key={column.id} className="flex min-w-0 items-center overflow-hidden border-r border-slate-200 px-3 py-2 dark:border-slate-800">
+                {displayColumns.map(column => (
+                    <div
+                        key={column.id}
+                        className={`flex min-w-0 items-center overflow-hidden border-r border-slate-200 px-3 py-2 dark:border-slate-800 ${pinnedColumns.includes(column.id) ? `relative z-30 ${frozenCellBgClass} shadow-[1px_0_0_rgba(148,163,184,0.45)]` : ''}`}
+                        style={getFrozenCellStyle(column.id)}
+                    >
                         {column.render(job)}
                     </div>
                 ))}
@@ -1380,12 +1829,13 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 views={views}
                 viewSearchQuery={viewSearchQuery}
                 isCollapsed={isViewsSidebarCollapsed}
-                sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Bookings'}
+                sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Job Views'}
+                fallbackViewName={isFinanceWorkspace ? 'All Finance Records' : 'All Jobs'}
                 onSearchChange={setViewSearchQuery}
                 onCollapsedChange={setIsViewsSidebarCollapsed}
                 onCreateView={() => openViewEditor(null)}
                 onEditView={openViewEditor}
-                onSelectView={setActiveViewId}
+                onSelectView={selectWorkspaceView}
                 onToggleFavorite={toggleViewFavorite}
                 onReorderView={reorderViews}
                 getViewCount={(view) => filterBookings(searchFilteredBookings, view).length}
@@ -1400,13 +1850,14 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             views={views}
                             viewSearchQuery={viewSearchQuery}
                             isOpen={isViewsMenuOpen}
-                            sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Bookings'}
+                            sectionLabel={isFinanceWorkspace ? 'Finance Views' : 'Job Views'}
+                            fallbackViewName={isFinanceWorkspace ? 'All Finance Records' : 'All Jobs'}
                             activeCount={viewFilteredBookings.length}
                             onOpenChange={setIsViewsMenuOpen}
                             onSearchChange={setViewSearchQuery}
                             onCreateView={() => openViewEditor(null)}
                             onEditView={openViewEditor}
-                            onSelectView={setActiveViewId}
+                            onSelectView={selectWorkspaceView}
                             onToggleFavorite={toggleViewFavorite}
                             onReorderView={reorderViews}
                             getViewCount={(view) => filterBookings(searchFilteredBookings, view).length}
@@ -1428,7 +1879,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         {isFinanceWorkspace && <Button onClick={() => navigate('/admin/billing/overview')} icon={PoundSterling} variant="ghost" size="sm">Overview</Button>}
                         {!isFinanceWorkspace && <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">New</Button>}
                         <ToolButton icon={EyeOff} label="Hide fields" active={activeToolPanel === 'hide'} onClick={() => setActiveToolPanel(activeToolPanel === 'hide' ? null : 'hide')} />
-                        <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL'} onClick={() => setActiveToolPanel(activeToolPanel === 'filter' ? null : 'filter')} />
+                        <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL' || Boolean(columnFilter)} onClick={() => setActiveToolPanel(activeToolPanel === 'filter' ? null : 'filter')} />
                         <ToolButton icon={Group} label="Group" active={activeToolPanel === 'group' || groupField !== 'view'} onClick={() => setActiveToolPanel(activeToolPanel === 'group' ? null : 'group')} />
                         <ToolButton icon={ArrowUpDown} label="Sort" active={activeToolPanel === 'sort'} onClick={() => setActiveToolPanel(activeToolPanel === 'sort' ? null : 'sort')} />
                         <ToolButton icon={Maximize2} label={clientScopeId || interpreterScopeId ? 'All jobs' : 'Open'} onClick={() => navigate(workspacePath)} />
@@ -1441,12 +1892,18 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             type="text"
                             placeholder="Search ref, client, contact, language, interpreter, postcode"
                             value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onChange={(e) => {
+                                setSearchQuery(e.target.value);
+                                setCurrentPage(1);
+                            }}
                             className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
                         />
                         {searchQuery && (
                             <button
-                                onClick={() => setSearchQuery('')}
+                                onClick={() => {
+                                    setSearchQuery('');
+                                    setCurrentPage(1);
+                                }}
                                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                                 aria-label="Clear search"
                             >
@@ -1457,6 +1914,58 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 </div>
 
             </div>
+
+            {hasActiveGridFilters && (
+                <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900">
+                    <span className="font-black uppercase tracking-wide text-slate-400">Active filters</span>
+                    {searchQuery.trim() && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchQuery('');
+                                setCurrentPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 font-semibold text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
+                        >
+                            Search: {searchQuery.trim()}
+                            <X size={12} />
+                        </button>
+                    )}
+                    {quickFilter !== 'ALL' && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setQuickFilter('ALL');
+                                setCurrentPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700 hover:border-blue-300 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200"
+                        >
+                            View filter: {quickFilterLabel}
+                            <X size={12} />
+                        </button>
+                    )}
+                    {columnFilter?.value.trim() && columnFilterColumn && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setColumnFilter(null);
+                                setCurrentPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700 hover:border-violet-300 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-200"
+                        >
+                            {columnFilterColumn.label}: {columnFilter.value.trim()}
+                            <X size={12} />
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={clearGridFilters}
+                        className="ml-auto rounded-md px-2 py-1 font-black uppercase tracking-wide text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                    >
+                        Clear all
+                    </button>
+                </div>
+            )}
 
             {(clientScopeId || interpreterScopeId) && (
                 <div className="flex items-center justify-between gap-3 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
@@ -1479,13 +1988,28 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             )}
 
             <div className="min-w-0 overflow-hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-                <div className="min-w-0 overflow-x-auto overflow-y-visible">
+                <div
+                    ref={gridScrollRef}
+                    className="min-w-0 overflow-x-auto overflow-y-visible"
+                    onScroll={(event) => {
+                        const scrollElement = event.currentTarget;
+                        const nextScrollLeft = scrollElement.scrollLeft;
+                        if (scrollAnimationRef.current !== null) cancelAnimationFrame(scrollAnimationRef.current);
+                        scrollAnimationRef.current = requestAnimationFrame(() => {
+                            scrollElement.style.setProperty('--grid-scroll-left', `${nextScrollLeft}px`);
+                            scrollAnimationRef.current = null;
+                        });
+                    }}
+                >
                     <div className={`${gridMinWidth} min-w-full`}>
                         <div
                             className="grid h-10 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
                             style={{ gridTemplateColumns }}
                         >
-                            <div className="flex items-center justify-center border-r border-slate-200 dark:border-slate-800">
+                            <div
+                                className="relative z-40 flex items-center justify-center border-r border-slate-200 bg-slate-50 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
+                                style={getFrozenIndexStyle()}
+                            >
                                 <button
                                     onClick={() => {
                                         const pageIds = paginatedBookings.map(job => job.id);
@@ -1498,20 +2022,41 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                     {paginatedBookings.length > 0 && paginatedBookings.every(job => selectedIds.includes(job.id)) ? <Check size={11} /> : null}
                                 </button>
                             </div>
-                            {visibleColumns.map(column => (
-                                <div key={column.id} className="relative flex min-w-0 items-center justify-between gap-2 overflow-hidden border-r border-slate-200 px-3 dark:border-slate-800">
+                            {displayColumns.map(column => (
+                                <div
+                                    key={column.id}
+                                    data-column-id={column.id}
+                                    onMouseDown={(event) => startColumnReorder(event, column)}
+                                    className={`group/header relative flex min-w-0 cursor-grab items-center justify-between gap-2 border-r border-slate-200 px-3 active:cursor-grabbing dark:border-slate-800 ${pinnedColumns.includes(column.id) ? 'z-40 bg-amber-100 shadow-[2px_0_0_rgb(203,213,225)] dark:bg-amber-950 dark:shadow-[2px_0_0_rgb(30,41,59)]' : 'bg-slate-50 dark:bg-slate-950'} ${draggedColumnId === column.id ? 'opacity-45' : ''}`}
+                                    style={getFrozenCellStyle(column.id)}
+                                >
                                     <div className="flex min-w-0 items-center gap-2">
                                         <column.icon size={14} className="shrink-0 text-slate-400" />
                                         <span className="truncate">{column.label}</span>
+                                        {pinnedColumns.includes(column.id) && <Pin size={11} className="shrink-0 text-blue-500" />}
                                     </div>
                                     <button
-                                        onClick={() => setActiveColumnMenu(activeColumnMenu === column.id ? null : column.id)}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            setActiveColumnMenu(activeColumnMenu === column.id ? null : column.id);
+                                        }}
                                         className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                                         aria-label={`Open ${column.label} menu`}
+                                        title={`${column.label} options`}
                                     >
                                         <ChevronDown size={13} />
                                     </button>
                                     {activeColumnMenu === column.id && <ColumnMenu column={column} />}
+                                    <button
+                                        type="button"
+                                        onMouseDown={(event) => startColumnResize(event, column)}
+                                        onDoubleClick={(event) => resetColumnWidth(event, column.id)}
+                                        className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize touch-none opacity-0 transition-opacity hover:opacity-100 group-hover/header:opacity-100"
+                                        aria-label={`Resize ${column.label} column`}
+                                        title="Drag to resize. Double-click to reset."
+                                    >
+                                        <span className="mx-auto block h-full w-px bg-blue-500/70" />
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -1549,7 +2094,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 pageSize={pageSize}
                 onPreviousPage={() => setCurrentPage(page => Math.max(1, page - 1))}
                 onNextPage={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
-                onPageSizeChange={setPageSize}
+                onPageSizeChange={(nextPageSize) => {
+                    setPageSize(nextPageSize);
+                    setCurrentPage(1);
+                }}
             />
 
             <BulkActionBar

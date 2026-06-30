@@ -72,8 +72,8 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const isWorkstation = location.pathname === '/admin/dashboard' || location.pathname === '/admin/terminal-one';
 
   const categories = [
-    { id: 'CORE', label: 'Home', icon: LayoutDashboard, rootPath: '/admin/dashboard', module: SystemModule.DASHBOARD },
-    { id: 'OPS', label: 'Operations', icon: Briefcase, rootPath: '/admin/bookings', module: SystemModule.BOOKINGS },
+    { id: 'CORE', label: 'Command', icon: LayoutDashboard, rootPath: '/admin/dashboard', module: SystemModule.DASHBOARD },
+    { id: 'OPS', label: 'Job Centre', icon: Briefcase, rootPath: '/admin/bookings', module: SystemModule.BOOKINGS },
     { id: 'NET', label: 'Network', icon: Users, rootPath: '/admin/interpreters', modules: [SystemModule.INTERPRETERS, SystemModule.CLIENTS, SystemModule.RECRUITMENT] },
     { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/billing', module: SystemModule.FINANCE },
     { id: 'COMMS', label: 'Comms', icon: MessageSquare, rootPath: '/admin/messages', modules: [SystemModule.MESSAGES] },
@@ -284,25 +284,20 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                 </div>
               )}
 
-              {activeCategory === 'FIN' && (
-                <div className="space-y-4">
-                   {!isSecondarySlim && <div className="sidebar-group-label">Finance CRM</div>}
-                  <NavItem to="/admin/billing" icon={PoundSterling} label="Finance Board" active={isFinanceBoardView()} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing?view=fin-billing-queue&lane=clientBilling" icon={Receipt} label="Billing Queue" active={isFinanceBoardView('fin-billing-queue')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing?view=fin-timesheets&lane=interpreterPayables" icon={ClipboardList} label="Timesheets" active={isFinanceBoardView('fin-timesheets')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing?view=fin-ready-client-invoice&lane=clientBilling" icon={CreditCard} label="Ready to Invoice" active={isFinanceBoardView('fin-ready-client-invoice')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables" icon={Users} label="Interpreter Payables" active={isFinanceBoardView('fin-interpreter-invoices')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/billing/overview'} isCollapsed={isSecondarySlim} />
-                  {!isSecondarySlim && <div className="sidebar-group-label">Invoicing</div>}
-                  <NavItem to="/admin/billing/client-invoices" icon={CreditCard} label="Client Invoices" active={isActive('/admin/billing/client-invoices')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing/interpreter-invoices" icon={Users} label="Interpreter Invoices" active={isActive('/admin/billing/interpreter-invoices')} isCollapsed={isSecondarySlim} />
-                  {!isSecondarySlim && <div className="sidebar-group-label">Accounting</div>}
-                  <NavItem to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling" icon={Clock} label="Awaiting Payment" active={isFinanceBoardView('fin-awaiting-payment')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/billing?view=fin-profit-review&lane=clientBilling" icon={BarChart3} label="Profit Review" active={isFinanceBoardView('fin-profit-review')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/finance/statements" icon={FileText} label="Statements" active={isActive('/admin/finance/statements')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/finance/payroll" icon={PoundSterling} label="Payroll" active={isActive('/admin/finance/payroll')} isCollapsed={isSecondarySlim} />
-                </div>
-              )}
+                {activeCategory === 'FIN' && (
+                  <div className="space-y-4">
+                    {!isSecondarySlim && <div className="sidebar-group-label">Finance CRM</div>}
+                   <NavItem to="/admin/billing" icon={PoundSterling} label="Finance Board" active={isFinanceBoardView()} isCollapsed={isSecondarySlim} />
+                   <NavItem to="/admin/billing?view=fin-billing-queue&lane=clientBilling" icon={Receipt} label="Billing Queue" active={isFinanceBoardView('fin-billing-queue')} isCollapsed={isSecondarySlim} />
+                   <NavItem to="/admin/billing?view=fin-timesheets&lane=interpreterPayables" icon={ClipboardList} label="Timesheets" active={isFinanceBoardView('fin-timesheets')} isCollapsed={isSecondarySlim} />
+                   <NavItem to="/admin/billing?view=fin-ready-client-invoice&lane=clientBilling" icon={CreditCard} label="Ready to Invoice" active={isFinanceBoardView('fin-ready-client-invoice')} isCollapsed={isSecondarySlim} />
+                   <NavItem to="/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables" icon={Users} label="Interpreter Payables" active={isFinanceBoardView('fin-interpreter-invoices')} isCollapsed={isSecondarySlim} />
+                    {!isSecondarySlim && <div className="sidebar-group-label">Accounting</div>}
+                   <NavItem to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling" icon={Clock} label="Awaiting Payment" active={isFinanceBoardView('fin-awaiting-payment')} isCollapsed={isSecondarySlim} />
+                   <NavItem to="/admin/billing?view=fin-profit-review&lane=clientBilling" icon={BarChart3} label="Profit Review" active={isFinanceBoardView('fin-profit-review')} isCollapsed={isSecondarySlim} />
+                    <NavItem to="/admin/billing/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/billing/overview'} isCollapsed={isSecondarySlim} />
+                  </div>
+                )}
 
               {activeCategory === 'COMMS' && (
                 <div className="space-y-4">

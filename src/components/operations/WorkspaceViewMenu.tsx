@@ -26,6 +26,7 @@ interface WorkspaceViewMenuProps {
     onToggleFavorite: (viewId: string) => void;
     onReorderView: (sourceViewId: string, targetViewId: string) => void;
     getViewCount: (view: BookingView) => number;
+    fallbackViewName?: string;
 }
 
 export const WorkspaceViewMenu: React.FC<WorkspaceViewMenuProps> = ({
@@ -43,6 +44,7 @@ export const WorkspaceViewMenu: React.FC<WorkspaceViewMenuProps> = ({
     onToggleFavorite,
     onReorderView,
     getViewCount,
+    fallbackViewName = 'All Jobs',
 }) => {
     const [draggedViewId, setDraggedViewId] = useState<string | null>(null);
     const filteredViews = views.filter(view => view.name.toLowerCase().includes(viewSearchQuery.toLowerCase()));
@@ -139,7 +141,7 @@ export const WorkspaceViewMenu: React.FC<WorkspaceViewMenuProps> = ({
                 className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:hover:bg-slate-800 sm:w-auto xl:hidden"
             >
                 <LayoutGrid size={17} className="text-blue-500" />
-                <span className="max-w-[260px] truncate uppercase tracking-wide">{activeView?.name || 'All Bookings'}</span>
+                <span className="max-w-[260px] truncate uppercase tracking-wide">{activeView?.name || fallbackViewName}</span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{activeCount}</span>
                 <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>

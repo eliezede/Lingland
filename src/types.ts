@@ -704,6 +704,10 @@ export interface BookingView {
   sortBy: 'dateAsc' | 'dateDesc' | 'status' | 'client';
   // Advanced customization
   hiddenFields?: BookingColumnField[];
+  hiddenColumns?: string[];
+  columnOrder?: string[];
+  columnWidths?: Record<string, number>;
+  pinnedColumns?: string[];
   filterRules?: ViewFilterRule[];
   groupBy?: GroupableField | '';
   sortRules?: ViewSortRule[];

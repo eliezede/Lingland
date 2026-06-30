@@ -26,6 +26,7 @@ interface WorkspaceViewSidebarProps {
     onToggleFavorite: (viewId: string) => void;
     onReorderView: (sourceViewId: string, targetViewId: string) => void;
     getViewCount: (view: BookingView) => number;
+    fallbackViewName?: string;
 }
 
 export const WorkspaceViewSidebar: React.FC<WorkspaceViewSidebarProps> = ({
@@ -42,6 +43,7 @@ export const WorkspaceViewSidebar: React.FC<WorkspaceViewSidebarProps> = ({
     onToggleFavorite,
     onReorderView,
     getViewCount,
+    fallbackViewName = 'All Jobs',
 }) => {
     const [draggedViewId, setDraggedViewId] = useState<string | null>(null);
     const filteredViews = views.filter(view => view.name.toLowerCase().includes(viewSearchQuery.toLowerCase()));
@@ -133,7 +135,7 @@ export const WorkspaceViewSidebar: React.FC<WorkspaceViewSidebarProps> = ({
             <div className="flex h-11 items-center justify-between border-b border-slate-200 px-4 dark:border-slate-800">
                 <div className={`flex min-w-0 items-center gap-2 ${isCollapsed ? 'hidden' : ''}`}>
                     <LayoutGrid size={16} className="shrink-0 text-blue-500" />
-                    <span className="truncate text-sm font-semibold text-slate-950 dark:text-white">{activeView?.name || 'All Bookings'}</span>
+                    <span className="truncate text-sm font-semibold text-slate-950 dark:text-white">{activeView?.name || fallbackViewName}</span>
                 </div>
                 <div className={`flex items-center ${isCollapsed ? 'mx-auto' : 'gap-1'}`}>
                     {!isCollapsed && (

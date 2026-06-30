@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Plus, Receipt } from 'lucide-react';
+import { ArrowUpRight, Plus, Receipt, Search } from 'lucide-react';
 import { BillingService } from '../../../services/billingService';
 import { ClientInvoice, InvoiceStatus } from '../../../types';
 import { InvoiceTable } from '../../../components/billing/InvoiceTable';
@@ -21,6 +21,8 @@ export const AdminClientInvoicesPage = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState('');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
   const { showToast } = useToast();
   const scopedClientId = searchParams.get('clientId') || '';
   const scopedClientName = clients.find(client => client.id === scopedClientId)?.companyName
@@ -50,19 +52,22 @@ export const AdminClientInvoicesPage = () => {
     setLoading(false);
   };
 
-  const summary = useMemo(() => {
-    const draft = invoices.filter(inv => inv.status === InvoiceStatus.DRAFT);
-    const sent = invoices.filter(inv => inv.status === InvoiceStatus.SENT);
-    const paid = invoices.filter(inv => inv.status === InvoiceStatus.PAID);
-    const outstanding = invoices.filter(inv => [InvoiceStatus.DRAFT, InvoiceStatus.SENT].includes(inv.status));
-    return {
-      total: invoices.length,
-      draft: draft.length,
-      sent: sent.length,
-      paid: paid.length,
-      outstandingAmount: outstanding.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0),
-    };
-  }, [invoices]);
+  const filteredInvoices = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return invoices.filter(invoice => {
+      const matchesStatus = statusFilter === 'ALL' || invoice.status === statusFilter;
+      if (!matchesStatus) return false;
+      if (!query) return true;
+      return [
+        invoice.invoiceNumber,
+        invoice.reference,
+        invoice.id,
+        invoice.clientName,
+        invoice.currency,
+        invoice.status,
+      ].filter(Boolean).some(value => String(value).toLowerCase().includes(query));
+    });
+  }, [invoices, searchTerm, statusFilter]);
 
   const handleGenerate = async () => {
     try {
@@ -83,8 +88,8 @@ export const AdminClientInvoicesPage = () => {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Client Invoices"
-        subtitle="Accounts receivable documents connected to Finance Board billing queues."
+        title="Client Invoice Documents"
+        subtitle="Document registry for issued and draft client invoices."
       >
         <div className="flex flex-wrap items-center gap-2">
           {scopedClientId && (
@@ -93,7 +98,7 @@ export const AdminClientInvoicesPage = () => {
             </Link>
           )}
           <Link to={readyQueuePath} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800">
-            Ready queue <ArrowUpRight size={15} />
+            Finance queue <ArrowUpRight size={15} />
           </Link>
           <Button onClick={() => setShowGenerator(!showGenerator)} icon={Plus} size="sm">
             {showGenerator ? 'Close Generator' : 'Generate Invoice'}
@@ -107,20 +112,28 @@ export const AdminClientInvoicesPage = () => {
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-2 divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0 dark:divide-slate-800">
-          {[
-            ['Invoices', summary.total],
-            ['Draft', summary.draft],
-            ['Sent', summary.sent],
-            ['Paid', summary.paid],
-            ['Outstanding', money(summary.outstandingAmount)],
-          ].map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between gap-3 py-2 md:px-4 md:first:pl-0 md:last:pr-0">
-              <p className="truncate text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-              <p className="truncate text-base font-black text-slate-950 dark:text-white">{value}</p>
-            </div>
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+            placeholder="Search invoice, client, reference"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={event => setStatusFilter(event.target.value as 'ALL' | InvoiceStatus)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+        >
+          <option value="ALL">All statuses</option>
+          {[InvoiceStatus.DRAFT, InvoiceStatus.SENT, InvoiceStatus.PAID, InvoiceStatus.CANCELLED].map(status => (
+            <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>
           ))}
+        </select>
+        <div className="shrink-0 rounded-md bg-slate-100 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+          {filteredInvoices.length} of {invoices.length}
         </div>
       </div>
 
@@ -146,8 +159,10 @@ export const AdminClientInvoicesPage = () => {
         <TableSkeleton rows={8} />
       ) : invoices.length === 0 ? (
         <EmptyState title="No Invoices Found" description="There are no client invoices generated yet." onAction={() => setShowGenerator(true)} actionLabel="Generate Invoice" />
+      ) : filteredInvoices.length === 0 ? (
+        <EmptyState title="No Matching Documents" description="No client invoices match the current search or status." />
       ) : (
-        <InvoiceTable invoices={invoices} type="CLIENT" boardPath={readyQueuePath} />
+        <InvoiceTable invoices={filteredInvoices} type="CLIENT" boardPath={readyQueuePath} />
       )}
     </div>
   );
