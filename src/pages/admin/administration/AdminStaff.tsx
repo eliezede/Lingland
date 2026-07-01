@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { StaffService } from '../../../services/staffService';
 import { UserService } from '../../../services/userService';
 import { User, Department, JobTitle, UserRole, NotificationType } from '../../../types';
@@ -12,9 +13,10 @@ import { useToast } from '../../../context/ToastContext';
 import { useAuth } from '../../../context/AuthContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
-import { Users, Building2, Briefcase, Mail, Phone, Settings, Shield, Crown, LayoutGrid, List, UserCircle2, Trash2 } from 'lucide-react';
+import { Users, Building2, Briefcase, Mail, Phone, Settings, Shield, Crown, LayoutGrid, List, UserCircle2, Trash2, History } from 'lucide-react';
 
 export const AdminStaff = () => {
+  const navigate = useNavigate();
   const [staff, setStaff] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [jobTitles, setJobTitles] = useState<JobTitle[]>([]);
@@ -31,6 +33,8 @@ export const AdminStaff = () => {
   const { showToast } = useToast();
   const { isSuperAdmin, user } = useAuth();
   const { confirm } = useConfirm();
+  const inputClass = "w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  const labelClass = "mb-1.5 block text-[10px] font-black uppercase tracking-wide text-slate-400";
 
   const loadData = async () => {
     setLoading(true);
@@ -118,13 +122,13 @@ export const AdminStaff = () => {
             name={user.displayName} 
             src={user.photoUrl} 
             size="sm"
-            className="rounded-xl shadow-sm"
+            className="rounded-lg shadow-sm"
           />
           <div className="flex flex-col">
             <span className="font-bold text-slate-900 dark:text-white capitalize truncate max-w-[150px]">{user.displayName}</span>
             <div className="flex items-center space-x-2">
                {user.role === UserRole.SUPER_ADMIN ? <Crown size={10} className="text-amber-500" /> : <Shield size={10} className="text-blue-500" />}
-               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{user.role}</span>
+               <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">{user.role}</span>
             </div>
           </div>
         </div>
@@ -173,24 +177,24 @@ export const AdminStaff = () => {
   const StaffCard = ({ member }: { member: User }) => (
     <div 
         onClick={() => handleOpenManage(member)}
-        className="group bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 p-6 hover:border-blue-500 hover:shadow-2xl hover:shadow-blue-500/10 transition-all cursor-pointer relative overflow-hidden"
+        className="group relative cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-blue-500 hover:bg-blue-50/30 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-blue-950/20"
     >
         <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-            <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-900/40">
                 <Settings size={14} />
             </div>
         </div>
         
-        <div className="flex flex-col items-center text-center space-y-4">
+        <div className="flex flex-col items-center space-y-3 text-center">
             <UserAvatar 
               name={member.displayName} 
               src={member.photoUrl} 
               size="lg"
-              className="rounded-[2rem] shadow-inner"
+              className="rounded-lg shadow-inner"
             />
             
             <div>
-                <h3 className="font-black text-slate-900 dark:text-white capitalize text-lg tracking-tight mb-1">{member.displayName}</h3>
+                <h3 className="mb-1 text-base font-black capitalize tracking-tight text-slate-900 dark:text-white">{member.displayName}</h3>
                 <div className="flex items-center justify-center space-x-2">
                     <Badge variant={member.role === UserRole.SUPER_ADMIN ? 'warning' : 'info'} className="text-[9px] px-2 py-0.5 font-black uppercase tracking-widest">
                         {member.role}
@@ -201,7 +205,7 @@ export const AdminStaff = () => {
                 </div>
             </div>
 
-            <div className="w-full pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="w-full space-y-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                 <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
                     <Building2 size={14} className="shrink-0 text-blue-500" />
                     <span className="text-xs font-bold truncate">Lingland Administration</span>
@@ -216,23 +220,23 @@ export const AdminStaff = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader 
         title="Staff Directory" 
         subtitle="Manage internal team members and organizational roles"
       >
         <div className="flex items-center gap-3">
           <Button icon={Users} size="sm" onClick={() => setIsInviteModalOpen(true)}>Invite Member</Button>
-          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl pointer-events-auto">
+          <div className="pointer-events-auto flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
               <button 
                   onClick={() => setViewMode('list')}
-                  className={`p-1.5 rounded-lg transition-all ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`rounded-md p-1.5 transition-all ${viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-700' : 'text-slate-400 hover:text-slate-600'}`}
               >
                   <List size={18} />
               </button>
               <button 
                   onClick={() => setViewMode('grid')}
-                  className={`p-1.5 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  className={`rounded-md p-1.5 transition-all ${viewMode === 'grid' ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-700' : 'text-slate-400 hover:text-slate-600'}`}
               >
                   <LayoutGrid size={18} />
               </button>
@@ -241,8 +245,8 @@ export const AdminStaff = () => {
       </PageHeader>
       
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1,2,3].map(i => <div key={i} className="h-64 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] animate-pulse" />)}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {[1,2,3].map(i => <div key={i} className="h-40 animate-pulse rounded-lg bg-slate-50 dark:bg-slate-800/50" />)}
         </div>
       ) : viewMode === 'list' ? (
         <Table 
@@ -252,7 +256,7 @@ export const AdminStaff = () => {
             onRowClick={(member) => handleOpenManage(member)}
             renderContextMenu={(member) => [
                 { label: 'Manage Profile', icon: Settings, onClick: () => handleOpenManage(member) },
-                { label: 'View Activity', icon: Users, onClick: () => showToast('Activity log coming soon', 'info') },
+                { label: 'Open Audit Control', icon: History, onClick: () => navigate('/admin/system/audit-log') },
                 ...(isSuperAdmin && member.status === 'PENDING' ? [
                   {
                     label: 'Resend Invite',
@@ -295,7 +299,7 @@ export const AdminStaff = () => {
             ]}
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {staff.map(member => <StaffCard key={member.id} member={member} />)}
         </div>
       )}
@@ -305,7 +309,7 @@ export const AdminStaff = () => {
         onClose={() => setIsManageModalOpen(false)} 
         title={selectedStaff?.role === UserRole.SUPER_ADMIN ? "SuperAdmin Details" : "Staff Profile & Assignment"}
       >
-        <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800 flex items-center gap-4">
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
             <UserAvatar 
               name={selectedStaff?.displayName || ''} 
               src={selectedStaff?.photoUrl} 
@@ -314,17 +318,17 @@ export const AdminStaff = () => {
             />
             <div className="flex-1 min-w-0">
                 <h4 className="font-black text-blue-900 dark:text-blue-100 truncate">{selectedStaff?.displayName}</h4>
-                <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest truncate">{selectedStaff?.email}</p>
+                <p className="truncate text-[10px] font-bold uppercase tracking-wide text-blue-500">{selectedStaff?.email}</p>
             </div>
         </div>
 
         <form onSubmit={handleSaveAssignment} className="space-y-4">
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Department</label>
+              <label className={labelClass}>Department</label>
               <select 
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                className={inputClass}
                 value={manageForm.departmentId}
                 onChange={e => setManageForm({ ...manageForm, departmentId: e.target.value, jobTitleId: '' })}
               >
@@ -333,10 +337,10 @@ export const AdminStaff = () => {
               </select>
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Job Title</label>
+              <label className={labelClass}>Job Title</label>
               <select 
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                className={inputClass}
                 value={manageForm.jobTitleId}
                 onChange={e => setManageForm({ ...manageForm, jobTitleId: e.target.value })}
                 disabled={!manageForm.departmentId}
@@ -362,35 +366,35 @@ export const AdminStaff = () => {
         title="Invite New Staff Member"
       >
         <form onSubmit={handleInviteStaff} className="space-y-4">
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Full Name</label>
+              <label className={labelClass}>Full Name</label>
               <input 
                 required
                 type="text"
                 placeholder="e.g., John Smith"
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                className={inputClass}
                 value={inviteForm.name}
                 onChange={e => setInviteForm({ ...inviteForm, name: e.target.value })}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Email Address</label>
+              <label className={labelClass}>Email Address</label>
               <input 
                 required
                 type="email"
                 placeholder="john.smith@lingland.com"
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                className={inputClass}
                 value={inviteForm.email}
                 onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Department</label>
+                  <label className={labelClass}>Department</label>
                   <select 
                     required
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                    className={inputClass}
                     value={inviteForm.departmentId}
                     onChange={e => setInviteForm({ ...inviteForm, departmentId: e.target.value, jobTitleId: '' })}
                   >
@@ -399,10 +403,10 @@ export const AdminStaff = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Job Title</label>
+                  <label className={labelClass}>Job Title</label>
                   <select 
                     required
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                    className={inputClass}
                     value={inviteForm.jobTitleId}
                     onChange={e => setInviteForm({ ...inviteForm, jobTitleId: e.target.value })}
                     disabled={!inviteForm.departmentId}
@@ -416,19 +420,19 @@ export const AdminStaff = () => {
                 </div>
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">System Role</label>
+              <label className={labelClass}>System Role</label>
               <div className="grid grid-cols-2 gap-2">
                   <button 
                     type="button"
                     onClick={() => setInviteForm({ ...inviteForm, role: UserRole.ADMIN })}
-                    className={`px-4 py-3 rounded-xl border font-bold text-xs transition-all ${inviteForm.role === UserRole.ADMIN ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
+                    className={`rounded-md border px-4 py-2.5 text-xs font-bold transition-all ${inviteForm.role === UserRole.ADMIN ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950'}`}
                   >
                     Admin
                   </button>
                   <button 
                     type="button"
                     onClick={() => setInviteForm({ ...inviteForm, role: UserRole.SUPER_ADMIN })}
-                    className={`px-4 py-3 rounded-xl border font-bold text-xs transition-all ${inviteForm.role === UserRole.SUPER_ADMIN ? 'bg-amber-500 text-white border-amber-500' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
+                    className={`rounded-md border px-4 py-2.5 text-xs font-bold transition-all ${inviteForm.role === UserRole.SUPER_ADMIN ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950'}`}
                   >
                     SuperAdmin
                   </button>

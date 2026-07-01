@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Edit2, Save, X, Plus, ChevronDown, ChevronUp } from 'lucide-react';
-import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { Spinner } from '../../../components/ui/Spinner';
 import { useToast } from '../../../context/ToastContext';
-import { EmailTemplate, EMAIL_VARIABLES, BookingStatus } from '../../../types';
+import { EmailTemplate } from '../../../types';
 import { EmailService } from '../../../services/emailService';
 
 export const AdminEmailTemplates: React.FC = () => {
@@ -86,16 +85,20 @@ export const AdminEmailTemplates: React.FC = () => {
         return <div className="flex justify-center p-12"><Spinner /></div>;
     }
 
+    const controlClass = "w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+
     return (
-        <div className="space-y-6">
-            <div className="flex items-center justify-between">
+        <div className="space-y-4">
+            <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Email Templates</h1>
-                    <p className="text-slate-500 mt-1">Manage automated communications sent to clients, interpreters, and applicants.</p>
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-400">Communications</p>
+                    <h1 className="mt-1 text-2xl font-black text-slate-900 dark:text-white">Email Templates</h1>
+                    <p className="mt-1 text-sm text-slate-500">Operational registry for account, booking and finance messages.</p>
                 </div>
+                <Badge variant="neutral">{templates.length} templates</Badge>
             </div>
 
-            <div className="space-y-10">
+            <div className="space-y-3">
                 {Object.entries(
                     templates.reduce((acc, template) => {
                         const cat = template.category || 'UNCATEGORIZED';
@@ -106,54 +109,77 @@ export const AdminEmailTemplates: React.FC = () => {
                 ).map(([category, catTemplates]) => {
                     const isExpanded = expandedCategories[category];
                     return (
-                        <div key={category} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+                        <div key={category} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                             <button 
                                 onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}
-                                className="w-full flex items-center justify-between p-6 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                className="flex w-full items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-800"
                             >
-                                <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200 capitalize">
-                                    {category.toLowerCase()} Templates
-                                </h2>
+                                <div className="flex items-center gap-3">
+                                    <Mail size={16} className="text-blue-600" />
+                                    <h2 className="text-sm font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                                        {category.toLowerCase()} templates
+                                    </h2>
+                                    <Badge variant="neutral">{catTemplates.length}</Badge>
+                                </div>
                                 <div className="text-slate-400">
-                                    {isExpanded ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
+                                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                                 </div>
                             </button>
                             
                             {isExpanded && (
-                                <div className="p-6 bg-white dark:bg-slate-900">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                <div className="overflow-x-auto bg-white dark:bg-slate-900">
+                                    <table className="w-full min-w-[880px] divide-y divide-slate-200 dark:divide-slate-800">
+                                        <thead className="bg-white dark:bg-slate-900">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left text-[10px] font-black uppercase tracking-wide text-slate-400">Template</th>
+                                                <th className="px-4 py-2 text-left text-[10px] font-black uppercase tracking-wide text-slate-400">Trigger</th>
+                                                <th className="px-4 py-2 text-left text-[10px] font-black uppercase tracking-wide text-slate-400">Recipient</th>
+                                                <th className="px-4 py-2 text-left text-[10px] font-black uppercase tracking-wide text-slate-400">Subject</th>
+                                                <th className="px-4 py-2 text-right text-[10px] font-black uppercase tracking-wide text-slate-400">State</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                         {catTemplates.map(template => (
-                                            <Card key={template.id} className="p-6 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-col hover:border-blue-500 transition-colors cursor-pointer" onClick={() => handleEdit(template)}>
-                                                <div className="flex items-start justify-between mb-4">
-                                                    <div className="flex items-center space-x-3">
-                                                        <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
-                                                            <Mail size={20} />
+                                            <tr
+                                                key={template.id}
+                                                onDoubleClick={() => handleEdit(template)}
+                                                className="cursor-pointer transition-colors hover:bg-blue-50/40 dark:hover:bg-blue-950/20"
+                                            >
+                                                <td className="px-4 py-3">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleEdit(template)}
+                                                        className="group flex min-w-0 items-center gap-3 text-left"
+                                                    >
+                                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                                                            <Mail size={16} />
                                                         </div>
-                                                        <div>
-                                                            <h3 className="font-bold text-slate-900 dark:text-white">{template.name}</h3>
-                                                            <div className="text-xs font-semibold text-slate-500 mt-0.5">Triggers on: {template.triggerStatus}</div>
+                                                        <div className="min-w-0">
+                                                            <div className="truncate text-sm font-black text-slate-950 group-hover:text-blue-700 dark:text-white dark:group-hover:text-blue-300">{template.name}</div>
+                                                            <div className="mt-0.5 text-[11px] font-semibold text-slate-500">{template.id}</div>
                                                         </div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="mt-auto space-y-3">
-                                                    <div className="flex items-center space-x-2">
-                                                        <Badge variant={template.recipientType === 'CLIENT' ? 'info' : template.recipientType === 'INTERPRETER' ? 'warning' : 'neutral'}>
-                                                            TO: {template.recipientType}
-                                                        </Badge>
-                                                        {template.isActive ? (
-                                                            <Badge variant="success">Active</Badge>
-                                                        ) : (
-                                                            <Badge variant="neutral">Disabled</Badge>
-                                                        )}
-                                                    </div>
-                                                    <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
-                                                        <strong>Subj:</strong> {template.subject}
-                                                    </p>
-                                                </div>
-                                            </Card>
+                                                    </button>
+                                                </td>
+                                                <td className="px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{template.triggerStatus}</td>
+                                                <td className="px-4 py-3">
+                                                    <Badge variant={template.recipientType === 'CLIENT' ? 'info' : template.recipientType === 'INTERPRETER' ? 'warning' : 'neutral'}>
+                                                        {template.recipientType}
+                                                    </Badge>
+                                                </td>
+                                                <td className="max-w-[360px] px-4 py-3 text-sm font-medium text-slate-500 dark:text-slate-400">
+                                                    <span className="block truncate">{template.subject}</span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right">
+                                                    {template.isActive ? (
+                                                        <Badge variant="success">Active</Badge>
+                                                    ) : (
+                                                        <Badge variant="neutral">Disabled</Badge>
+                                                    )}
+                                                </td>
+                                            </tr>
                                         ))}
-                                    </div>
+                                        </tbody>
+                                    </table>
                                 </div>
                             )}
                         </div>
@@ -162,43 +188,43 @@ export const AdminEmailTemplates: React.FC = () => {
             </div>
 
             {editingTemplate && (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-end">
-                    <div className="w-full max-w-2xl bg-white dark:bg-slate-900 h-full overflow-y-auto animate-slide-in-right shadow-2xl flex flex-col">
-                        <div className="flex items-center justify-between p-6 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
-                            <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm">
+                    <div className="flex h-full w-full max-w-2xl animate-slide-in-right flex-col bg-white shadow-2xl dark:bg-slate-900">
+                        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
+                            <h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-white">
                                 <Edit2 size={20} className="text-blue-500" />
                                 Edit Template
                             </h2>
                             <button
                                 onClick={() => setEditingTemplate(null)}
-                                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl"
+                                className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
                             >
                                 <X size={20} />
                             </button>
                         </div>
 
-                        <div className="p-6 space-y-6 flex-1">
+                        <div className="flex-1 space-y-4 overflow-y-auto p-5">
                             <div>
-                                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                <label className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">
                                     Template Name <span className="text-red-500">*</span>
                                 </label>
                                 <input
                                     type="text"
                                     value={editingTemplate.name}
                                     onChange={(e) => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
-                                    className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                    className={controlClass}
                                 />
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                    <label className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">
                                         Category <span className="text-red-500">*</span>
                                     </label>
                                     <select
                                         value={editingTemplate.category || 'BOOKINGS'}
                                         onChange={(e) => setEditingTemplate({ ...editingTemplate, category: e.target.value as any })}
-                                        className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                        className={controlClass}
                                     >
                                         <option value="BOOKINGS">Bookings</option>
                                         <option value="APPLICATIONS">Applications</option>
@@ -207,13 +233,13 @@ export const AdminEmailTemplates: React.FC = () => {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                    <label className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">
                                         Recipient Type <span className="text-red-500">*</span>
                                     </label>
                                     <select
                                         value={editingTemplate.recipientType}
                                         onChange={(e) => setEditingTemplate({ ...editingTemplate, recipientType: e.target.value as any })}
-                                        className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                        className={controlClass}
                                     >
                                         <option value="CLIENT">Client</option>
                                         <option value="INTERPRETER">Interpreter</option>
@@ -224,29 +250,29 @@ export const AdminEmailTemplates: React.FC = () => {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                <label className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">
                                     Subject <span className="text-red-500">*</span>
                                 </label>
                                 <input
                                     type="text"
                                     value={editingTemplate.subject}
                                     onChange={(e) => setEditingTemplate({ ...editingTemplate, subject: e.target.value })}
-                                    className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                                    className={controlClass}
                                 />
                             </div>
 
                             <div>
-                                <div className="flex items-center justify-between mb-1 text-sm font-bold text-slate-700 dark:text-slate-300">
+                                <div className="mb-1 flex items-center justify-between text-xs font-black uppercase tracking-wide text-slate-500">
                                     <label>
                                         Message Body <span className="text-red-500">*</span>
                                     </label>
 
                                     {/* Variable Inserter Dropdown - Simplified for mock */}
                                     <div className="relative group">
-                                        <button className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-lg">
+                                        <button type="button" className="flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs normal-case tracking-normal text-blue-600 dark:bg-blue-900/20 dark:text-blue-400">
                                             <Plus size={14} /> Insert Variable
                                         </button>
-                                        <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-2 hidden group-hover:block z-50 h-48 overflow-y-auto">
+                                        <div className="absolute right-0 top-full z-50 mt-1 hidden h-48 w-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl group-hover:block dark:border-slate-700 dark:bg-slate-800">
                                             <div className="text-[10px] uppercase font-black tracking-wider text-slate-400 mb-2 px-2">Click to insert</div>
                                             {editingTemplate.allowedVariables.map(v => (
                                                 <div
@@ -261,17 +287,17 @@ export const AdminEmailTemplates: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <p className="text-xs text-slate-500 mb-2">Use markdown or HTML for text formatting: **bold**, `_italics_`, `&lt;br&gt;`.</p>
+                                <p className="mb-2 text-xs text-slate-500">Use markdown or HTML for text formatting: **bold**, `_italics_`, `&lt;br&gt;`.</p>
                                 <textarea
                                     id="bodyTextarea"
                                     value={editingTemplate.body}
                                     onChange={(e) => setEditingTemplate({ ...editingTemplate, body: e.target.value })}
-                                    rows={15}
-                                    className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm leading-relaxed"
+                                    rows={13}
+                                    className={`${controlClass} font-mono leading-relaxed`}
                                 />
                             </div>
 
-                            <div className="flex items-center space-x-3 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl">
+                            <div className="flex items-center space-x-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                                 <input
                                     type="checkbox"
                                     id="isActive"
@@ -286,15 +312,15 @@ export const AdminEmailTemplates: React.FC = () => {
 
                         </div>
 
-                        <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 space-y-4 sticky bottom-0">
-                            <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-xl">
+                        <div className="sticky bottom-0 space-y-3 border-t border-slate-100 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/90">
+                            <div className="flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-900/30 dark:bg-blue-900/10">
                                 <div className="flex-1">
                                     <input
                                         type="email"
                                         placeholder="test-email@example.com"
                                         value={testRecipient}
                                         onChange={(e) => setTestRecipient(e.target.value)}
-                                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                        className={controlClass}
                                     />
                                 </div>
                                 <Button

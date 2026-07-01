@@ -42,18 +42,18 @@ const toneClasses: Record<FinanceTileTone, string> = {
 const FinanceTile: React.FC<FinanceTileProps> = ({ label, value, meta, to, icon: Icon, tone = 'slate', loading }) => (
   <Link
     to={to}
-    className="group flex min-h-[132px] flex-col justify-between rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
+    className="group flex min-h-[78px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 transition-colors hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
   >
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-        {loading ? <Skeleton className="mt-3 h-8 w-20" /> : <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{value}</p>}
-      </div>
-      <span className={`rounded-md border p-2 ${toneClasses[tone]}`}>
+    <div className="flex min-w-0 items-center gap-3">
+      <span className={`shrink-0 rounded-md border p-2 ${toneClasses[tone]}`}>
         <Icon size={18} />
       </span>
+      <div className="min-w-0">
+        <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+        {loading ? <Skeleton className="mt-2 h-6 w-20" /> : <p className="mt-1 text-2xl font-black text-slate-950 dark:text-white">{value}</p>}
+      </div>
     </div>
-    <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:text-slate-400">
+    <div className="flex min-w-[92px] items-center justify-end gap-2 text-right text-xs font-semibold text-slate-500 dark:text-slate-400">
       <span className="truncate">{meta}</span>
       <ArrowUpRight size={14} className="shrink-0 text-slate-400 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-blue-600" />
     </div>
@@ -124,8 +124,8 @@ export const AdminBillingDashboard = () => {
   const loading = jobsLoading || statsLoading;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 border-b border-slate-200 pb-5 dark:border-slate-800 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-slate-400">Finance CRM Overview</p>
           <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Accounts control room</h1>
@@ -141,7 +141,7 @@ export const AdminBillingDashboard = () => {
         </Link>
       </div>
 
-      <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
         <FinanceTile
           label="Ready for client invoice"
           value={financeMetrics.readyForClientInvoice.length}

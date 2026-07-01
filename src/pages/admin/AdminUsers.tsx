@@ -14,7 +14,7 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { UserAvatar } from '../../components/ui/UserAvatar';
 import {
   Search, Plus, ShieldOff, ShieldCheck, Trash2,
-  Shield, Crown, Mail, Calendar,
+  Shield, Crown, Calendar,
   CheckCircle2, AlertCircle, User as UserIcon
 } from 'lucide-react';
 
@@ -24,7 +24,6 @@ export const AdminUsers = () => {
   const [searchFilter, setSearchFilter] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [inviteData, setInviteData] = useState({ name: '', email: '', role: UserRole.ADMIN });
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [selectedUserForRole, setSelectedUserForRole] = useState<User | null>(null);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
@@ -228,25 +227,26 @@ export const AdminUsers = () => {
   ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Admin Users" subtitle="Manage system administrators and platform access">
-        <Button icon={Plus} onClick={() => setIsInviteModalOpen(true)}>Invite User</Button>
+    <div className="space-y-4">
+      <PageHeader title="Users & Roles" subtitle="Registry for platform accounts, access status and role control">
+        <Button icon={Plus} onClick={() => setIsInviteModalOpen(true)} size="sm">Add account</Button>
       </PageHeader>
 
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="flex-1 relative">
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
-            placeholder="Search users..."
-            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search user, email..."
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
             value={searchFilter}
             onChange={e => setSearchFilter(e.target.value)}
           />
         </div>
         <div className="w-full md:w-48">
           <select
-            className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
             value={roleFilter}
             onChange={e => setRoleFilter(e.target.value)}
           >
@@ -257,6 +257,14 @@ export const AdminUsers = () => {
             <option value={UserRole.INTERPRETER}>Interpreters</option>
           </select>
         </div>
+        <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+          <span>{filteredUsers.length}</span>
+          <span>shown</span>
+          <span className="text-slate-300">/</span>
+          <span>{users.length}</span>
+          <span>total</span>
+        </div>
+      </div>
       </div>
 
       <div className="space-y-4">
@@ -299,51 +307,29 @@ export const AdminUsers = () => {
         />
       </div>
 
-      {/* Invite Modal */}
+      {/* Account creation guidance */}
       <Modal
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
-        title="Invite New User"
+        title="Add Account"
       >
         <form onSubmit={handleInvite} className="space-y-4 pt-4">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Full Name</label>
-              <input
-                type="text" required
-                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                placeholder="John Doe"
-                value={inviteData.name}
-                onChange={e => setInviteData({ ...inviteData, name: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Email</label>
-              <input
-                type="email" required
-                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                placeholder="john@example.com"
-                value={inviteData.email}
-                onChange={e => setInviteData({ ...inviteData, email: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Role</label>
-              <select
-                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                value={inviteData.role}
-                onChange={e => setInviteData({ ...inviteData, role: e.target.value as UserRole })}
-              >
-                <option value={UserRole.ADMIN}>Administrator</option>
-                <option value={UserRole.CLIENT}>Client</option>
-                <option value={UserRole.INTERPRETER}>Interpreter</option>
-                {isSuperAdmin && <option value={UserRole.SUPER_ADMIN}>Super Admin</option>}
-              </select>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-sm font-black text-slate-950 dark:text-white">Account creation is routed by workflow.</p>
+                <p className="mt-1 text-sm leading-5 text-amber-900 dark:text-amber-100">
+                  Staff invitations are created from Staff Directory. Client and interpreter accounts are created through activation, migration or onboarding so user access stays linked to the correct profile.
+                </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-3 mt-6">
-            <Button variant="outline" className="flex-1" onClick={() => setIsInviteModalOpen(false)}>Cancel</Button>
-            <Button className="flex-1" type="submit" isLoading={!!actionInProgress}>Send Invite</Button>
+            <Button variant="outline" className="flex-1" onClick={() => setIsInviteModalOpen(false)}>Close</Button>
+            <Button className="flex-1" type="button" onClick={() => { setIsInviteModalOpen(false); window.location.hash = '#/admin/administration/staff'; }}>
+              Open Staff Directory
+            </Button>
           </div>
         </form>
       </Modal>
@@ -362,7 +348,7 @@ export const AdminUsers = () => {
                 key={r}
                 onClick={() => setNewRoleSelection(r)}
                 disabled={r === UserRole.SUPER_ADMIN && !isSuperAdmin}
-                className={`p-4 rounded-xl border-2 text-left transition-all ${newRoleSelection === r ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 disabled:opacity-50'}`}
+                className={`rounded-lg border p-3 text-left transition-all ${newRoleSelection === r ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30' : 'border-slate-100 hover:border-slate-200 disabled:opacity-50 dark:border-slate-800 dark:hover:border-slate-700'}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">

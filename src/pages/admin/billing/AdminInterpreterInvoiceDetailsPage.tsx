@@ -159,36 +159,29 @@ export const AdminInterpreterInvoiceDetailsPage = () => {
         </div>
       </div>
 
-      <section className="grid gap-3 lg:grid-cols-[1.4fr_0.8fr]">
-        <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Interpreter payable</p>
-              <h2 className="mt-2 text-xl font-black text-slate-950 dark:text-white">{invoice.interpreterName}</h2>
-              <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
-                {invoice.model === 'UPLOAD' ? 'Uploaded supplier invoice' : 'Self-billing invoice'} issued {formatDate(invoice.issueDate)}
-              </p>
-            </div>
-            <div className="text-left md:text-right">
-              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Total payable</p>
-              <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{money(total, currency)}</p>
-              <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">Model {invoice.model.replace('_', ' ')}</p>
-            </div>
+      <section className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+        <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Interpreter payable</p>
+            <h2 className="mt-1 truncate text-lg font-black text-slate-950 dark:text-white">{invoice.interpreterName}</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+              {invoice.model === 'UPLOAD' ? 'Uploaded supplier invoice' : 'Self-billing invoice'} issued {formatDate(invoice.issueDate)}
+            </p>
           </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            ['Issue date', formatDate(invoice.issueDate)],
-            ['Lines', summary.lines],
-            ['Linked jobs', summary.jobs],
-            ['Timesheets', summary.timesheets],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-              <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-              <p className="mt-2 truncate text-lg font-black text-slate-950 dark:text-white">{value}</p>
-            </div>
-          ))}
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            {[
+              ['Total', money(total, currency)],
+              ['Model', invoice.model.replace('_', ' ')],
+              ['Lines', summary.lines],
+              ['Jobs', summary.jobs],
+              ['Timesheets', summary.timesheets],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-md border border-slate-200 px-3 py-2 dark:border-slate-800">
+                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+                <p className="mt-0.5 max-w-[140px] truncate text-sm font-black text-slate-950 dark:text-white">{value}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -213,7 +206,7 @@ export const AdminInterpreterInvoiceDetailsPage = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[820px] w-full divide-y divide-slate-200 dark:divide-slate-800">
+          <table className="min-w-[720px] w-full divide-y divide-slate-200 dark:divide-slate-800">
             <thead className="bg-slate-50 dark:bg-slate-950">
               <tr>
                 <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-wide text-slate-400">Category</th>

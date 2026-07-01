@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { StaffService } from '../../../services/staffService';
 import { Department, JobTitle, SystemModule, LevelPermission } from '../../../types';
 import { PageHeader } from '../../../components/layout/PageHeader';
@@ -9,10 +10,11 @@ import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { 
   Plus, Building2, Briefcase, Trash2, Edit2, ChevronRight, Hash, 
-  ShieldCheck, Save, Check, X 
+  ShieldCheck, Save, Check, X, Users, UserCog, History
 } from 'lucide-react';
 
 export const AdminOrgChart = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'structure' | 'permissions'>('structure');
   
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -32,6 +34,8 @@ export const AdminOrgChart = () => {
   
   const { showToast } = useToast();
   const { confirm } = useConfirm();
+  const inputClass = "w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  const labelClass = "mb-1.5 block text-[10px] font-black uppercase tracking-wide text-slate-400";
 
   const loadData = async () => {
     setLoading(true);
@@ -155,7 +159,7 @@ export const AdminOrgChart = () => {
       header: 'Department Name',
       accessor: (d: Department) => (
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-100 text-blue-600">
             <Building2 size={16} />
           </div>
           <span className="font-bold">{d.name}</span>
@@ -180,7 +184,7 @@ export const AdminOrgChart = () => {
       header: 'Job Title',
       accessor: (j: JobTitle) => (
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-indigo-100 text-indigo-600">
             <Briefcase size={16} />
           </div>
           <span className="font-bold">{j.name}</span>
@@ -208,9 +212,11 @@ export const AdminOrgChart = () => {
   ];
 
   const modules = Object.values(SystemModule);
+  const levelsWithAccess = levelPermissions.filter(p => p.modules.length > 0).length;
+  const emptyDepartments = departments.filter(dept => !jobTitles.some(job => job.departmentId === dept.id)).length;
 
   return (
-    <div className="space-y-10 pb-20">
+    <div className="space-y-4 pb-10">
       <PageHeader title="Organization Chart" subtitle="Manage departments, roles and platform visibility">
         {activeTab === 'structure' ? (
           <div className="flex gap-2">
@@ -234,17 +240,43 @@ export const AdminOrgChart = () => {
         )}
       </PageHeader>
 
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Departments</p>
+            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{departments.length}</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{emptyDepartments} without roles</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Job titles</p>
+            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{jobTitles.length}</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Linked to staff profiles</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Permission levels</p>
+            <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{levelsWithAccess}/10</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Configured with module access</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900 lg:flex-col lg:items-stretch">
+          <Button variant="outline" size="sm" icon={Users} onClick={() => navigate('/admin/administration/staff')}>Staff Directory</Button>
+          <Button variant="outline" size="sm" icon={UserCog} onClick={() => navigate('/admin/users')}>Users & Roles</Button>
+          <Button variant="outline" size="sm" icon={History} onClick={() => navigate('/admin/system/audit-log')}>Audit Control</Button>
+        </div>
+      </section>
+
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-800">
         <button 
           onClick={() => setActiveTab('structure')}
-          className={`px-6 py-3 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'structure' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}
+          className={`px-4 py-2.5 text-xs font-black uppercase tracking-wide transition-all ${activeTab === 'structure' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}
         >
           Org Structure
         </button>
         <button 
           onClick={() => setActiveTab('permissions')}
-          className={`px-6 py-3 text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'permissions' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}
+          className={`px-4 py-2.5 text-xs font-black uppercase tracking-wide transition-all ${activeTab === 'permissions' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}
         >
           Level Permissions
         </button>
@@ -252,9 +284,10 @@ export const AdminOrgChart = () => {
 
       {activeTab === 'structure' ? (
         <>
-          <section className="space-y-4">
-            <div className="flex items-center justify-between px-2">
-                <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">Departments</h3>
+          <section className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-black uppercase tracking-wide text-slate-400">Departments</h3>
+                <span className="text-xs font-bold text-slate-400">{departments.length} records</span>
             </div>
             <Table 
               data={departments} 
@@ -267,9 +300,10 @@ export const AdminOrgChart = () => {
             />
           </section>
 
-          <section className="space-y-4">
-            <div className="flex items-center justify-between px-2">
-                <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">Job Titles</h3>
+          <section className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-black uppercase tracking-wide text-slate-400">Job Titles</h3>
+                <span className="text-xs font-bold text-slate-400">{jobTitles.length} records</span>
             </div>
             <Table 
               data={jobTitles} 
@@ -291,26 +325,26 @@ export const AdminOrgChart = () => {
           </section>
         </>
       ) : (
-        <section className="space-y-6">
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800 flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-blue-500 text-white flex items-center justify-center shrink-0">
+        <section className="space-y-3">
+          <div className="flex items-start gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-500 text-white">
               <ShieldCheck size={20} />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-blue-900 dark:text-blue-100 italic">Visibility Matrix</h4>
-              <p className="text-xs text-blue-700 dark:text-blue-300">Configures what modules are visible for each staff Level (1-10). SuperAdmins bypass these restrictions.</p>
+              <h4 className="text-sm font-bold text-blue-900 dark:text-blue-100">Visibility Matrix</h4>
+              <p className="text-xs leading-5 text-blue-700 dark:text-blue-300">Configures visible modules for staff levels 1-10. SuperAdmins bypass these restrictions. Changes here affect staff navigation after their role/profile is linked in Staff Directory.</p>
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl shadow-slate-200/50 dark:shadow-none">
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/50">
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap sticky left-0 bg-slate-50 dark:bg-slate-800 z-10 transition-colors">
+                  <th className="sticky left-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-wide text-slate-400 transition-colors dark:border-slate-800 dark:bg-slate-800">
                     Module Name
                   </th>
                   {Array.from({ length: 10 }, (_, i) => (
-                    <th key={i} className="px-4 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-200 dark:border-slate-800 text-center whitespace-nowrap">
+                    <th key={i} className="whitespace-nowrap border-b border-slate-200 px-3 py-3 text-center text-[10px] font-black uppercase tracking-wide text-slate-400 dark:border-slate-800">
                       L{i + 1}
                     </th>
                   ))}
@@ -319,17 +353,18 @@ export const AdminOrgChart = () => {
               <tbody>
                 {modules.map((module, mIdx) => (
                   <tr key={module} className={`group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors ${mIdx !== modules.length - 1 ? 'border-b border-slate-100 dark:border-slate-800/50' : ''}`}>
-                    <td className="px-6 py-4 font-bold text-slate-700 dark:text-slate-200 text-xs sticky left-0 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 z-10 transition-colors">
+                    <td className="sticky left-0 z-10 bg-white px-4 py-3 text-xs font-bold text-slate-700 transition-colors group-hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:group-hover:bg-slate-800">
                       {module.replace('_', ' ')}
                     </td>
                     {Array.from({ length: 10 }, (_, i) => {
                       const level = i + 1;
                       const isAllowed = levelPermissions.find(p => p.level === level)?.modules.includes(module);
                       return (
-                        <td key={level} className="px-4 py-4 text-center">
+                        <td key={level} className="px-3 py-3 text-center">
                           <button 
                             onClick={() => togglePermission(level, module)}
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${isAllowed 
+                            title={`${isAllowed ? 'Revoke' : 'Grant'} ${module.replace('_', ' ')} for level ${level}`}
+                            className={`mx-auto flex h-7 w-7 items-center justify-center rounded-md transition-all ${isAllowed 
                               ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' 
                               : 'bg-slate-100 text-slate-300 dark:bg-slate-800 dark:text-slate-600'}`}
                           >
@@ -349,21 +384,21 @@ export const AdminOrgChart = () => {
       {/* Dept Modal */}
       <Modal isOpen={isDeptModalOpen} onClose={() => setIsDeptModalOpen(false)} title={editingDept ? "Edit Department" : "New Department"}>
         <form onSubmit={handleSaveDept} className="space-y-4 pt-4">
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Department Name</label>
+              <label className={labelClass}>Department Name</label>
               <input 
                 type="text" required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                className={inputClass}
                 placeholder="e.g. Operations, Finance"
                 value={deptForm.name}
                 onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Description</label>
+              <label className={labelClass}>Description</label>
               <textarea 
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl min-h-[100px]"
+                className={`${inputClass} min-h-[90px] resize-none`}
                 placeholder="What does this department do?"
                 value={deptForm.description}
                 onChange={e => setDeptForm({ ...deptForm, description: e.target.value })}
@@ -380,22 +415,22 @@ export const AdminOrgChart = () => {
       {/* Job Modal */}
       <Modal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setEditingJob(null); setJobForm({ name: '', departmentId: '', level: 1 }); }} title={editingJob ? "Edit Job Title" : "New Job Title"}>
         <form onSubmit={handleSaveJob} className="space-y-4 pt-4">
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Job Title</label>
+              <label className={labelClass}>Job Title</label>
               <input 
                 type="text" required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                className={inputClass}
                 placeholder="e.g. Senior Manager, Accountant"
                 value={jobForm.name}
                 onChange={e => setJobForm({ ...jobForm, name: e.target.value })}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Department</label>
+              <label className={labelClass}>Department</label>
               <select 
                 required
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                className={inputClass}
                 value={jobForm.departmentId}
                 onChange={e => setJobForm({ ...jobForm, departmentId: e.target.value })}
               >
@@ -404,10 +439,10 @@ export const AdminOrgChart = () => {
               </select>
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Grade / Level (1-10)</label>
+              <label className={labelClass}>Grade / Level (1-10)</label>
               <input 
                 type="number" min="1" max="10"
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                className={inputClass}
                 value={jobForm.level}
                 onChange={e => setJobForm({ ...jobForm, level: parseInt(e.target.value) })}
               />

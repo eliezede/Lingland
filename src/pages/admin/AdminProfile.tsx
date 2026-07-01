@@ -124,19 +124,23 @@ export const AdminProfile = () => {
 
   const currentDept = departments.find(d => d.id === profile?.departmentId);
   const currentJob = jobTitles.find(j => j.id === profile?.jobTitleId);
+  const panelClass = "rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900";
+  const inputClass = "w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
+  const iconInputClass = `${inputClass} pl-10`;
+  const labelClass = "mb-1.5 block text-[10px] font-black uppercase tracking-wide text-slate-400";
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto pb-20">
+    <div className="mx-auto max-w-6xl space-y-4 pb-10">
       <PageHeader title="My Profile" subtitle="Manage your professional data and platform preferences" />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="space-y-6">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 text-center shadow-sm">
-             <div className="relative mb-4 mx-auto w-24 h-24 group">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
+        <div className="space-y-4">
+          <div className={`${panelClass} text-center`}>
+             <div className="group relative mx-auto mb-3 h-20 w-20">
                 <UserAvatar 
                   src={profile?.photoUrl || user?.photoUrl} 
                   name={user?.displayName || ''} 
-                  size="2xl" 
+                  size="xl" 
                   showBorder 
                   className={isUploading ? 'opacity-50' : ''}
                 />
@@ -147,38 +151,38 @@ export const AdminProfile = () => {
                   </div>
                 )}
 
-                <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg border-2 border-white cursor-pointer flex items-center justify-center transition-all hover:scale-110 group-hover:rotate-6">
+                <label className="absolute -bottom-1 -right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border-2 border-white bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 dark:border-slate-900">
                   <Upload size={14} strokeWidth={2.5} className="text-white" />
                   <input type="file" className="hidden" accept="image/*" onChange={handlePhotoSelect} disabled={isUploading} />
                 </label>
              </div>
-             <h2 className="text-xl font-black text-slate-900 dark:text-white capitalize">{user?.displayName}</h2>
-             <p className="text-sm text-slate-500 mb-6">{user?.email}</p>
+             <h2 className="truncate text-lg font-black capitalize text-slate-900 dark:text-white">{user?.displayName}</h2>
+             <p className="mb-4 truncate text-sm text-slate-500">{user?.email}</p>
              
-             <div className="space-y-3 pt-6 border-t border-slate-100 dark:border-slate-800">
+             <div className="space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
                 <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 font-bold uppercase tracking-widest">Department</span>
-                    <span className="font-bold text-blue-600">{currentDept?.name || 'Unassigned'}</span>
+                    <span className="font-bold uppercase tracking-wide text-slate-400">Department</span>
+                    <span className="max-w-[140px] truncate font-bold text-blue-600">{currentDept?.name || 'Unassigned'}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 font-bold uppercase tracking-widest">Job Title</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-200">{currentJob?.name || 'Unassigned'}</span>
+                    <span className="font-bold uppercase tracking-wide text-slate-400">Job Title</span>
+                    <span className="max-w-[140px] truncate font-bold text-slate-700 dark:text-slate-200">{currentJob?.name || 'Unassigned'}</span>
                 </div>
              </div>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
-             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Interface Preferences</h3>
-             <div className="space-y-6">
+          <div className={panelClass}>
+             <h3 className="mb-4 text-[10px] font-black uppercase tracking-wide text-slate-400">Interface Preferences</h3>
+             <div className="space-y-4">
                 <div>
-                   <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-3">Color Mode</label>
+                   <label className="mb-2 block text-xs font-bold text-slate-600 dark:text-slate-400">Color Mode</label>
                    <div className="grid grid-cols-3 gap-2">
                        {['light', 'dark', 'system'].map((mode) => (
                            <button 
                                 key={mode}
                                 type="button"
                                 onClick={() => handleUpdatePreference('theme', mode)}
-                                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${profile?.preferences?.theme === mode ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/10' : 'border-slate-100 dark:border-slate-800 hover:border-slate-200'}`}
+                                className={`flex h-16 flex-col items-center justify-center rounded-md border transition-all ${profile?.preferences?.theme === mode ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/10' : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'}`}
                             >
                                {mode === 'light' && <Sun size={16} />}
                                {mode === 'dark' && <Moon size={16} />}
@@ -206,38 +210,38 @@ export const AdminProfile = () => {
           </div>
         </div>
 
-        <div className="lg:col-span-2 space-y-6">
-           <form onSubmit={handleSaveProfile} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-             <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 sticky top-0 z-10">
-                <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest flex items-center">
+        <div className="space-y-4">
+           <form onSubmit={handleSaveProfile} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+                <h3 className="flex items-center text-sm font-black uppercase tracking-wide text-slate-900 dark:text-white">
                     <User size={18} className="mr-2 text-blue-600" />
                     Employee Record (UK)
                 </h3>
-                <Button type="submit" icon={Save} isLoading={saving}>Save Changes</Button>
+                <Button type="submit" icon={Save} isLoading={saving} size="sm">Save</Button>
              </div>
 
-             <div className="p-8 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="flex bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 gap-4 border border-slate-100 dark:border-slate-800">
-                      <div className="w-12 h-12 bg-blue-100 dark:bg-blue-600/20 rounded-xl flex items-center justify-center text-blue-600 shrink-0">
-                        <ShieldCheck size={24} />
+             <div className="space-y-5 p-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="flex gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-600 dark:bg-blue-600/20">
+                        <ShieldCheck size={20} />
                       </div>
-                      <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Grade / Level</p>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-slate-400">Grade / Level</p>
                         <div className="flex items-center gap-2">
-                            <p className="text-lg font-black text-slate-900 dark:text-white">Level {currentJob?.level || '1'}</p>
+                            <p className="text-base font-black text-slate-900 dark:text-white">Level {currentJob?.level || '1'}</p>
                             <Badge variant="neutral" className="text-[9px]">SYSTEM ACCESS: {allowedModules.length} MODULES</Badge>
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 gap-4 border border-slate-100 dark:border-slate-800">
-                      <div className="w-12 h-12 bg-amber-100 dark:bg-amber-600/20 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
-                        <Database size={24} />
+                    <div className="flex gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-600 dark:bg-amber-600/20">
+                        <Database size={20} />
                       </div>
-                      <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Permissions</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-slate-400">Active Permissions</p>
+                        <div className="mt-1 flex flex-wrap gap-1">
                             {allowedModules.map(m => (
                                 <Badge key={m} variant="success" className="text-[8px] px-1.5 py-0">
                                     {m.replace('_', ' ')}
@@ -249,14 +253,14 @@ export const AdminProfile = () => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div>
-                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Phone Number</label>
+                        <label className={labelClass}>Phone Number</label>
                         <div className="relative">
-                            <Phone className="absolute left-4 top-3 text-slate-400" size={16} />
+                            <Phone className="absolute left-3 top-2.5 text-slate-400" size={16} />
                             <input 
                                 type="tel"
-                                className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                                className={iconInputClass}
                                 placeholder="+44 7xxx xxxxxx"
                                 value={profile?.phone || ''}
                                 onChange={e => profile && setProfile({ ...profile, phone: e.target.value })}
@@ -264,24 +268,24 @@ export const AdminProfile = () => {
                         </div>
                     </div>
                     <div>
-                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Date of Birth</label>
+                        <label className={labelClass}>Date of Birth</label>
                         <div className="relative">
-                            <Calendar className="absolute left-4 top-3 text-slate-400" size={16} />
+                            <Calendar className="absolute left-3 top-2.5 text-slate-400" size={16} />
                             <input 
                                 type="date"
-                                className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                                className={iconInputClass}
                                 value={profile?.dob || ''}
                                 onChange={e => profile && setProfile({ ...profile, dob: e.target.value })}
                             />
                         </div>
                     </div>
                     <div>
-                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">NI Number</label>
+                        <label className={labelClass}>NI Number</label>
                         <div className="relative">
-                            <Shield className="absolute left-4 top-3 text-slate-400" size={16} />
+                            <Shield className="absolute left-3 top-2.5 text-slate-400" size={16} />
                             <input 
                                 type="text"
-                                className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                                className={iconInputClass}
                                 placeholder="QQ 12 34 56 C"
                                 value={profile?.niNumber || ''}
                                 onChange={e => profile && setProfile({ ...profile, niNumber: e.target.value.toUpperCase() })}
@@ -290,56 +294,56 @@ export const AdminProfile = () => {
                     </div>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest flex items-center">
+                <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                    <h4 className="flex items-center text-xs font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">
                         <MapPin size={14} className="mr-2 text-slate-400" />
                         Home Address
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="md:col-span-2">
                              <input 
                                 type="text" placeholder="Street Address"
-                                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                                className={inputClass}
                                 value={profile?.address?.street || ''}
                                 onChange={e => profile && setProfile({ ...profile, address: { ...profile.address!, street: e.target.value } })}
                             />
                         </div>
                         <input 
                             type="text" placeholder="Town/City"
-                            className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                            className={inputClass}
                             value={profile?.address?.town || ''}
                             onChange={e => profile && setProfile({ ...profile, address: { ...profile.address!, town: e.target.value } })}
                         />
                         <input 
                             type="text" placeholder="Postcode"
-                            className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20 uppercase"
+                            className={`${inputClass} uppercase`}
                             value={profile?.address?.postcode || ''}
                             onChange={e => profile && setProfile({ ...profile, address: { ...profile.address!, postcode: e.target.value } })}
                         />
                     </div>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest flex items-center">
+                <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                    <h4 className="flex items-center text-xs font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">
                         <Heart size={14} className="mr-2 text-red-500" />
                         Emergency Contact
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                         <input 
                             type="text" placeholder="Full Name"
-                            className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                            className={inputClass}
                             value={profile?.emergencyContact?.name || ''}
                             onChange={e => profile && setProfile({ ...profile, emergencyContact: { ...profile.emergencyContact!, name: e.target.value } })}
                         />
                         <input 
                             type="text" placeholder="Relationship"
-                            className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                            className={inputClass}
                             value={profile?.emergencyContact?.relationship || ''}
                             onChange={e => profile && setProfile({ ...profile, emergencyContact: { ...profile.emergencyContact!, relationship: e.target.value } })}
                         />
                         <input 
                             type="tel" placeholder="Phone"
-                            className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 ring-blue-500/20"
+                            className={inputClass}
                             value={profile?.emergencyContact?.phone || ''}
                             onChange={e => profile && setProfile({ ...profile, emergencyContact: { ...profile.emergencyContact!, phone: e.target.value } })}
                         />
