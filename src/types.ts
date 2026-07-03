@@ -144,6 +144,21 @@ export type AirtableImportMode = 'ON' | 'READ_ONLY' | 'OFF';
 export type BookingSourceSystem = 'AIRTABLE' | 'STAFF_MANUAL' | 'CLIENT_PORTAL' | 'INTERPRETER_APP' | 'PLATFORM';
 export type BookingSyncStatus = 'SYNCED' | 'LOCAL_ONLY' | 'CONFLICT' | 'ARCHIVED';
 
+export type SourceSystem = BookingSourceSystem | 'SYSTEM_IMPORT' | 'MANUAL_RECONCILIATION';
+
+export interface SourceTrackingFields {
+  sourceSystem?: SourceSystem;
+  sourceBaseId?: string;
+  sourceTable?: string;
+  sourceView?: string;
+  sourceRecordId?: string;
+  legacyRef?: string;
+  snapshotHash?: string;
+  lastSyncedAt?: string;
+  lastSyncRunId?: string;
+  syncStatus?: BookingSyncStatus;
+}
+
 export interface PlatformModeSettings {
   operatingMode: OperatingMode;
   communicationMode: CommunicationMode;
@@ -159,7 +174,7 @@ export interface PlatformModeSettings {
 }
 
 
-export interface Booking {
+export interface Booking extends SourceTrackingFields {
   id: string;
   clientId: string;
   clientName: string;
@@ -190,10 +205,23 @@ export interface Booking {
   displayRef?: string;
   legacyPlatformRef?: string;
   legacyAirtableRef?: string;
-  sourceSystem?: BookingSourceSystem;
-  sourceRecordId?: string;
-  lastSyncedAt?: string;
-  syncStatus?: BookingSyncStatus;
+  sourceStatusRaw?: string;
+  airtableOperationalStatus?: string;
+  airtableFinancialStatus?: string;
+  airtableStatusSignals?: Record<string, unknown>;
+  statusMappedAt?: string;
+  statusMappingState?: {
+    operationalStatus?: string;
+    assignmentState?: string;
+    timesheetState?: string;
+    billingState?: string;
+    cancellationState?: string;
+    deliveryState?: string;
+  };
+  assignmentState?: string;
+  timesheetState?: string;
+  billingState?: string;
+  cancellationState?: string;
   expectedEndTime?: string;
   createdAt?: any;
   updatedAt?: any;
@@ -226,7 +254,13 @@ export interface Booking {
   // Translation-specific fields
   translationFormat?: string;
   translationFormatOther?: string;
+  translationDeadline?: string;
+  translationCompletedAt?: string;
+  translationDeliveredAt?: string;
   quoteRequested?: boolean;
+  wordCount?: number;
+  numberOfDocs?: number;
+  finalQuote?: number;
   sourceFiles?: Array<string | { name?: string; url?: string }>;
   deliveryEmail?: string;
   gdprConsent?: boolean;
@@ -248,8 +282,9 @@ export interface BookingAssignment {
   bookingSnapshot?: Partial<Booking>;
 }
 
-export interface Client extends TenantScopedEntity {
+export interface Client extends TenantScopedEntity, SourceTrackingFields {
   companyName: string;
+  normalizedCompanyName?: string;
   billingAddress: string;
   paymentTermsDays: number;
   contactPerson: string;
@@ -258,6 +293,19 @@ export interface Client extends TenantScopedEntity {
   photoUrl?: string;
   status?: 'ACTIVE' | 'GUEST' | 'SUSPENDED';
   defaultCostCodeType: 'PO' | 'Cost Code' | 'Client Name';
+  sourceKey?: string;
+  airtableClientKey?: string;
+  sageAccountRef?: string;
+  bookingContactName?: string;
+  bookingEmail?: string;
+  bookingPhone?: string;
+  invoiceContact?: string;
+  invoiceEmail?: string;
+  invoicePhone?: string;
+  departmentName?: string;
+  locationName?: string;
+  accountAliases?: string[];
+  clientTrade?: string;
 }
 
 export interface LanguageProficiency {
@@ -290,9 +338,10 @@ export interface BankDetails {
   bankName?: string;
 }
 
-export interface Interpreter extends TenantScopedEntity {
+export interface Interpreter extends TenantScopedEntity, SourceTrackingFields {
   // Identification
   name: string;
+  normalizedName?: string;
   shortName?: string;
   photoUrl?: string;
   joinedDate?: string;
@@ -405,7 +454,7 @@ export enum InvoiceStatus {
 
 export type TimesheetSource = 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'SYSTEM_IMPORT';
 
-export interface Timesheet extends TenantScopedEntity {
+export interface Timesheet extends TenantScopedEntity, SourceTrackingFields {
   bookingId: string;
   interpreterId: string;
   clientId: string;
@@ -482,7 +531,7 @@ export interface InterpreterPaymentItem {
   taxable?: boolean;
 }
 
-export interface ClientInvoice extends TenantScopedEntity {
+export interface ClientInvoice extends TenantScopedEntity, SourceTrackingFields {
   clientId: string;
   clientName: string;
   reference: string;
@@ -500,7 +549,7 @@ export interface ClientInvoice extends TenantScopedEntity {
   items: ClientInvoiceItem[];
 }
 
-export interface InterpreterInvoice extends TenantScopedEntity {
+export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFields {
   interpreterId: string;
   interpreterName: string;
   model: 'UPLOAD' | 'SELF_BILL';
@@ -644,7 +693,7 @@ export interface ChatMessage {
 
 export interface ViewFilter {
   statuses?: BookingStatus[];
-  dateRange?: 'TODAY' | 'TOMORROW' | 'NEXT_7_DAYS' | 'THIS_MONTH' | 'ALL';
+  dateRange?: 'TODAY' | 'TOMORROW' | 'TODAY_TOMORROW' | 'NEXT_7_DAYS' | 'THIS_MONTH' | 'OVERDUE' | 'ALL';
   interpreterId?: string;
   hasInterpreter?: boolean;
   serviceCategory?: ServiceCategory;

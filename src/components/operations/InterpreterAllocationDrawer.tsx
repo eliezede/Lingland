@@ -11,6 +11,7 @@ import { assignInterpreterAction, createDependencies } from '../../ui/actions';
 import { LocationService } from '../../services/locationService';
 import { InterpreterMatchResult, rankInterpreterForBooking } from '../../domains/interpreters/matchingEngine';
 import { SystemService } from '../../services/systemService';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 interface InterpreterAllocationDrawerProps {
   isOpen: boolean;
@@ -142,7 +143,7 @@ export const InterpreterAllocationDrawer: React.FC<InterpreterAllocationDrawerPr
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Target job</p>
                 <h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">{formatJobRef(job)}</h4>
                 <p className="mt-1 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                  {job.languageFrom} to {job.languageTo}
+                  {formatLanguagePair(job.languageFrom, job.languageTo)}
                 </p>
               </div>
               <div className="text-left sm:text-right">

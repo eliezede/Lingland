@@ -31,7 +31,7 @@ import {
 import { BookingService } from '../../../services/bookingService';
 import { BillingService } from '../../../services/billingService';
 import { ChatService } from '../../../services/chatService';
-import { Booking, BookingStatus, Timesheet } from '../../../types';
+import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../../../types';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { PdfService } from '../../../services/pdfService';
 import { Button } from '../../../components/ui/Button';
@@ -46,6 +46,7 @@ import { ActivityTimeline } from '../../../components/operations/ActivityTimelin
 import { InterpreterAllocationDrawer } from '../../../components/operations/InterpreterAllocationDrawer';
 import { InterpreterPreviewDrawer } from '../../../components/operations/InterpreterPreviewDrawer';
 import { LocationMap } from '../../../components/ui/LocationMap';
+import { formatLanguagePair } from '../../../utils/languageDisplay';
 
 const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string => {
   if (!value) return 'N/A';
@@ -475,9 +476,11 @@ export const AdminBookingDetails = () => {
   const sessionLabel = booking.date
     ? `${booking.date}${booking.startTime ? `, ${booking.startTime}` : ''}`
     : 'No date';
-  const languageLabel = `${booking.languageFrom || 'English'} to ${booking.languageTo || 'N/A'}`;
+  const languageLabel = formatLanguagePair(booking.languageFrom || 'English', booking.languageTo || 'N/A');
   const assignmentLabel = booking.interpreterName || (booking.interpreterId ? 'Interpreter assigned' : 'No interpreter');
   const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
+  const isTranslationJob = booking.serviceCategory === ServiceCategory.TRANSLATION || booking.serviceType?.toLowerCase().includes('translation');
+  const sourceFileCount = Array.isArray(booking.sourceFiles) ? booking.sourceFiles.length : 0;
   const claimSourceLabel = timesheet ? formatSource(timesheet.source, timesheet.recordedByStaff) : 'No claim';
   const clientAmount = timesheet?.clientAmountCalculated || booking.totalAmount || 0;
   const interpreterAmount = timesheet?.interpreterAmountCalculated || timesheet?.totalToPay || 0;
@@ -710,6 +713,50 @@ export const AdminBookingDetails = () => {
               </div>
             </Section>
 
+            {isTranslationJob && (
+              <Section title="Translation delivery" icon={FileText}>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <InfoItem icon={CalendarDays} label="Deadline" value={booking.translationDeadline ? formatDate(booking.translationDeadline, { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
+                  <InfoItem icon={FileText} label="Volume" value={<>{booking.wordCount ? `${booking.wordCount.toLocaleString()} words` : 'No word count'}<br /><span className="text-slate-500">{booking.numberOfDocs ? `${booking.numberOfDocs} documents` : `${sourceFileCount} source files`}</span></>} />
+                  <InfoItem icon={Globe2} label="Format" value={booking.translationFormat || booking.translationFormatOther || 'N/A'} />
+                  <InfoItem icon={Mail} label="Delivery email" value={booking.deliveryEmail || contactEmail || 'N/A'} />
+                  <InfoItem icon={CheckCircle2} label="Delivery state" value={booking.statusMappingState?.deliveryState || (booking.translationDeliveredAt ? 'DELIVERED' : booking.translationCompletedAt ? 'COMPLETED' : 'N/A')} />
+                  <InfoItem icon={CalendarDays} label="Completed" value={booking.translationCompletedAt ? formatDateTime(booking.translationCompletedAt) : 'N/A'} />
+                  <InfoItem icon={CalendarDays} label="Delivered" value={booking.translationDeliveredAt ? formatDateTime(booking.translationDeliveredAt) : 'N/A'} />
+                  <InfoItem icon={Receipt} label="Quote" value={formatMoney(booking.finalQuote || booking.totalAmount || 0)} />
+                </div>
+                {sourceFileCount > 0 && (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                    <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Source documents</p>
+                    <div className="flex flex-wrap gap-2">
+                      {booking.sourceFiles?.slice(0, 6).map((file, index) => {
+                        const fileName = typeof file === 'string' ? `Document ${index + 1}` : file.name || `Document ${index + 1}`;
+                        const fileUrl = typeof file === 'string' ? file : file.url;
+                        return fileUrl ? (
+                          <a
+                            key={`${fileName}-${index}`}
+                            href={fileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 max-w-full items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
+                          >
+                            <FileText size={13} />
+                            <span className="truncate">{fileName}</span>
+                          </a>
+                        ) : (
+                          <span key={`${fileName}-${index}`} className="inline-flex h-8 max-w-full items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                            <FileText size={13} />
+                            <span className="truncate">{fileName}</span>
+                          </span>
+                        );
+                      })}
+                      {sourceFileCount > 6 && <span className="inline-flex h-8 items-center rounded-md bg-slate-200 px-3 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">+{sourceFileCount - 6} more</span>}
+                    </div>
+                  </div>
+                )}
+              </Section>
+            )}
+
             <Section title="Session and location" icon={isOnline ? Video : MapPin}>
               <div className="grid gap-3 lg:grid-cols-2">
                 <InfoItem icon={isOnline ? Video : MapPin} label={isOnline ? 'Connection' : 'Venue'} value={addressLine} />
@@ -889,9 +936,21 @@ export const AdminBookingDetails = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <InfoItem label="Source record" value={booking.sourceRecordId || booking.legacyAirtableRef || 'N/A'} />
-                  <InfoItem label="Legacy ref" value={booking.legacyPlatformRef || booking.legacyAirtableRef || 'N/A'} />
+                  <InfoItem label="Source table" value={booking.sourceTable || 'N/A'} />
+                  <InfoItem label="Legacy ref" value={booking.legacyRef || booking.legacyPlatformRef || booking.legacyAirtableRef || 'N/A'} />
+                  <InfoItem label="Source base" value={booking.sourceBaseId || 'N/A'} />
                 </div>
-                <InfoItem label="Last synced" value={booking.lastSyncedAt ? formatDateTime(booking.lastSyncedAt) : 'Not synced'} />
+                <div className="grid grid-cols-2 gap-3">
+                  <InfoItem label="Last synced" value={booking.lastSyncedAt ? formatDateTime(booking.lastSyncedAt) : 'Not synced'} />
+                  <InfoItem label="Snapshot hash" value={booking.snapshotHash || 'N/A'} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <InfoItem label="Airtable status" value={booking.sourceStatusRaw || booking.airtableOperationalStatus || 'N/A'} />
+                  <InfoItem label="Mapped at" value={booking.statusMappedAt ? formatDateTime(booking.statusMappedAt) : 'N/A'} />
+                  <InfoItem label="Assignment state" value={booking.assignmentState || booking.statusMappingState?.assignmentState || 'N/A'} />
+                  <InfoItem label="Billing state" value={booking.billingState || booking.statusMappingState?.billingState || 'N/A'} />
+                </div>
+                {booking.lastSyncRunId && <InfoItem label="Sync run" value={booking.lastSyncRunId} />}
                 {booking.sourceSystem === 'AIRTABLE' && (
                   <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
                     This job is mirrored from Airtable. Manual actions here update Lingland workflow state, but Airtable remains the source while Mirror Mode is active.

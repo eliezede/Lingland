@@ -4,6 +4,7 @@ import { db } from './firebaseConfig';
 import { Client, GuestContact } from '../types';
 import { MOCK_CLIENTS, saveMockData } from './mockData';
 import { convertDoc, safeFetch } from './utils';
+import { SourceTracking } from './sourceTracking';
 
 export const ClientService = {
   getAll: async (): Promise<Client[]> => {
@@ -32,11 +33,22 @@ export const ClientService = {
   },
 
   create: async (data: Omit<Client, 'id'>): Promise<Client> => {
+    const payload = SourceTracking.merge(data as any, SourceTracking.fromSource({
+      sourceSystem: (data as any).sourceSystem || 'STAFF_MANUAL',
+      sourceBaseId: (data as any).sourceBaseId,
+      sourceTable: (data as any).sourceTable,
+      sourceView: (data as any).sourceView,
+      sourceRecordId: (data as any).sourceRecordId,
+      legacyRef: (data as any).legacyRef || data.companyName,
+      snapshot: (data as any).sourceSystem === 'AIRTABLE' ? data as any : undefined,
+      lastSyncRunId: (data as any).lastSyncRunId,
+      syncedAt: (data as any).lastSyncedAt
+    })) as Omit<Client, 'id'>;
     try {
-      const ref = await addDoc(collection(db, 'clients'), data);
-      return { id: ref.id, ...data } as Client;
+      const ref = await addDoc(collection(db, 'clients'), payload);
+      return { id: ref.id, ...payload } as Client;
     } catch {
-      const newClient = { id: `c-${Date.now()}`, ...data } as Client;
+      const newClient = { id: `c-${Date.now()}`, ...payload } as Client;
       MOCK_CLIENTS.push(newClient);
       saveMockData();
       return newClient;
@@ -77,6 +89,10 @@ export const ClientService = {
       billingAddress: 'Address Pending Update',
       paymentTermsDays: 30,
       defaultCostCodeType: 'PO',
+      ...SourceTracking.fromSource({
+        sourceSystem: 'CLIENT_PORTAL',
+        legacyRef: guest.organisation || guest.name
+      }),
       organizationId: 'lingland-main',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()

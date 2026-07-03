@@ -24,6 +24,7 @@ import {
   Globe2, Zap, Clock, Banknote, Car, Info, AlertCircle, ExternalLink,
   User2, Home, Settings, Trash2
 } from 'lucide-react';
+import { formatLanguagePair } from '../../../utils/languageDisplay';
 
 type Tab = 'JOBS' | 'FINANCE' | 'COMPLIANCE' | 'RATES';
 type EditModalTab = 'PERSONAL' | 'FINANCE' | 'COMPLIANCE' | 'QUALIFICATIONS' | 'LANGUAGES' | 'RATES' | 'NOTES';
@@ -667,7 +668,7 @@ export const AdminInterpreterDetails = () => {
                             </td>
                             <td className="px-6 py-4">
                               <div className="max-w-[220px] truncate text-sm font-bold text-slate-700">{job.clientName || job.guestContact?.organisation || 'No client'}</div>
-                              <div className="text-[10px] text-blue-600 font-black uppercase tracking-tighter">{job.languageFrom} to {job.languageTo}</div>
+                              <div className="text-[10px] text-blue-600 font-black uppercase tracking-tighter">{formatLanguagePair(job.languageFrom, job.languageTo)}</div>
                             </td>
                             <td className="px-6 py-4">
                               <StatusBadge status={job.status} />

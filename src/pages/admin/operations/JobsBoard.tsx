@@ -63,6 +63,7 @@ import { filterBookings } from '../../../utils/bookingFilters';
 import { ViewManagerDrawer } from '../../../components/operations/ViewManagerDrawer';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { useConfirm } from '../../../context/ConfirmContext';
+import { formatLanguagePair, formatLanguageSearchText } from '../../../utils/languageDisplay';
 
 type QuickFilter = 'ALL' | 'INTERPRETING' | 'TRANSLATIONS' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'COMPLETED' | 'TIMESHEET' | 'INVOICE_READY' | 'AWAITING_PAYMENT' | 'CANCELLED';
 type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
@@ -406,7 +407,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             case 'client':
                 return `${getCompanyName(job)} ${job.guestContact?.name || (job as any).contactName || ''}`;
             case 'language':
-                return `${job.languageFrom || ''} ${job.languageTo || ''}`;
+                return formatLanguageSearchText(job.languageFrom, job.languageTo);
             case 'interpreter':
                 return `${job.interpreterName || ''} ${job.interpreterId ? 'assigned' : 'unassigned'}`;
             case 'location':
@@ -532,10 +533,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             label: 'Language',
             width: 'minmax(164px, .95fr)',
             icon: Globe2,
-            getSortValue: job => `${job.languageFrom || ''} ${job.languageTo || ''}`,
+            getSortValue: job => formatLanguageSearchText(job.languageFrom, job.languageTo),
             render: job => (
                 <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900 dark:text-slate-100">{job.languageFrom} to {job.languageTo}</p>
+                    <p className="truncate font-semibold text-slate-900 dark:text-slate-100">{formatLanguagePair(job.languageFrom, job.languageTo)}</p>
                     <p className="truncate text-xs uppercase text-slate-500">{job.locationType || 'Session'}</p>
                 </div>
             ),
@@ -2223,7 +2224,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
 
                         <div className="grid grid-cols-2 gap-4">
                             <DetailLabel label="Schedule" value={<>{formatDate(selectedJob.date, { weekday: 'long', day: 'numeric', month: 'long' })}<br /><span className="text-blue-600 dark:text-blue-400">{selectedJob.startTime || 'TBC'} {selectedJob.durationMinutes ? `(${selectedJob.durationMinutes}m)` : ''}</span></>} />
-                            <DetailLabel label="Service" value={<>{selectedJob.languageFrom} to {selectedJob.languageTo}<br /><span className="text-slate-500">{selectedJob.serviceType || selectedJob.serviceCategory}</span></>} />
+                            <DetailLabel label="Service" value={<>{formatLanguagePair(selectedJob.languageFrom, selectedJob.languageTo)}<br /><span className="text-slate-500">{selectedJob.serviceType || selectedJob.serviceCategory}</span></>} />
                             <DetailLabel label="Client" value={<>{getCompanyName(selectedJob)}<br /><span className="text-slate-500">{selectedJob.guestContact?.name || (selectedJob as any).contactName || 'No contact'}</span></>} />
                             <DetailLabel label="Location" value={<>{selectedJob.locationType === 'ONLINE' ? 'Remote / online' : (selectedJob.postcode || 'On-site')}<br /><span className="text-slate-500">{selectedJob.locationType === 'ONLINE' ? selectedJob.onlineLink || 'No link' : selectedJob.address || selectedJob.location || 'No address'}</span></>} />
                         </div>

@@ -21,6 +21,7 @@ import {
     BarChart3, ChevronRight, AlertCircle,
     ArrowUpRight, FileText, CheckCircle2
 } from 'lucide-react';
+import { formatLanguagePair } from '../../../utils/languageDisplay';
 
 type Tab = 'ACTIVITY' | 'FINANCE' | 'ACCOUNT';
 
@@ -364,7 +365,7 @@ export const AdminClientDetails = () => {
                                                             {job.displayRef || job.jobNumber || job.bookingRef || `#${job.id.slice(-6)}`}
                                                         </p>
                                                         <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5 flex items-center gap-1.5">
-                                                            {job.serviceCategory || job.serviceType} <span className="w-1 h-1 bg-slate-300 rounded-full" /> {job.languageFrom} to {job.languageTo}
+                                                            {job.serviceCategory || job.serviceType} <span className="w-1 h-1 bg-slate-300 rounded-full" /> {formatLanguagePair(job.languageFrom, job.languageTo)}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -482,6 +483,23 @@ export const AdminClientDetails = () => {
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Billing setup</p>
                                         <p className="mt-2 text-sm font-black text-slate-900">{client.defaultCostCodeType || 'PO'} required</p>
                                         <p className="text-xs font-semibold text-slate-500">{client.paymentTermsDays || 30} day payment terms</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+                                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Airtable identity</p>
+                                        <p className="mt-2 truncate text-sm font-black text-slate-900">{client.airtableClientKey || client.legacyRef || 'Not linked'}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.sourceTable || 'No source table'} / {client.sourceRecordId || 'No source record'}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Finance identity</p>
+                                        <p className="mt-2 text-sm font-black text-slate-900">{client.sageAccountRef || 'No Sage ref'}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.invoiceEmail || client.email || 'No invoice email'}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dedupe key</p>
+                                        <p className="mt-2 truncate text-sm font-black text-slate-900">{client.normalizedCompanyName || client.companyName}</p>
+                                        <p className="text-xs font-semibold text-slate-500">{client.snapshotHash ? `Snapshot ${client.snapshotHash}` : 'Awaiting source snapshot'}</p>
                                     </div>
                                 </div>
                                 <Button

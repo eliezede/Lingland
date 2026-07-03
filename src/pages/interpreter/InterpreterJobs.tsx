@@ -8,6 +8,7 @@ import { Clock, Briefcase, Calendar, MapPin, Video, Globe2, ChevronRight, CheckC
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { BookingStatus } from '../../types';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 type Tab = 'OFFERS' | 'UPCOMING';
 
@@ -109,7 +110,7 @@ export const InterpreterJobs = () => {
                                   <span className="font-black text-slate-900 dark:text-slate-200">REF: {offer.bookingRef || offer.id?.slice(0, 6)}</span> <span className="text-slate-200">|</span> <CalendarDays size={12} /> {new Date(offer.date).toLocaleDateString()} <span className="text-slate-200">|</span> <Clock size={12} /> {offer.startTime}
                                 </div>
                                 <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                                  <Globe2 size={12} className="text-slate-400" /> {offer.languageFrom} <ChevronRight size={10} className="text-slate-300" /> {offer.languageTo}
+                                  <Globe2 size={12} className="text-slate-400" /> {formatLanguagePair(offer.languageFrom, offer.languageTo)}
                                 </div>
                               </div>
                             </div>
@@ -175,7 +176,7 @@ export const InterpreterJobs = () => {
                                   <span className="font-black text-slate-900 dark:text-slate-200">REF: {job.bookingRef || job.id?.slice(0, 6)}</span> <span className="text-slate-200">|</span> <CalendarDays size={12} /> {new Date(job.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} <span className="text-slate-200">|</span> <Clock size={12} /> {job.startTime}
                                 </div>
                                 <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                                  <Globe2 size={12} className="text-slate-400" /> {job.languageFrom} <ChevronRight size={10} className="text-slate-300" /> {job.languageTo}
+                                  <Globe2 size={12} className="text-slate-400" /> {formatLanguagePair(job.languageFrom, job.languageTo)}
                                 </div>
                               </div>
                             </div>

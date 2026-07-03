@@ -1,4 +1,4 @@
-import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebaseConfig';
 import { RedbookSyncDetail, RedbookSyncStats } from './redbookSyncService';
@@ -31,6 +31,7 @@ export type AirtableModuleResult = {
 
 export type AirtableSyncResult = {
   success: boolean;
+  syncRunId?: string;
   mappingVersion?: string;
   dryRun: boolean;
   importMode: string;
@@ -59,6 +60,37 @@ export type AirtableSyncCheckpoint = {
 };
 
 export type AirtableDependencyCounts = Partial<Record<AirtableSyncModule, number>>;
+
+export type AirtableSyncRunSummary = {
+  id: string;
+  kind?: string;
+  dryRun?: boolean;
+  importMode?: string;
+  modules?: AirtableSyncModule[];
+  startedAt?: string;
+  finishedAt?: string;
+  success?: boolean;
+  stats?: RedbookSyncStats;
+};
+
+export type AirtableSyncConflict = {
+  id: string;
+  runId?: string;
+  entityType?: string;
+  entityId?: string;
+  sourceTable?: string;
+  sourceRecordId?: string;
+  legacyRef?: string;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH';
+  reason?: string;
+  currentValue?: unknown;
+  incomingValue?: unknown;
+  recommendedAction?: string;
+  resolutionStatus?: string;
+  lastSeenAt?: string;
+};
+
+export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
 
 export const AIRTABLE_SYNC_MODULES: Array<{
   id: AirtableSyncModule;
@@ -154,5 +186,48 @@ export const AirtableSyncService = {
       redbook: redbook.data().count,
       translations: translations.data().count
     };
+  },
+
+  getRecentRuns: async (count = 5): Promise<AirtableSyncRunSummary[]> => {
+    const snap = await getDocs(query(
+      collection(db, 'syncRuns'),
+      orderBy('finishedAt', 'desc'),
+      limit(count)
+    ));
+    return snap.docs.map(docSnap => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Omit<AirtableSyncRunSummary, 'id'>)
+    }));
+  },
+
+  getOpenConflicts: async (count = 50): Promise<AirtableSyncConflict[]> => {
+    const snap = await getDocs(query(
+      collection(db, 'syncConflicts'),
+      where('resolutionStatus', '==', 'OPEN'),
+      limit(count)
+    ));
+    return snap.docs.map(docSnap => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Omit<AirtableSyncConflict, 'id'>)
+    }));
+  },
+
+  exportConflictsCsv: (conflicts: AirtableSyncConflict[]): string => {
+    const headers = [
+      'severity',
+      'entityType',
+      'sourceTable',
+      'legacyRef',
+      'sourceRecordId',
+      'reason',
+      'recommendedAction',
+      'lastSeenAt',
+      'runId'
+    ];
+    const escapeCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    return [
+      headers.join(','),
+      ...conflicts.map(conflict => headers.map(header => escapeCell((conflict as any)[header])).join(','))
+    ].join('\n');
   }
 };

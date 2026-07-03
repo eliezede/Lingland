@@ -13,6 +13,11 @@ export type RedbookSyncStats = {
 export type RedbookSyncDetail = {
   action: 'created' | 'updated' | 'skipped' | 'conflict' | 'error';
   sourceRecordId: string;
+  sourceBaseId?: string;
+  sourceTable?: string;
+  sourceView?: string;
+  snapshotHash?: string;
+  syncRunId?: string;
   jobNumber?: string;
   displayRef?: string;
   clientName?: string;
@@ -28,6 +33,7 @@ export type RedbookSyncDetail = {
 
 export type RedbookSyncResult = {
   success: boolean;
+  syncRunId?: string;
   mappingVersion?: string;
   dryRun: boolean;
   importMode: string;

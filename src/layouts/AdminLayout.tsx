@@ -6,7 +6,7 @@ import {
   LogOut, Globe2, Menu, FileText, PoundSterling,
   CreditCard, UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail, Receipt,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, Clock, ChevronDown, Building2
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, Clock, ChevronDown, Building2, AlertCircle
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -262,12 +262,16 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                 <div className="space-y-4">
                   {!isSecondarySlim && <div className="sidebar-group-label">Operations CRM</div>}
                   <NavItem to="/admin/bookings" icon={CalendarDays} label="Jobs Board" active={isOperationsBoardView()} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/bookings?view=sys-incoming" icon={ClipboardList} label="Incoming" active={isOperationsBoardView('sys-incoming')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/bookings?view=sys-status-date" icon={ClipboardList} label="Status & Date" active={isOperationsBoardView('sys-status-date')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/bookings?view=sys-unassigned" icon={UserCheck} label="Unassigned Jobs" active={isOperationsBoardView('sys-unassigned')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/bookings?view=sys-waiting-response" icon={Clock} label="Waiting Response" active={isOperationsBoardView('sys-waiting-response')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/bookings?view=sys-overdue" icon={AlertCircle} label="Overdue" active={isOperationsBoardView('sys-overdue')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/bookings?view=sys-today-tomorrow" icon={Clock} label="Today & Tomorrow" active={isOperationsBoardView('sys-today-tomorrow')} isCollapsed={isSecondarySlim} />
                   {!isSecondarySlim && <div className="sidebar-group-label">Service queues</div>}
                   <NavItem to="/admin/bookings?view=sys-interpreting" icon={Users} label="Interpreting" active={isOperationsBoardView('sys-interpreting')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/bookings?view=sys-translations" icon={FileText} label="Translations" active={isOperationsBoardView('sys-translations')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/bookings?view=sys-translations-due" icon={FileText} label="Translations Due" active={isOperationsBoardView('sys-translations-due')} isCollapsed={isSecondarySlim} />
                   {!isSecondarySlim && <div className="sidebar-group-label">Specialist tools</div>}
                   <NavItem to="/admin/operations/assignments" icon={UserCheck} label="Assignments" active={isActive('/admin/operations/assignments')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/operations/timesheets" icon={ClipboardList} label="Timesheet Review" active={isActive('/admin/operations/timesheets')} isCollapsed={isSecondarySlim} />

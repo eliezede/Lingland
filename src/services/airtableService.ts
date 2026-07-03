@@ -1,5 +1,6 @@
 
 import { Interpreter } from '../types';
+import { SourceTracking } from './sourceTracking';
 
 const AIRTABLE_API_KEY = import.meta.env.VITE_AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
@@ -59,6 +60,12 @@ export const AirtableService = {
       };
 
       const mergedMap = new Map<string, Partial<Interpreter>>();
+      const normalizeNameKey = (value: string) => value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
 
       allRecords.forEach((record) => {
         const fields = record.fields;
@@ -69,13 +76,24 @@ export const AirtableService = {
         const language = normalize(fields['LANGUAGE']);
         const l1Value = normalize(fields['L1']);
         const priority = parseInt(String(l1Value)) || 18;
+        const sourceTracking = SourceTracking.fromSource({
+          sourceSystem: 'AIRTABLE',
+          sourceBaseId: AIRTABLE_BASE_ID,
+          sourceTable: INTERPRETERS_TABLE,
+          sourceRecordId: record.id,
+          legacyRef: nameMaster,
+          snapshot: fields
+        });
 
         if (mergedMap.has(nameMaster)) {
           // Merge language if existing
           const existing = mergedMap.get(nameMaster)! as any;
           existing.airtableRecordIds = Array.from(new Set([...(existing.airtableRecordIds || []), record.id]));
-          existing.sourceRecordId = existing.sourceRecordId || record.id;
-          existing.sourceSystem = 'AIRTABLE';
+          Object.assign(existing, SourceTracking.merge(existing, {
+            ...sourceTracking,
+            sourceRecordId: existing.sourceRecordId || sourceTracking.sourceRecordId,
+            legacyRef: existing.legacyRef || sourceTracking.legacyRef
+          }));
           if (language && !existing.languages?.some((l: string) => l.toLowerCase() === language.toLowerCase())) {
             existing.languages = [...(existing.languages || []), language];
             existing.languageProficiencies = [
@@ -86,8 +104,9 @@ export const AirtableService = {
         } else {
           // Create new merged record
           const town = normalize(fields['TOWN']);
-          const interpreter: Partial<Interpreter> = {
+          const interpreter: Partial<Interpreter> = SourceTracking.merge({
             name: nameMaster,
+            normalizedName: normalizeNameKey(nameMaster),
             email: normalize(fields['EMAIL']).toLowerCase(),
             phone: normalize(fields['PHONE']),
             languages: language ? [language] : [],
@@ -111,12 +130,10 @@ export const AirtableService = {
             nrpsi: { registered: false },
             badge: { idStatus: 'Not made yet' },
             organizationId: 'org1', // Default org
-            sourceSystem: 'AIRTABLE',
-            sourceRecordId: record.id,
             airtableRecordIds: [record.id],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
-          } as any;
+          } as any, sourceTracking);
           mergedMap.set(nameMaster, interpreter);
         }
       });

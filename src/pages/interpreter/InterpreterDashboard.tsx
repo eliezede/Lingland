@@ -21,6 +21,7 @@ import { Button } from '../../components/ui/Button';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { Interpreter } from '../../types';
 import { isInterpreterLocked, requiresInterpreterOnboarding } from '../../utils/interpreterFlow';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 // --- Sub-components matching Admin Dashboard ---
 
@@ -166,7 +167,7 @@ export const InterpreterDashboard = () => {
       setUpcomingJobs(upcoming.map(job => ({
         client: job.clientName,
         isOnline: job.locationType === 'ONLINE',
-        service: `${job.languageFrom} to ${job.languageTo}`,
+        service: formatLanguagePair(job.languageFrom, job.languageTo),
         date: new Date(job.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
         time: job.startTime,
         pay: 'GBP 45.00', // Mocked payload for assignment

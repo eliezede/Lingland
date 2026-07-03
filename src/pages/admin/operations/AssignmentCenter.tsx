@@ -23,6 +23,7 @@ import { BookingService } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { createDependencies, updateJobStatusAction } from '../../../ui/actions';
+import { formatLanguagePair } from '../../../utils/languageDisplay';
 import { BulkActionBar } from '../../../components/ui/BulkActionBar';
 import { InterpreterAllocationDrawer } from '../../../components/operations/InterpreterAllocationDrawer';
 
@@ -148,7 +149,7 @@ export const AssignmentCenter = () => {
       header: 'Target Job',
       accessor: (job: Booking) => (
         <div className="flex flex-col">
-          <span className="font-bold text-slate-900 dark:text-white">{job.languageFrom} to {job.languageTo}</span>
+          <span className="font-bold text-slate-900 dark:text-white">{formatLanguagePair(job.languageFrom, job.languageTo)}</span>
           <span className="text-[10px] text-slate-400 uppercase">Ref: {getJobRef(job)}</span>
         </div>
       ),

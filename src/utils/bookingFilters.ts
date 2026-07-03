@@ -41,7 +41,11 @@ export const filterBookings = (bookings: Booking[], view: BookingView): Booking[
                     case 'TODAY':
                         return bookingDate.getTime() === today.getTime();
                     case 'TOMORROW':
+                    case 'TODAY_TOMORROW':
                         return bookingDate.getTime() >= today.getTime() && bookingDate.getTime() <= tomorrow.getTime();
+                    case 'OVERDUE':
+                        return bookingDate.getTime() < today.getTime()
+                            && ![BookingStatus.CANCELLED, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status);
                     case 'NEXT_7_DAYS':
                         return bookingDate.getTime() >= today.getTime() && bookingDate.getTime() <= next7Days.getTime();
                     case 'THIS_MONTH':

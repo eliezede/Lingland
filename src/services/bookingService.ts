@@ -10,6 +10,7 @@ import { MOCK_INTERPRETERS, MOCK_ASSIGNMENTS, saveMockData, MOCK_BOOKINGS, MOCK_
 import { NotificationService } from './notificationService';
 import { EmailService } from './emailService';
 import { JobNumberService } from './jobNumberService';
+import { SourceTracking } from './sourceTracking';
 import { JobEventType } from '../domains/jobs/jobEvents';
 import { getAssignmentPendingStatus, getNeedsAssignmentStatus, validateWorkflowTransition } from '../domains/jobs/workflow';
 
@@ -129,16 +130,28 @@ export const BookingService = {
 
   create: async (bookingData: any): Promise<Booking> => {
     const referencedBooking = await JobNumberService.ensureBookingReference(bookingData);
-    const newBooking = { 
+    const sourceTracking = SourceTracking.fromSource({
+      sourceSystem: bookingData.sourceSystem || 'STAFF_MANUAL',
+      sourceBaseId: bookingData.sourceBaseId,
+      sourceTable: bookingData.sourceTable,
+      sourceView: bookingData.sourceView,
+      sourceRecordId: bookingData.sourceRecordId,
+      legacyRef: bookingData.legacyRef || bookingData.legacyAirtableRef || referencedBooking.displayRef || referencedBooking.jobNumber,
+      snapshot: bookingData.sourceSystem === 'AIRTABLE' ? bookingData : undefined,
+      lastSyncRunId: bookingData.lastSyncRunId,
+      syncedAt: bookingData.lastSyncedAt
+    });
+    const newBooking = SourceTracking.merge({ 
       ...bookingData,
       ...referencedBooking,
       status: bookingData.status || BookingStatus.INCOMING,
       organizationId: bookingData.organizationId || 'lingland-main',
-      sourceSystem: bookingData.sourceSystem || 'STAFF_MANUAL',
-      syncStatus: bookingData.syncStatus || 'LOCAL_ONLY',
       createdAt: serverTimestamp(), 
       updatedAt: serverTimestamp() 
-    };
+    }, {
+      ...sourceTracking,
+      syncStatus: bookingData.syncStatus || sourceTracking.syncStatus
+    });
     try {
       const docRef = await addDoc(collection(db, COLLECTION_NAME), newBooking);
 
@@ -182,18 +195,30 @@ export const BookingService = {
     }
 
     const referencedBooking = await JobNumberService.ensureBookingReference(input);
-    const newBooking = {
+    const sourceTracking = SourceTracking.fromSource({
+      sourceSystem: input.sourceSystem || 'CLIENT_PORTAL',
+      sourceBaseId: input.sourceBaseId,
+      sourceTable: input.sourceTable,
+      sourceView: input.sourceView,
+      sourceRecordId: input.sourceRecordId,
+      legacyRef: input.legacyRef || referencedBooking.displayRef || referencedBooking.jobNumber,
+      snapshot: input.sourceSystem === 'AIRTABLE' ? input : undefined,
+      lastSyncRunId: input.lastSyncRunId,
+      syncedAt: input.lastSyncedAt
+    });
+    const newBooking = SourceTracking.merge({
       ...input,
       ...referencedBooking,
       guestContact: input.guestContact ? { ...input.guestContact, email } : input.guestContact,
       clientId, // Linked to the new or existing GUEST client
       status: BookingStatus.INCOMING,
-      sourceSystem: input.sourceSystem || 'CLIENT_PORTAL',
-      syncStatus: input.syncStatus || 'LOCAL_ONLY',
       expectedEndTime,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    };
+    }, {
+      ...sourceTracking,
+      syncStatus: input.syncStatus || sourceTracking.syncStatus
+    });
 
     try {
       const docRef = await addDoc(collection(db, COLLECTION_NAME), newBooking);

@@ -28,6 +28,19 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
         groupBy: 'status'
     },
     {
+        id: 'sys-incoming',
+        name: 'Incoming',
+        icon: 'inbox',
+        isSystem: true,
+        isFavorite: true,
+        workspace: 'operations',
+        filters: {
+            statuses: [BookingStatus.INCOMING, BookingStatus.OPENED, BookingStatus.NEEDS_ASSIGNMENT]
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'status'
+    },
+    {
         id: 'sys-date-time',
         name: 'Jobs by Date & Time',
         icon: 'table',
@@ -50,6 +63,32 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
             statuses: [BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.ASSIGNMENT_PENDING, BookingStatus.OPENED]
         },
         sortBy: 'dateAsc'
+    },
+    {
+        id: 'sys-waiting-response',
+        name: 'Waiting Response',
+        icon: 'clock',
+        isSystem: true,
+        isFavorite: true,
+        workspace: 'operations',
+        filters: {
+            statuses: [BookingStatus.ASSIGNMENT_PENDING]
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'interpreter'
+    },
+    {
+        id: 'sys-overdue',
+        name: 'Overdue',
+        icon: 'alert',
+        isSystem: true,
+        isFavorite: true,
+        workspace: 'operations',
+        filters: {
+            dateRange: 'OVERDUE'
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'status'
     },
     {
         id: 'sys-interpreting',
@@ -78,6 +117,33 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
         groupBy: 'status'
     },
     {
+        id: 'sys-timesheets',
+        name: 'Timesheets',
+        icon: 'file-text',
+        isSystem: true,
+        isFavorite: false,
+        workspace: 'operations',
+        filters: {
+            statuses: [BookingStatus.SESSION_COMPLETED, BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED]
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'status'
+    },
+    {
+        id: 'sys-translations-due',
+        name: 'Translations Delivery Due',
+        icon: 'languages',
+        isSystem: true,
+        isFavorite: false,
+        workspace: 'operations',
+        filters: {
+            serviceCategory: ServiceCategory.TRANSLATION,
+            dateRange: 'NEXT_7_DAYS'
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'date'
+    },
+    {
         id: 'sys-today-tomorrow',
         name: 'Jobs for Today & Tomorrow',
         icon: 'calendar',
@@ -85,7 +151,7 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
         isFavorite: false,
         workspace: 'operations',
         filters: {
-            dateRange: 'TOMORROW' // We'll interpret this as Today + Tomorrow in the filter logic
+            dateRange: 'TODAY_TOMORROW'
         },
         sortBy: 'dateAsc'
     }

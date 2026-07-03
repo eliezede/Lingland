@@ -22,6 +22,7 @@ import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../../../typ
 import { BillingService } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
+import { formatLanguagePair } from '../../../utils/languageDisplay';
 
 type ClaimStage = 'NEEDS_CLAIM' | 'SUBMITTED' | 'APPROVED' | 'CLIENT_INVOICED' | 'PAID' | 'ISSUE';
 
@@ -491,7 +492,7 @@ export const TimesheetQueue = () => {
                 </div>
                 <dl className="space-y-3 text-sm">
                   <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Client</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.clientName}</dd></div>
-                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Service</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.languageFrom} to {selectedRow.job.languageTo}</dd></div>
+                  <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Service</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatLanguagePair(selectedRow.job.languageFrom, selectedRow.job.languageTo)}</dd></div>
                   <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Booked</dt><dd className="text-right font-black text-slate-900 dark:text-white">{formatDate(selectedRow.job.date)} {formatTime(selectedRow.job.startTime)}</dd></div>
                   <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Duration</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.durationMinutes || 0} min</dd></div>
                   <div className="flex justify-between gap-4"><dt className="font-bold text-slate-400">Category</dt><dd className="text-right font-black text-slate-900 dark:text-white">{selectedRow.job.serviceCategory}</dd></div>

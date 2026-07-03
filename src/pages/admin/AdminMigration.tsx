@@ -12,6 +12,7 @@ import {
   Languages,
   Loader2,
   Mail,
+  Download,
   PlayCircle,
   RefreshCw,
   ShieldCheck,
@@ -26,19 +27,23 @@ import {
   AIRTABLE_SYNC_MODULES,
   AirtableModuleResult,
   AirtableDependencyCounts,
+  AirtableConflictSeverity,
+  AirtableSyncConflict,
   AirtableSyncCheckpoint,
   AirtableSyncModule,
+  AirtableSyncRunSummary,
   AirtableSyncResult,
   AirtableSyncService
 } from '../../services/airtableSyncService';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 
-type WorkspaceTab = 'overview' | 'interpreters' | AirtableSyncModule;
+type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
 
-const moduleIcons: Record<AirtableSyncModule | 'overview' | 'interpreters', React.ElementType> = {
+const moduleIcons: Record<AirtableSyncModule | 'overview' | 'interpreters' | 'reconciliation', React.ElementType> = {
   overview: Database,
   interpreters: Users,
+  reconciliation: ShieldCheck,
   clients: Building2,
   redbook: ClipboardList,
   translations: Languages,
@@ -83,6 +88,10 @@ export const AdminMigration = () => {
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
   const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
   const [dependencyCounts, setDependencyCounts] = useState<AirtableDependencyCounts>({});
+  const [recentRuns, setRecentRuns] = useState<AirtableSyncRunSummary[]>([]);
+  const [openConflicts, setOpenConflicts] = useState<AirtableSyncConflict[]>([]);
+  const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
+  const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
   const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
   const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'unmatched' | 'changes'>('all');
   const [showInfo, setShowInfo] = useState(false);
@@ -119,8 +128,32 @@ export const AdminMigration = () => {
   const activeModuleOptions = [
     { id: 'overview' as WorkspaceTab, label: 'Overview' },
     { id: 'interpreters' as WorkspaceTab, label: 'Interpreters' },
+    { id: 'reconciliation' as WorkspaceTab, label: 'Reconciliation' },
     ...AIRTABLE_SYNC_MODULES.map(module => ({ id: module.id as WorkspaceTab, label: module.label }))
   ];
+  const conflictModuleByTable = useMemo(() => {
+    const map = new Map<string, AirtableSyncModule>();
+    AIRTABLE_SYNC_MODULES.forEach(module => module.tables.forEach(table => map.set(table, module.id)));
+    return map;
+  }, []);
+  const filteredConflicts = useMemo(() => openConflicts.filter(conflict => {
+    const severityMatches = conflictSeverityFilter === 'ALL' || conflict.severity === conflictSeverityFilter;
+    const moduleMatches = conflictModuleFilter === 'ALL' || conflictModuleByTable.get(conflict.sourceTable || '') === conflictModuleFilter;
+    return severityMatches && moduleMatches;
+  }), [conflictModuleByTable, conflictModuleFilter, conflictSeverityFilter, openConflicts]);
+  const conflictSummary = useMemo(() => {
+    const bySeverity = openConflicts.reduce<Record<string, number>>((acc, conflict) => {
+      const key = conflict.severity || 'MEDIUM';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    const byReason = openConflicts.reduce<Record<string, number>>((acc, conflict) => {
+      const key = conflict.reason || 'UNKNOWN';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    return { bySeverity, byReason };
+  }, [openConflicts]);
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -154,6 +187,34 @@ export const AdminMigration = () => {
       console.warn('Failed to load Airtable dependency counts', err);
       setDependencyCounts({});
     }
+  };
+
+  const loadSyncAuditTrail = async () => {
+    try {
+      const [runs, conflicts] = await Promise.all([
+        AirtableSyncService.getRecentRuns(),
+        AirtableSyncService.getOpenConflicts()
+      ]);
+      setRecentRuns(runs);
+      setOpenConflicts(conflicts);
+    } catch (err) {
+      console.warn('Failed to load Airtable sync audit trail', err);
+      setRecentRuns([]);
+      setOpenConflicts([]);
+    }
+  };
+
+  const exportConflictReport = () => {
+    const csv = AirtableSyncService.exportConflictsCsv(filteredConflicts);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `airtable-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   const handleMigrateInterpreters = async () => {
@@ -232,6 +293,7 @@ export const AdminMigration = () => {
       setSyncResult(result);
       await loadCheckpoint();
       await loadDependencyCounts();
+      await loadSyncAuditTrail();
       if (dryRun && result.success && result.stats.error === 0) {
         setCleanDryRunKeys(prev => new Set(prev).add(requestedKey));
       }
@@ -252,6 +314,7 @@ export const AdminMigration = () => {
     loadInterpreterStats();
     loadCheckpoint();
     loadDependencyCounts();
+    loadSyncAuditTrail();
   }, []);
 
   const renderStats = (result?: AirtableModuleResult | null) => {
@@ -358,6 +421,16 @@ export const AdminMigration = () => {
                         {detail.interpreterResolved ? 'Matched profile' : 'Name only'}
                       </p>
                     )}
+                    {(detail.interpreterMatchMethod || detail.interpreterMatchConfidence !== undefined) && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {detail.interpreterMatchMethod || 'unknown'} · {detail.interpreterMatchConfidence || 0}%
+                      </p>
+                    )}
+                    {detail.ambiguousCandidates?.length ? (
+                      <p className="text-xs font-bold text-red-600 dark:text-red-300">
+                        {detail.ambiguousCandidates.length} possible profiles
+                      </p>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3">
                     {detail.matchedBookings !== undefined ? (
@@ -403,12 +476,18 @@ export const AdminMigration = () => {
     return runSync(false, 'full');
   };
 
-  const activeTitle = activeModule?.label || (activeTab === 'interpreters' ? 'Interpreters' : 'Full Sync');
+  const activeTitle = activeModule?.label
+    || (activeTab === 'interpreters' ? 'Interpreters' : activeTab === 'reconciliation' ? 'Reconciliation' : 'Full Sync');
   const activeSubtitle = activeModule?.description
-    || (activeTab === 'interpreters' ? 'Active team import and activation' : 'All modules in dependency order');
+    || (activeTab === 'interpreters'
+      ? 'Active team import and activation'
+      : activeTab === 'reconciliation'
+        ? 'Open discrepancies, severity and next action'
+        : 'All modules in dependency order');
   const activeWriteDisabled = loading
     || importLocked
     || activeTab === 'interpreters'
+    || activeTab === 'reconciliation'
     || syncNowBlockedByDependency
     || writeBlockedByDryRun;
   const activeWriteLabel = activeModule ? 'Write Sync' : 'Write Full Sync';
@@ -567,7 +646,7 @@ export const AdminMigration = () => {
               </select>
               <button
                 onClick={runActiveDryRun}
-                disabled={loading || activeTab === 'interpreters'}
+                disabled={loading || activeTab === 'interpreters' || activeTab === 'reconciliation'}
                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -594,7 +673,7 @@ export const AdminMigration = () => {
           </div>
         )}
 
-        {writeBlockedByDryRun && activeTab !== 'interpreters' && (
+        {writeBlockedByDryRun && activeTab !== 'interpreters' && activeTab !== 'reconciliation' && (
           <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
             <div className="flex gap-2">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" />
@@ -608,7 +687,8 @@ export const AdminMigration = () => {
             <div className="space-y-1">
               {([
                 { id: 'overview' as WorkspaceTab, label: 'Overview', description: 'Full workflow and dependency order' },
-                { id: 'interpreters' as WorkspaceTab, label: 'Interpreters', description: 'Active team import and activation' }
+                { id: 'interpreters' as WorkspaceTab, label: 'Interpreters', description: 'Active team import and activation' },
+                { id: 'reconciliation' as WorkspaceTab, label: 'Reconciliation', description: 'Open discrepancies and export' }
               ]).map(item => {
                 const Icon = moduleIcons[item.id];
                 return (
@@ -708,6 +788,81 @@ export const AdminMigration = () => {
                     </div>
                   </div>
                 )}
+
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Recent sync runs</h2>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Durable history for Dry Runs and real Sync writes.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={loadSyncAuditTrail}
+                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                      >
+                        <RefreshCw size={14} />
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                      {recentRuns.length ? recentRuns.map(run => (
+                        <div key={run.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black text-slate-950 dark:text-white">
+                              {run.kind || 'AIRTABLE_SYNC'} · {run.dryRun ? 'Dry Run' : 'Sync'}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {formatDateTime(run.finishedAt)} · {run.modules?.join(', ') || 'redbook'} · {run.id}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 text-xs font-black">
+                            <span className={`rounded-full px-2 py-1 ${run.success ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'}`}>
+                              {run.success ? 'Clean' : 'Review'}
+                            </span>
+                            <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                              {run.stats?.conflict || 0} conflicts
+                            </span>
+                          </div>
+                        </div>
+                      )) : (
+                        <p className="py-4 text-sm text-slate-500 dark:text-slate-400">No sync runs recorded yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/20">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-black uppercase tracking-widest text-amber-800 dark:text-amber-200">Open conflicts</h2>
+                        <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-200/70">Status or ownership mismatches that need staff review.</p>
+                      </div>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                        {openConflicts.length}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {openConflicts.length ? openConflicts.map(conflict => (
+                        <div key={conflict.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm dark:border-amber-900/40 dark:bg-slate-950">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-black text-slate-950 dark:text-white">{conflict.legacyRef || conflict.sourceRecordId}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{conflict.sourceTable} · {conflict.reason}</p>
+                            </div>
+                            <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+                              {conflict.severity || 'MEDIUM'}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{conflict.recommendedAction}</p>
+                        </div>
+                      )) : (
+                        <p className="rounded-lg border border-amber-200 bg-white p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-slate-950 dark:text-amber-200">
+                          No open conflicts found.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   {AIRTABLE_SYNC_MODULES.map(module => {
@@ -834,6 +989,128 @@ export const AdminMigration = () => {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'reconciliation' && (
+              <div className="space-y-5">
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+                          <ShieldCheck size={20} />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-black text-slate-950 dark:text-white">Reconciliation Report</h2>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">Open discrepancies between Airtable mirror data and platform records.</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={loadSyncAuditTrail}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                      >
+                        <RefreshCw size={16} />
+                        Refresh
+                      </button>
+                      <button
+                        onClick={exportConflictReport}
+                        disabled={!filteredConflicts.length}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                      >
+                        <Download size={16} />
+                        Export CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <StatPill label="Open issues" value={openConflicts.length} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
+                    <StatPill label="High" value={conflictSummary.bySeverity.HIGH || 0} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
+                    <StatPill label="Medium" value={conflictSummary.bySeverity.MEDIUM || 0} className="border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-200" />
+                    <StatPill label="Low" value={conflictSummary.bySeverity.LOW || 0} />
+                  </div>
+
+                  <div className="mt-5 grid gap-3 lg:grid-cols-[220px_260px_minmax(0,1fr)]">
+                    <label className="block">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Severity</span>
+                      <select
+                        value={conflictSeverityFilter}
+                        onChange={event => setConflictSeverityFilter(event.target.value as AirtableConflictSeverity)}
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                      >
+                        {(['ALL', 'HIGH', 'MEDIUM', 'LOW'] as AirtableConflictSeverity[]).map(value => (
+                          <option key={value} value={value}>{value === 'ALL' ? 'All severities' : value}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Module</span>
+                      <select
+                        value={conflictModuleFilter}
+                        onChange={event => setConflictModuleFilter(event.target.value as 'ALL' | AirtableSyncModule)}
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                      >
+                        <option value="ALL">All modules</option>
+                        {AIRTABLE_SYNC_MODULES.map(module => (
+                          <option key={module.id} value={module.id}>{module.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Top reasons</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(conflictSummary.byReason).slice(0, 6).map(([reason, count]) => (
+                          <span key={reason} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800">
+                            {reason}: {count}
+                          </span>
+                        ))}
+                        {!openConflicts.length && <span className="text-sm font-semibold text-slate-500">No open issues.</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="grid grid-cols-[140px_160px_minmax(190px,1fr)_minmax(220px,1.4fr)] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+                    <span>Severity</span>
+                    <span>Source</span>
+                    <span>Issue</span>
+                    <span>Next action</span>
+                  </div>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredConflicts.length ? filteredConflicts.map(conflict => (
+                      <div key={conflict.id} className="grid grid-cols-[140px_160px_minmax(190px,1fr)_minmax(220px,1.4fr)] gap-3 px-4 py-3 text-sm">
+                        <div>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
+                            conflict.severity === 'HIGH'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-200'
+                              : conflict.severity === 'LOW'
+                                ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200'
+                          }`}>
+                            {conflict.severity || 'MEDIUM'}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-black text-slate-950 dark:text-white">{conflict.legacyRef || conflict.sourceRecordId || 'N/A'}</p>
+                          <p className="truncate text-xs text-slate-500">{conflict.sourceTable || conflict.entityType || 'Unknown source'}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-black text-slate-800 dark:text-slate-100">{conflict.reason || 'UNCLASSIFIED'}</p>
+                          <p className="truncate text-xs text-slate-500">{conflict.entityType || 'entity'} · {conflict.lastSeenAt ? formatDateTime(conflict.lastSeenAt) : 'No timestamp'}</p>
+                        </div>
+                        <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">{conflict.recommendedAction || 'Review source record and rerun sync.'}</p>
+                      </div>
+                    )) : (
+                      <div className="p-6 text-sm font-semibold text-slate-500 dark:text-slate-400">
+                        No reconciliation issues match the current filters.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

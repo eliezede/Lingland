@@ -9,6 +9,7 @@ import { useToast } from '../../context/ToastContext';
 import { assignInterpreterAction, createDependencies } from '../../ui/actions';
 import { useAuth } from '../../context/AuthContext';
 import { UserAvatar } from '../ui/UserAvatar';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 interface AssignmentModalProps {
     isOpen: boolean;
@@ -114,7 +115,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                             </div>
                             <div>
                                 <div className="text-xs font-bold text-white/50 uppercase tracking-wider">Language Path</div>
-                                <div className="font-bold">{booking.languageFrom} → {booking.languageTo}</div>
+                                <div className="font-bold">{formatLanguagePair(booking.languageFrom, booking.languageTo)}</div>
                             </div>
                         </div>
                         <div className="text-right">

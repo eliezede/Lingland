@@ -15,6 +15,7 @@ import { useToast } from '../../context/ToastContext';
 import { unassignInterpreterAction, createDependencies } from '../../ui/actions';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 interface InterpreterPreviewDrawerProps {
     isOpen: boolean;
@@ -206,7 +207,7 @@ export const InterpreterPreviewDrawer: React.FC<InterpreterPreviewDrawerProps> =
                                                     {new Date(job.date).toLocaleDateString([], { day: '2-digit', month: 'short' })} @ {job.startTime}
                                                 </p>
                                                 <p className="text-[10px] text-slate-500 mt-1 uppercase font-bold tracking-tighter">
-                                                    {job.languageFrom} → {job.languageTo}
+                                                    {formatLanguagePair(job.languageFrom, job.languageTo)}
                                                 </p>
                                             </div>
                                         </div>

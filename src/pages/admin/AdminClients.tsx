@@ -118,7 +118,10 @@ export const AdminClients = () => {
     const matchesSearch = (
       c.companyName.toLowerCase().includes(q) ||
       (c.contactPerson?.toLowerCase().includes(q) ?? false) ||
-      c.email.toLowerCase().includes(q)
+      c.email.toLowerCase().includes(q) ||
+      (c.invoiceEmail?.toLowerCase().includes(q) ?? false) ||
+      (c.sageAccountRef?.toLowerCase().includes(q) ?? false) ||
+      (c.airtableClientKey?.toLowerCase().includes(q) ?? false)
     );
     const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter || (statusFilter === 'ACTIVE' && !c.status);
     return matchesSearch && matchesStatus;

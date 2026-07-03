@@ -6,6 +6,7 @@ import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare, C
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useChat } from '../../context/ChatContext';
+import { formatLanguagePair } from '../../utils/languageDisplay';
 
 export const InterpreterJobDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -161,7 +162,7 @@ export const InterpreterJobDetails = () => {
 
             <div className="relative z-10">
               <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-6">
-                {job.languageFrom} <span className="text-slate-300 font-normal mx-2">&rarr;</span> {job.languageTo}
+                {formatLanguagePair(job.languageFrom, job.languageTo)}
               </h2>
               <div className="grid grid-cols-2 lg:grid-cols-4 border border-slate-100 rounded-lg overflow-hidden">
                 <div className="border-r border-b lg:border-b-0 border-slate-100 p-4 bg-white hidden sm:block">
