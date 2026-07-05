@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 
 interface ModalProps {
@@ -78,6 +79,10 @@ export const Modal: React.FC<ModalProps> = ({
 
   if (!isOpen) return null;
 
+  const renderInPortal = (content: React.ReactNode) => (
+    typeof document === 'undefined' ? content : createPortal(content, document.body)
+  );
+
   const maxWidthClasses = {
     sm: 'max-w-sm',
     md: 'max-w-md',
@@ -121,10 +126,10 @@ export const Modal: React.FC<ModalProps> = ({
   );
 
   if (type === 'drawer') {
-    return (
+    return renderInPortal(
       <>
         {showUnsavedWarning && <UnsavedWarning />}
-        <div className="fixed inset-0 z-50 pointer-events-none">
+        <div className="fixed inset-0 z-[1200] pointer-events-none">
           <div
             className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px] pointer-events-auto"
             onClick={handleClose}
@@ -160,10 +165,10 @@ export const Modal: React.FC<ModalProps> = ({
   }
 
   if (type === 'wizard') {
-    return (
+    return renderInPortal(
       <>
         {showUnsavedWarning && <UnsavedWarning />}
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-0">
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center p-0">
           <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={handleClose} />
           <div className="relative w-full h-full bg-slate-50 dark:bg-slate-950 flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Wizard Header */}
@@ -231,10 +236,10 @@ export const Modal: React.FC<ModalProps> = ({
     );
   }
 
-  return (
+  return renderInPortal(
     <>
       {showUnsavedWarning && <UnsavedWarning />}
-      <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="fixed inset-0 z-[1200] overflow-y-auto">
         <div className="flex min-h-dvh items-end justify-center px-3 pb-0 pt-6 text-center sm:items-center sm:p-6">
           <div
             className="fixed inset-0 transition-opacity bg-slate-950/60 backdrop-blur-sm"

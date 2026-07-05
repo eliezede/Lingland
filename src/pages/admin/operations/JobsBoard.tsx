@@ -2402,7 +2402,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             />
 
             <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div ref={toolsRef} data-jobs-toolbar="true" className="relative z-[90] shrink-0 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
+            <div ref={toolsRef} data-jobs-toolbar="true" className="relative z-20 shrink-0 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
                 <div className="flex flex-col gap-2 border-b border-slate-200 p-2 dark:border-slate-800 xl:flex-row xl:items-center">
                     <div className="relative" ref={viewsMenuRef}>
                         <WorkspaceViewMenu

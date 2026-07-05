@@ -76,6 +76,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: 'OPS', label: 'Job Centre', icon: Briefcase, rootPath: '/admin/bookings', module: SystemModule.BOOKINGS },
     { id: 'NET', label: 'Network', icon: Users, rootPath: '/admin/interpreters', modules: [SystemModule.INTERPRETERS, SystemModule.CLIENTS, SystemModule.RECRUITMENT] },
     { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/billing', module: SystemModule.FINANCE },
+    { id: 'REPORTS', label: 'Reports', icon: BarChart3, rootPath: '/admin/reports', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.INTERPRETERS, SystemModule.CLIENTS] },
     { id: 'COMMS', label: 'Comms', icon: MessageSquare, rootPath: '/admin/messages', modules: [SystemModule.MESSAGES] },
     { id: 'ADMIN', label: 'Administration', icon: Settings, rootPath: '/admin/users', modules: [SystemModule.STAFF_MGMT, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
   ];
@@ -120,6 +121,9 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       '/admin/interpreters': 'NET',
       '/admin/clients': 'NET',
       '/admin/applications': 'NET',
+      '/admin/billing/reports': 'REPORTS',
+      '/admin/finance/reports': 'REPORTS',
+      '/admin/reports': 'REPORTS',
       '/admin/billing': 'FIN',
       '/admin/finance': 'FIN',
       '/admin/messages': 'COMMS',
@@ -321,6 +325,16 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                     <NavItem to="/admin/billing/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/billing/overview'} isCollapsed={isSecondarySlim} />
                   </div>
                 )}
+
+              {activeCategory === 'REPORTS' && (
+                <div className="space-y-4">
+                  {!isSecondarySlim && <div className="sidebar-group-label">Reporting centre</div>}
+                  <NavItem to="/admin/reports" icon={BarChart3} label="Reports Hub" active={location.pathname === '/admin/reports' || location.pathname === '/admin/billing/reports' || location.pathname === '/admin/finance/reports'} isCollapsed={isSecondarySlim} />
+                  {!isSecondarySlim && <div className="sidebar-group-label">Working boards</div>}
+                  <NavItem to="/admin/bookings" icon={Briefcase} label="Job Centre" active={location.pathname === '/admin/bookings'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/billing" icon={PoundSterling} label="Finance Board" active={location.pathname === '/admin/billing'} isCollapsed={isSecondarySlim} />
+                </div>
+              )}
 
               {activeCategory === 'COMMS' && (
                 <div className="space-y-4">

@@ -130,7 +130,7 @@ export const AdminBillingDashboard = () => {
           <p className="text-xs font-black uppercase tracking-wide text-slate-400">Finance CRM Overview</p>
           <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Accounts control room</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-            Executive view for Jerry: monitor billing queues here, then work the actual records inside Finance Board views.
+            Executive view for Accounts: monitor billing queues here, then work the actual records inside Finance Board views.
           </p>
         </div>
         <Link
