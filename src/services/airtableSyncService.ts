@@ -169,7 +169,7 @@ export const AirtableSyncService = {
   run: async (
     dryRun: boolean,
     modules: AirtableSyncModule[] | 'full',
-    limitRecords = 500,
+    limitRecords = 5000,
     syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
   ): Promise<AirtableSyncResult> => {
     const syncFn = httpsCallable(functions, 'syncAirtableData');

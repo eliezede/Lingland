@@ -1061,7 +1061,7 @@ const effectiveLimitForStrategy = (strategy, requestedLimit) => {
         return Math.min(Math.max(requestedLimit || 1000, 1), 3000);
     if (strategy === 'RECENT_OPEN')
         return Math.min(Math.max(requestedLimit || 1500, 1), 3000);
-    return Math.min(Math.max(requestedLimit || 2000, 1), 3000);
+    return Math.min(Math.max(requestedLimit || 5000, 1), 5000);
 };
 const getLastSyncIso = async () => {
     const syncCenter = await db.collection('system').doc('airtableSyncCenter').get();

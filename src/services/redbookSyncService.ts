@@ -64,7 +64,7 @@ export type RedbookSyncCheckpoint = {
 };
 
 export const RedbookSyncService = {
-  run: async (dryRun: boolean, limitRecords = 500, syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'): Promise<RedbookSyncResult> => {
+  run: async (dryRun: boolean, limitRecords = 5000, syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'): Promise<RedbookSyncResult> => {
     const syncFn = httpsCallable(functions, 'syncRedbookJobs');
     const response = await syncFn({ dryRun, limitRecords, syncStrategy });
     return response.data as RedbookSyncResult;

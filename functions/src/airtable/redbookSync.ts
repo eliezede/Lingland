@@ -1237,7 +1237,7 @@ const effectiveLimitForStrategy = (strategy: AirtableSyncStrategy, requestedLimi
   if (strategy === 'FULL_AUDIT' || strategy === 'CUSTOM_LIMIT') return Math.min(Math.max(requestedLimit || 500, 1), 5000);
   if (strategy === 'UPDATED_SINCE_LAST_SYNC') return Math.min(Math.max(requestedLimit || 1000, 1), 3000);
   if (strategy === 'RECENT_OPEN') return Math.min(Math.max(requestedLimit || 1500, 1), 3000);
-  return Math.min(Math.max(requestedLimit || 2000, 1), 3000);
+  return Math.min(Math.max(requestedLimit || 5000, 1), 5000);
 };
 
 const getLastSyncIso = async () => {

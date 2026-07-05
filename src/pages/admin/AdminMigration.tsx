@@ -51,7 +51,7 @@ const syncStrategyOptions: Array<{
     id: 'OPEN_WORKFLOW',
     label: 'Open workflow',
     description: 'Daily Mirror Cycle: open, active or financially unfinished workflow.',
-    defaultLimit: 2000
+    defaultLimit: 5000
   },
   {
     id: 'UPDATED_SINCE_LAST_SYNC',
@@ -126,8 +126,8 @@ export const AdminMigration = () => {
   const [loading, setLoading] = useState(false);
   const [interpreterLoading, setInterpreterLoading] = useState(false);
   const [stats, setStats] = useState<{ total: number; deduplicated: number } | null>(null);
-  const [recordLimit, setRecordLimit] = useState(500);
   const [syncStrategy, setSyncStrategy] = useState<AirtableSyncStrategy>('OPEN_WORKFLOW');
+  const [recordLimit, setRecordLimit] = useState(() => getStrategyConfig('OPEN_WORKFLOW').defaultLimit);
   const [syncResult, setSyncResult] = useState<AirtableSyncResult | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
   const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
@@ -704,6 +704,14 @@ export const AdminMigration = () => {
                   <option value={1000}>1,000 records</option>
                   <option value={5000}>5,000 records</option>
                 </select>
+              )}
+              {syncStrategy !== 'CUSTOM_LIMIT' && (
+                <span
+                  title={`This strategy will request up to ${recordLimit.toLocaleString()} Airtable records.`}
+                  className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-black uppercase text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400"
+                >
+                  {recordLimit.toLocaleString()} records
+                </span>
               )}
               <button
                 onClick={runActiveDryRun}
