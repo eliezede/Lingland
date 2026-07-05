@@ -1,6 +1,7 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebaseConfig';
+import type { AirtableSyncStrategy } from './airtableSyncService';
 
 export type RedbookSyncStats = {
   created: number;
@@ -63,9 +64,9 @@ export type RedbookSyncCheckpoint = {
 };
 
 export const RedbookSyncService = {
-  run: async (dryRun: boolean, limitRecords = 500): Promise<RedbookSyncResult> => {
+  run: async (dryRun: boolean, limitRecords = 500, syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'): Promise<RedbookSyncResult> => {
     const syncFn = httpsCallable(functions, 'syncRedbookJobs');
-    const response = await syncFn({ dryRun, limitRecords });
+    const response = await syncFn({ dryRun, limitRecords, syncStrategy });
     return response.data as RedbookSyncResult;
   },
 

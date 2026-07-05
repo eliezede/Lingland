@@ -32,6 +32,7 @@ import {
   AirtableSyncCheckpoint,
   AirtableSyncModule,
   AirtableSyncRunSummary,
+  AirtableSyncStrategy,
   AirtableSyncResult,
   AirtableSyncService
 } from '../../services/airtableSyncService';
@@ -39,6 +40,48 @@ import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 
 type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
+
+const syncStrategyOptions: Array<{
+  id: AirtableSyncStrategy;
+  label: string;
+  description: string;
+  defaultLimit: number;
+}> = [
+  {
+    id: 'OPEN_WORKFLOW',
+    label: 'Open workflow',
+    description: 'Daily Mirror Cycle: open, active or financially unfinished workflow.',
+    defaultLimit: 2000
+  },
+  {
+    id: 'UPDATED_SINCE_LAST_SYNC',
+    label: 'Updated since last sync',
+    description: 'Only records touched in Airtable after the last successful sync.',
+    defaultLimit: 1000
+  },
+  {
+    id: 'RECENT_OPEN',
+    label: 'Recent + open',
+    description: 'Open workflow plus recently created records for transition safety.',
+    defaultLimit: 1500
+  },
+  {
+    id: 'FULL_AUDIT',
+    label: 'Full audit',
+    description: 'Heavy reconciliation pass for weekly/monthly proof, not daily work.',
+    defaultLimit: 5000
+  },
+  {
+    id: 'CUSTOM_LIMIT',
+    label: 'Custom limit',
+    description: 'Manual record count for controlled troubleshooting.',
+    defaultLimit: 500
+  }
+];
+
+const getStrategyConfig = (strategy: AirtableSyncStrategy) => (
+  syncStrategyOptions.find(option => option.id === strategy) || syncStrategyOptions[0]
+);
 
 const moduleIcons: Record<AirtableSyncModule | 'overview' | 'interpreters' | 'reconciliation', React.ElementType> = {
   overview: Database,
@@ -84,6 +127,7 @@ export const AdminMigration = () => {
   const [interpreterLoading, setInterpreterLoading] = useState(false);
   const [stats, setStats] = useState<{ total: number; deduplicated: number } | null>(null);
   const [recordLimit, setRecordLimit] = useState(500);
+  const [syncStrategy, setSyncStrategy] = useState<AirtableSyncStrategy>('OPEN_WORKFLOW');
   const [syncResult, setSyncResult] = useState<AirtableSyncResult | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
   const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
@@ -120,8 +164,9 @@ export const AdminMigration = () => {
   const dependencyWritten = !activeModule?.dependency
     || Boolean(moduleCheckpoints?.[activeModule.dependency]?.success && (dependencyCounts[activeModule.dependency] || 0) > 0);
   const syncNowBlockedByDependency = Boolean(activeModule?.dependency && !dependencyWritten);
-  const fullRunKey = `full:${recordLimit}`;
-  const moduleRunKey = activeModule ? `${activeModule.id}:${recordLimit}` : fullRunKey;
+  const activeStrategyConfig = getStrategyConfig(syncStrategy);
+  const fullRunKey = `full:${syncStrategy}:${recordLimit}`;
+  const moduleRunKey = activeModule ? `${activeModule.id}:${syncStrategy}:${recordLimit}` : fullRunKey;
   const hasCleanDryRun = cleanDryRunKeys.has(moduleRunKey);
   const hasCleanFullDryRun = cleanDryRunKeys.has(fullRunKey);
   const writeBlockedByDryRun = activeModule ? !hasCleanDryRun : !hasCleanFullDryRun;
@@ -258,11 +303,11 @@ export const AdminMigration = () => {
     }
 
     const requestedKey = modules === 'full'
-      ? `full:${recordLimit}`
-      : `${modules.join('+')}:${recordLimit}`;
+      ? `full:${syncStrategy}:${recordLimit}`
+      : `${modules.join('+')}:${syncStrategy}:${recordLimit}`;
 
     if (!dryRun && !cleanDryRunKeys.has(requestedKey)) {
-      showToast('Run a clean Dry Run with the same module and record limit before writing data.', 'error');
+      showToast('Run a clean Dry Run with the same module and sync strategy before writing data.', 'error');
       return;
     }
 
@@ -284,12 +329,12 @@ export const AdminMigration = () => {
     const moduleLabel = modules === 'full'
       ? 'Full Sync'
       : modules.map(module => AIRTABLE_SYNC_MODULES.find(item => item.id === module)?.label || module).join(', ');
-    if (!dryRun && !window.confirm(`Run ${moduleLabel} now? This writes Airtable data into Firestore.`)) return;
+    if (!dryRun && !window.confirm(`Run ${moduleLabel} now using ${activeStrategyConfig.label}? This writes Airtable data into Firestore.`)) return;
 
     setLoading(true);
     setSyncResult(null);
     try {
-      const result = await AirtableSyncService.run(dryRun, modules, recordLimit);
+      const result = await AirtableSyncService.run(dryRun, modules, recordLimit, syncStrategy);
       setSyncResult(result);
       await loadCheckpoint();
       await loadDependencyCounts();
@@ -544,7 +589,7 @@ export const AdminMigration = () => {
                 <h3 className="font-black text-slate-950 dark:text-white">Safe operating rule</h3>
                 <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                   <li><strong>Dry Run</strong> reads Airtable and previews what would happen. It does not write data.</li>
-                  <li><strong>Write Sync</strong> writes to Firestore and is blocked until a clean Dry Run was run with the same module and record limit.</li>
+                  <li><strong>Write Sync</strong> writes to Firestore and is blocked until a clean Dry Run was run with the same module and sync strategy.</li>
                   <li><strong>Import Mode</strong> controls whether writes are allowed. `READ_ONLY` and `OFF` prevent production writes.</li>
                   <li><strong>Email Mode</strong> still controls communication. Mirror imports do not send client/interpreter emails by themselves.</li>
                 </ul>
@@ -585,7 +630,7 @@ export const AdminMigration = () => {
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200 lg:col-span-2">
                 <h3 className="font-black">Before writing real data</h3>
                 <p className="mt-2 text-sm">
-                  Start with 100 records, inspect `Errors` and `Unmatched`, then increase the limit. If invoices show zero booking matches, do not write finance yet: import or repair the related jobs first.
+                  Use <strong>Open workflow</strong> for the daily Mirror Cycle. Use <strong>Updated since last sync</strong> for quick catch-up runs, <strong>Recent + open</strong> during transition checks, and <strong>Full audit</strong> only for reconciliation proof. If invoices show zero booking matches, do not write finance yet: import or repair the related jobs first.
                 </p>
               </div>
             </div>
@@ -635,15 +680,31 @@ export const AdminMigration = () => {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
-                value={recordLimit}
-                onChange={e => setRecordLimit(Number(e.target.value))}
-                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                value={syncStrategy}
+                onChange={e => {
+                  const nextStrategy = e.target.value as AirtableSyncStrategy;
+                  setSyncStrategy(nextStrategy);
+                  setRecordLimit(getStrategyConfig(nextStrategy).defaultLimit);
+                }}
+                title={activeStrategyConfig.description}
+                className="h-10 min-w-[210px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
               >
-                <option value={100}>100 records</option>
-                <option value={500}>500 records</option>
-                <option value={1000}>1,000 records</option>
-                <option value={5000}>5,000 records</option>
+                {syncStrategyOptions.map(option => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
               </select>
+              {syncStrategy === 'CUSTOM_LIMIT' && (
+                <select
+                  value={recordLimit}
+                  onChange={e => setRecordLimit(Number(e.target.value))}
+                  className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                >
+                  <option value={100}>100 records</option>
+                  <option value={500}>500 records</option>
+                  <option value={1000}>1,000 records</option>
+                  <option value={5000}>5,000 records</option>
+                </select>
+              )}
               <button
                 onClick={runActiveDryRun}
                 disabled={loading || activeTab === 'interpreters' || activeTab === 'reconciliation'}
@@ -677,7 +738,7 @@ export const AdminMigration = () => {
           <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
             <div className="flex gap-2">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" />
-              <span>Run a clean {activeDryRunLabel} with the current {recordLimit} record limit before writing data.</span>
+              <span>Run a clean {activeDryRunLabel} with the current {activeStrategyConfig.label} strategy before writing data.</span>
             </div>
           </div>
         )}
@@ -786,6 +847,14 @@ export const AdminMigration = () => {
                       <StatPill label="Conflicts" value={syncResult.stats.conflict} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
                       <StatPill label="Errors" value={syncResult.stats.error} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
                     </div>
+                    {syncResult.financePullThrough && (
+                      <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-100">
+                        Mirror strategy: {syncResult.syncStrategy || syncStrategy}. Finance pull-through {syncResult.financePullThrough.filterActive ? 'active' : 'not applied'} · {syncResult.financePullThrough.workflowSourceRecordIds || 0} workflow job refs considered
+                        {(syncResult.financePullThrough.clientInvoicesDropped || syncResult.financePullThrough.interpreterInvoicesDropped) ? (
+                          <span> · {syncResult.financePullThrough.clientInvoicesDropped || 0} client invoices and {syncResult.financePullThrough.interpreterInvoicesDropped || 0} interpreter payables outside the active workflow were skipped for this cycle</span>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -12,6 +12,13 @@ export type AirtableSyncModule =
   | 'translationClientInvoices'
   | 'translatorInvoices';
 
+export type AirtableSyncStrategy =
+  | 'OPEN_WORKFLOW'
+  | 'UPDATED_SINCE_LAST_SYNC'
+  | 'RECENT_OPEN'
+  | 'FULL_AUDIT'
+  | 'CUSTOM_LIMIT';
+
 export type AirtableModuleResult = {
   module: AirtableSyncModule;
   label: string;
@@ -33,6 +40,7 @@ export type AirtableSyncResult = {
   success: boolean;
   syncRunId?: string;
   mappingVersion?: string;
+  syncStrategy?: AirtableSyncStrategy;
   dryRun: boolean;
   importMode: string;
   triggeredBy?: string;
@@ -42,6 +50,12 @@ export type AirtableSyncResult = {
   finishedAt?: string;
   message?: string;
   stats: RedbookSyncStats;
+  financePullThrough?: {
+    workflowSourceRecordIds?: number;
+    clientInvoicesDropped?: number;
+    interpreterInvoicesDropped?: number;
+    filterActive?: boolean;
+  };
   moduleResults: AirtableModuleResult[];
 };
 
@@ -50,6 +64,7 @@ export type AirtableSyncCheckpoint = {
   lastRunAt?: string;
   lastStats?: RedbookSyncStats;
   lastModules?: AirtableSyncModule[];
+  lastSyncStrategy?: AirtableSyncStrategy;
   moduleCheckpoints?: Partial<Record<AirtableSyncModule, {
     lastRunId?: string;
     lastWriteAt?: string;
@@ -66,6 +81,7 @@ export type AirtableSyncRunSummary = {
   kind?: string;
   dryRun?: boolean;
   importMode?: string;
+  syncStrategy?: AirtableSyncStrategy;
   modules?: AirtableSyncModule[];
   startedAt?: string;
   finishedAt?: string;
@@ -153,10 +169,11 @@ export const AirtableSyncService = {
   run: async (
     dryRun: boolean,
     modules: AirtableSyncModule[] | 'full',
-    limitRecords = 500
+    limitRecords = 500,
+    syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
   ): Promise<AirtableSyncResult> => {
     const syncFn = httpsCallable(functions, 'syncAirtableData');
-    const response = await syncFn({ dryRun, modules, limitRecords });
+    const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy });
     return response.data as AirtableSyncResult;
   },
 

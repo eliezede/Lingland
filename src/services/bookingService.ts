@@ -859,15 +859,22 @@ export const BookingService = {
 
   delete: async (id: string): Promise<void> => {
     try {
-      // 1. Delete associated assignments first in Firebase
-      const assignmentsQuery = query(collection(db, ASSIGNMENTS_COLLECTION), where('bookingId', '==', id));
-      const assignmentsSnap = await getDocs(assignmentsQuery);
       const batch = writeBatch(db);
-      assignmentsSnap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+      const linkedCollections = [
+        ASSIGNMENTS_COLLECTION,
+        'assignments',
+        'timesheets',
+        'jobEvents',
+      ];
 
-      // 2. Delete the booking from Firebase
-      await deleteDoc(doc(db, COLLECTION_NAME, id));
+      for (const collectionName of linkedCollections) {
+        const linkedQuery = query(collection(db, collectionName), where('bookingId', '==', id));
+        const linkedSnap = await getDocs(linkedQuery);
+        linkedSnap.docs.forEach(d => batch.delete(d.ref));
+      }
+
+      batch.delete(doc(db, COLLECTION_NAME, id));
+      await batch.commit();
     } catch (e) {
       console.error('Firebase deletion failed', e);
       throw e;

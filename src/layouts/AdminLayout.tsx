@@ -4,9 +4,9 @@ import { UserRole } from '../types';
 import {
   LayoutDashboard, CalendarDays, Users, Briefcase,
   LogOut, Globe2, Menu, FileText, PoundSterling,
-  CreditCard, UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail, Receipt,
+  UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, Clock, ChevronDown, Building2, AlertCircle
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -192,12 +192,33 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const isWorkBoard = location.pathname === '/admin/bookings' || location.pathname === '/admin/billing';
   const operationsViewParam = new URLSearchParams(location.search).get('view');
   const financeViewParam = new URLSearchParams(location.search).get('view');
+  const boardModeParam = new URLSearchParams(location.search).get('mode');
+  const serviceScopeParam = new URLSearchParams(location.search).get('service');
   const isOperationsBoardView = (viewId?: string) => (
-    location.pathname === '/admin/bookings' && (viewId ? operationsViewParam === viewId : !operationsViewParam)
+    location.pathname === '/admin/bookings' && boardModeParam !== 'calendar' && (viewId ? operationsViewParam === viewId : true)
   );
   const isFinanceBoardView = (viewId?: string) => (
-    location.pathname === '/admin/billing' && (viewId ? financeViewParam === viewId : !financeViewParam)
+    location.pathname === '/admin/billing' && boardModeParam !== 'calendar' && (viewId ? financeViewParam === viewId : true)
   );
+  const isOperationsCalendarView = location.pathname === '/admin/bookings' && boardModeParam === 'calendar';
+  const isFinanceCalendarView = location.pathname === '/admin/billing' && boardModeParam === 'calendar';
+  const buildScopedBoardPath = (path: '/admin/bookings' | '/admin/billing', service?: 'interpreting' | 'translation') => {
+    const params = new URLSearchParams(location.pathname === path ? location.search : '');
+    if (service) params.set('service', service);
+    else params.delete('service');
+    return `${path}${params.toString() ? `?${params.toString()}` : ''}`;
+  };
+  const buildBoardModePath = (path: '/admin/bookings' | '/admin/billing', mode: 'table' | 'calendar') => {
+    const params = new URLSearchParams(location.pathname === path ? location.search : '');
+    if (mode === 'calendar') {
+      params.set('mode', 'calendar');
+      if (!params.get('calendar')) params.set('calendar', 'month');
+    } else {
+      params.delete('mode');
+      params.delete('calendar');
+    }
+    return `${path}${params.toString() ? `?${params.toString()}` : ''}`;
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -261,17 +282,14 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
               {activeCategory === 'OPS' && (
                 <div className="space-y-4">
                   {!isSecondarySlim && <div className="sidebar-group-label">Operations CRM</div>}
-                  <NavItem to="/admin/bookings" icon={CalendarDays} label="Jobs Board" active={isOperationsBoardView()} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-incoming" icon={ClipboardList} label="Incoming" active={isOperationsBoardView('sys-incoming')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-status-date" icon={ClipboardList} label="Status & Date" active={isOperationsBoardView('sys-status-date')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-unassigned" icon={UserCheck} label="Unassigned Jobs" active={isOperationsBoardView('sys-unassigned')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-waiting-response" icon={Clock} label="Waiting Response" active={isOperationsBoardView('sys-waiting-response')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-overdue" icon={AlertCircle} label="Overdue" active={isOperationsBoardView('sys-overdue')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-today-tomorrow" icon={Clock} label="Today & Tomorrow" active={isOperationsBoardView('sys-today-tomorrow')} isCollapsed={isSecondarySlim} />
-                  {!isSecondarySlim && <div className="sidebar-group-label">Service queues</div>}
-                  <NavItem to="/admin/bookings?view=sys-interpreting" icon={Users} label="Interpreting" active={isOperationsBoardView('sys-interpreting')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-translations" icon={FileText} label="Translations" active={isOperationsBoardView('sys-translations')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/bookings?view=sys-translations-due" icon={FileText} label="Translations Due" active={isOperationsBoardView('sys-translations-due')} isCollapsed={isSecondarySlim} />
+                  <NavItem to={buildBoardModePath('/admin/bookings', 'table')} icon={CalendarDays} label="Jobs Board" active={isOperationsBoardView()} isCollapsed={isSecondarySlim} />
+                  <NavItem to={buildBoardModePath('/admin/bookings', 'calendar')} icon={CalendarDays} label="Calendar" active={isOperationsCalendarView} isCollapsed={isSecondarySlim} />
+                  {!isSecondarySlim && <div className="sidebar-group-label">Service scope</div>}
+                  <NavItem to={buildScopedBoardPath('/admin/bookings', 'interpreting')} icon={Users} label="Interpreting" active={location.pathname === '/admin/bookings' && serviceScopeParam === 'interpreting'} isCollapsed={isSecondarySlim} />
+                  <NavItem to={buildScopedBoardPath('/admin/bookings', 'translation')} icon={FileText} label="Translation" active={location.pathname === '/admin/bookings' && serviceScopeParam === 'translation'} isCollapsed={isSecondarySlim} />
+                  {serviceScopeParam && location.pathname === '/admin/bookings' && (
+                    <NavItem to={buildScopedBoardPath('/admin/bookings')} icon={Briefcase} label="All services" active={false} isCollapsed={isSecondarySlim} />
+                  )}
                   {!isSecondarySlim && <div className="sidebar-group-label">Specialist tools</div>}
                   <NavItem to="/admin/operations/assignments" icon={UserCheck} label="Assignments" active={isActive('/admin/operations/assignments')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/operations/timesheets" icon={ClipboardList} label="Timesheet Review" active={isActive('/admin/operations/timesheets')} isCollapsed={isSecondarySlim} />
@@ -290,15 +308,16 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
                 {activeCategory === 'FIN' && (
                   <div className="space-y-4">
-                    {!isSecondarySlim && <div className="sidebar-group-label">Finance CRM</div>}
-                   <NavItem to="/admin/billing" icon={PoundSterling} label="Finance Board" active={isFinanceBoardView()} isCollapsed={isSecondarySlim} />
-                   <NavItem to="/admin/billing?view=fin-billing-queue&lane=clientBilling" icon={Receipt} label="Billing Queue" active={isFinanceBoardView('fin-billing-queue')} isCollapsed={isSecondarySlim} />
-                   <NavItem to="/admin/billing?view=fin-timesheets&lane=interpreterPayables" icon={ClipboardList} label="Timesheets" active={isFinanceBoardView('fin-timesheets')} isCollapsed={isSecondarySlim} />
-                   <NavItem to="/admin/billing?view=fin-ready-client-invoice&lane=clientBilling" icon={CreditCard} label="Ready to Invoice" active={isFinanceBoardView('fin-ready-client-invoice')} isCollapsed={isSecondarySlim} />
-                   <NavItem to="/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables" icon={Users} label="Interpreter Payables" active={isFinanceBoardView('fin-interpreter-invoices')} isCollapsed={isSecondarySlim} />
+                   {!isSecondarySlim && <div className="sidebar-group-label">Finance CRM</div>}
+                   <NavItem to={buildBoardModePath('/admin/billing', 'table')} icon={PoundSterling} label="Finance Board" active={isFinanceBoardView()} isCollapsed={isSecondarySlim} />
+                   <NavItem to={buildBoardModePath('/admin/billing', 'calendar')} icon={CalendarDays} label="Calendar" active={isFinanceCalendarView} isCollapsed={isSecondarySlim} />
+                    {!isSecondarySlim && <div className="sidebar-group-label">Service scope</div>}
+                   <NavItem to={buildScopedBoardPath('/admin/billing', 'interpreting')} icon={Users} label="Interpreting" active={location.pathname === '/admin/billing' && serviceScopeParam === 'interpreting'} isCollapsed={isSecondarySlim} />
+                   <NavItem to={buildScopedBoardPath('/admin/billing', 'translation')} icon={FileText} label="Translation" active={location.pathname === '/admin/billing' && serviceScopeParam === 'translation'} isCollapsed={isSecondarySlim} />
+                  {serviceScopeParam && location.pathname === '/admin/billing' && (
+                    <NavItem to={buildScopedBoardPath('/admin/billing')} icon={Briefcase} label="All services" active={false} isCollapsed={isSecondarySlim} />
+                  )}
                     {!isSecondarySlim && <div className="sidebar-group-label">Accounting</div>}
-                   <NavItem to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling" icon={Clock} label="Awaiting Payment" active={isFinanceBoardView('fin-awaiting-payment')} isCollapsed={isSecondarySlim} />
-                   <NavItem to="/admin/billing?view=fin-profit-review&lane=clientBilling" icon={BarChart3} label="Profit Review" active={isFinanceBoardView('fin-profit-review')} isCollapsed={isSecondarySlim} />
                     <NavItem to="/admin/billing/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/billing/overview'} isCollapsed={isSecondarySlim} />
                   </div>
                 )}
@@ -381,7 +400,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto bg-slate-100 dark:bg-slate-950 ${isWorkBoard ? 'p-0' : 'p-3 sm:p-5 lg:p-6'}`}>
+        <main className={`flex-1 bg-slate-100 dark:bg-slate-950 ${isWorkBoard ? 'overflow-hidden p-0' : 'overflow-auto p-3 sm:p-5 lg:p-6'}`}>
           <div className={isWorkBoard ? 'h-full max-w-none' : 'mx-auto max-w-[1600px]'}>
             {children}
           </div>

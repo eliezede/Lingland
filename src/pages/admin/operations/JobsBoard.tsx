@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     AlertCircle,
@@ -7,9 +8,12 @@ import {
     ArrowUpRight,
     BarChart3,
     Building2,
+    CalendarDays,
     Check,
     CheckCircle2,
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     Clock,
     Copy,
     CreditCard,
@@ -20,6 +24,7 @@ import {
     Globe2,
     Group,
     LayoutGrid,
+    List,
     MapPin,
     Maximize2,
     Pencil,
@@ -66,10 +71,14 @@ import { useConfirm } from '../../../context/ConfirmContext';
 import { formatLanguagePair, formatLanguageSearchText } from '../../../utils/languageDisplay';
 
 type QuickFilter = 'ALL' | 'INTERPRETING' | 'TRANSLATIONS' | 'OVERDUE' | 'TODAY' | 'UNASSIGNED' | 'COMPLETED' | 'TIMESHEET' | 'INVOICE_READY' | 'AWAITING_PAYMENT' | 'CANCELLED';
-type SortField = 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
+type SortField = 'operationalPriority' | 'financePriority' | 'bookingRef' | 'status' | 'date' | 'client' | 'language' | 'interpreter' | 'serviceCategory';
 type GroupField = 'none' | 'view' | 'status' | 'date' | 'client' | 'interpreter' | 'serviceCategory';
 type ToolPanel = 'hide' | 'filter' | 'group' | 'sort' | null;
 type ColumnFilter = { columnId: string; value: string } | null;
+type PopoverPosition = { top: number; left: number; width: number };
+type BoardMode = 'table' | 'calendar';
+type CalendarViewMode = 'month' | 'week';
+type ServiceScope = 'all' | 'interpreting' | 'translation';
 
 const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef'];
 const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin'];
@@ -116,6 +125,63 @@ const formatDate = (date?: string, options?: Intl.DateTimeFormatOptions) => {
     return parsed.toLocaleDateString('en-GB', options || { weekday: 'short', day: '2-digit', month: 'short' });
 };
 
+const startOfLocalDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const addDays = (date: Date, days: number) => {
+    const next = new Date(date);
+    next.setDate(date.getDate() + days);
+    return next;
+};
+const getDateKey = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+const getMonthGridStart = (date: Date) => {
+    const first = new Date(date.getFullYear(), date.getMonth(), 1);
+    const mondayBasedDay = (first.getDay() + 6) % 7;
+    return addDays(first, -mondayBasedDay);
+};
+const getWeekStart = (date: Date) => {
+    const day = startOfLocalDay(date);
+    const mondayBasedDay = (day.getDay() + 6) % 7;
+    return addDays(day, -mondayBasedDay);
+};
+const getTimeLabel = (job: Booking) => {
+    const raw = (job as any).time || (job as any).startTime || '';
+    if (!raw) return '';
+    const match = String(raw).match(/\d{1,2}:\d{2}/);
+    return match ? match[0] : String(raw).slice(0, 5);
+};
+const getTimeMinutes = (job: Booking) => {
+    const label = getTimeLabel(job);
+    const [hours, minutes] = label.split(':').map(Number);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 9 * 60;
+    return (hours * 60) + minutes;
+};
+const getDurationForCalendar = (job: Booking) => {
+    const duration = Number(job.durationMinutes || (job as any).duration || 0);
+    return Number.isFinite(duration) && duration > 0 ? duration : 60;
+};
+const getCalendarDate = (job: Booking, workspace: BookingWorkspace) => {
+    const financeDate = workspace === 'finance'
+        ? ((job as any).invoiceDate || (job as any).invoicedAt || (job as any).paidAt || (job as any).timesheetSubmittedAt || (job as any).timesheetVerifiedAt || (job as any).billingReadyAt)
+        : null;
+    const parsed = new Date(financeDate || job.date || job.createdAt || '');
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const getCalendarTone = (job: Booking) => {
+    if (job.status === BookingStatus.CANCELLED) return 'bg-fuchsia-700 text-white border-fuchsia-800';
+    if (job.status === BookingStatus.PAID) return 'bg-emerald-700 text-white border-emerald-800';
+    if (job.status === BookingStatus.INVOICED) return 'bg-green-100 text-green-900 border-green-300';
+    if (invoiceWorkStatuses.includes(job.status)) return 'bg-amber-100 text-amber-950 border-amber-300';
+    if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT, BookingStatus.OPENED].includes(job.status)) return 'bg-orange-100 text-orange-950 border-orange-300';
+    if (job.status === BookingStatus.BOOKED) return 'bg-green-700 text-white border-green-800';
+    if (job.status === BookingStatus.TIMESHEET_SUBMITTED) return 'bg-sky-100 text-sky-950 border-sky-300';
+    if (job.status === BookingStatus.SESSION_COMPLETED) return 'bg-slate-200 text-slate-950 border-slate-300';
+    return 'bg-slate-100 text-slate-950 border-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700';
+};
+
 const getDayDiff = (date?: string) => {
     if (!date) return 0;
     const today = new Date();
@@ -134,6 +200,59 @@ const getTimingMeta = (job: Booking) => {
     return { label: formatDate(job.date), tone: 'neutral', bar: 'bg-slate-300 dark:bg-slate-700' };
 };
 
+const getOperationalDateBucket = (job: Booking) => {
+    const diff = getDayDiff(job.date);
+    const isTerminal = terminalStatuses.has(job.status);
+    if (isTerminal) return 90;
+    if (diff === 0) return 0;
+    if (diff === 1) return 1;
+    if (diff > 1 && diff <= 7) return 2;
+    if (diff < 0 && Math.abs(diff) <= 30) return 3;
+    if (diff > 7) return 4;
+    return 8;
+};
+
+const getOperationalStatusRank = (job: Booking) => {
+    if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) return job.interpreterId ? 2 : 0;
+    if (job.status === BookingStatus.ASSIGNMENT_PENDING) return 1;
+    if (job.status === BookingStatus.OPENED) return job.interpreterId ? 2 : 0;
+    if (job.status === BookingStatus.BOOKED) return 3;
+    if (job.status === BookingStatus.SESSION_COMPLETED) return 4;
+    if (job.status === BookingStatus.TIMESHEET_SUBMITTED) return 5;
+    if (job.status === BookingStatus.TIMESHEET_VERIFIED) return 6;
+    if (invoiceWorkStatuses.includes(job.status)) return 7;
+    if (job.status === BookingStatus.INVOICED) return 8;
+    if (job.status === BookingStatus.PAID) return 20;
+    if (job.status === BookingStatus.CANCELLED) return 30;
+    return 12;
+};
+
+const getFinanceStatusRank = (job: Booking) => {
+    if (invoiceWorkStatuses.includes(job.status)) return 0;
+    if ([BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED].includes(job.status)) return 1;
+    if (job.status === BookingStatus.SESSION_COMPLETED) return 2;
+    if (job.status === BookingStatus.INVOICED) return 3;
+    if (job.status === BookingStatus.PAID) return 8;
+    if (job.status === BookingStatus.CANCELLED) return 9;
+    return 5;
+};
+
+const getComparableDate = (value?: unknown) => {
+    const raw = typeof value === 'string' ? value : '';
+    const parsed = raw ? new Date(raw).getTime() : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getFinanceDate = (job: Booking) => (
+    getComparableDate((job as any).invoiceDate)
+    || getComparableDate((job as any).invoicedAt)
+    || getComparableDate((job as any).paidAt)
+    || getComparableDate((job as any).timesheetSubmittedAt)
+    || getComparableDate((job as any).timesheetVerifiedAt)
+    || getComparableDate((job as any).updatedAt)
+    || getComparableDate(job.date)
+);
+
 const getNextAction = (job: Booking) => {
     if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(job.status)) return 'Assign interpreter';
     if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(job.status) && !job.interpreterId) return 'Assign interpreter';
@@ -151,6 +270,12 @@ const getNextAction = (job: Booking) => {
 const isTranslationJob = (job: Booking) => job.serviceCategory === ServiceCategory.TRANSLATION;
 
 const getProfessionalLabel = (job: Booking) => isTranslationJob(job) ? 'Translator' : 'Interpreter';
+
+const applyServiceScope = (jobs: Booking[], scope: ServiceScope) => {
+    if (scope === 'translation') return jobs.filter(isTranslationJob);
+    if (scope === 'interpreting') return jobs.filter(job => !isTranslationJob(job));
+    return jobs;
+};
 
 const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
     switch (filter) {
@@ -179,12 +304,287 @@ const applyQuickFilter = (jobs: Booking[], filter: QuickFilter) => {
     }
 };
 
+const getDefaultSortForView = (workspace: BookingWorkspace, viewId: string, sortBy?: string): { field: SortField; direction: 'asc' | 'desc' } => {
+    if (workspace === 'finance') {
+        if (viewId === 'fin-paid-jobs' || viewId === 'fin-profit-review' || sortBy === 'dateDesc') {
+            return { field: 'date', direction: 'desc' };
+        }
+        return { field: 'financePriority', direction: 'asc' };
+    }
+
+    if (viewId === 'sys-date-time' || viewId === 'sys-today-tomorrow') {
+        return { field: 'date', direction: 'asc' };
+    }
+
+    if (viewId === 'sys-all' || viewId === 'sys-status-date') {
+        return { field: 'operationalPriority', direction: 'asc' };
+    }
+
+    if (sortBy === 'dateDesc') return { field: 'date', direction: 'desc' };
+    if (sortBy === 'client') return { field: 'client', direction: 'asc' };
+    return { field: 'operationalPriority', direction: 'asc' };
+};
+
 const DetailLabel = ({ label, value }: { label: string; value: React.ReactNode }) => (
     <div>
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{label}</p>
         <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{value}</div>
     </div>
 );
+
+interface JobsCalendarProps {
+    jobs: Booking[];
+    workspace: BookingWorkspace;
+    viewMode: CalendarViewMode;
+    cursorDate: Date;
+    onViewModeChange: (mode: CalendarViewMode) => void;
+    onCursorChange: (date: Date) => void;
+    onOpenJob: (job: Booking) => void;
+    getCompanyName: (job: Booking) => string;
+}
+
+const JobsCalendar = ({
+    jobs,
+    workspace,
+    viewMode,
+    cursorDate,
+    onViewModeChange,
+    onCursorChange,
+    onOpenJob,
+    getCompanyName,
+}: JobsCalendarProps) => {
+    const [expandedDay, setExpandedDay] = useState<string | null>(null);
+    const today = startOfLocalDay(new Date());
+    const visibleStart = viewMode === 'month' ? getMonthGridStart(cursorDate) : getWeekStart(cursorDate);
+    const visibleDays = Array.from({ length: viewMode === 'month' ? 42 : 7 }, (_, index) => addDays(visibleStart, index));
+    const visibleDayKeys = new Set(visibleDays.map(getDateKey));
+    const monthLabel = viewMode === 'month'
+        ? cursorDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+        : `${visibleDays[0].toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${visibleDays[6].toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+
+    const jobsByDay = useMemo(() => {
+        const groups = new Map<string, Booking[]>();
+        jobs.forEach(job => {
+            const date = getCalendarDate(job, workspace);
+            if (!date) return;
+            const key = getDateKey(startOfLocalDay(date));
+            if (!visibleDayKeys.has(key)) return;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(job);
+        });
+        groups.forEach(rows => rows.sort((a, b) => getTimeLabel(a).localeCompare(getTimeLabel(b)) || String(a.displayRef || a.jobNumber || a.bookingRef || a.id).localeCompare(String(b.displayRef || b.jobNumber || b.bookingRef || b.id), undefined, { numeric: true })));
+        return groups;
+    }, [jobs, workspace, visibleDayKeys]);
+
+    const statusSummary = useMemo(() => {
+        const counts = new Map<string, number>();
+        jobs.forEach(job => counts.set(job.status, (counts.get(job.status) || 0) + 1));
+        return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    }, [jobs]);
+
+    const weekScale = useMemo(() => {
+        const weekJobs = visibleDays.flatMap(day => jobsByDay.get(getDateKey(day)) || []);
+        if (weekJobs.length === 0) {
+            return { startHour: 8, endHour: 18, hours: Array.from({ length: 11 }, (_, index) => 8 + index) };
+        }
+        const earliest = Math.min(...weekJobs.map(getTimeMinutes));
+        const latest = Math.max(...weekJobs.map(job => getTimeMinutes(job) + getDurationForCalendar(job)));
+        const startHour = Math.max(6, Math.min(8, Math.floor(earliest / 60)));
+        const endHour = Math.min(23, Math.max(18, Math.ceil(latest / 60)));
+        return {
+            startHour,
+            endHour,
+            hours: Array.from({ length: Math.max(1, endHour - startHour + 1) }, (_, index) => startHour + index),
+        };
+    }, [jobsByDay, visibleDays]);
+
+    const moveCalendar = (direction: -1 | 1) => {
+        const next = new Date(cursorDate);
+        if (viewMode === 'month') next.setMonth(cursorDate.getMonth() + direction);
+        else next.setDate(cursorDate.getDate() + (direction * 7));
+        onCursorChange(next);
+        setExpandedDay(null);
+    };
+
+    const renderEvent = (job: Booking, compact = false) => {
+        const reference = job.displayRef || job.jobNumber || job.bookingRef || job.id.slice(0, 8);
+        const service = isTranslationJob(job) ? 'Translation' : 'Interpreting';
+        return (
+            <button
+                key={job.id}
+                type="button"
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenJob(job);
+                }}
+                className={`w-full rounded border px-2 py-1 text-left text-xs shadow-sm transition hover:brightness-95 ${getCalendarTone(job)} ${compact ? 'h-full min-h-9' : ''}`}
+                title={`${reference} - ${getCompanyName(job)} - ${service}`}
+            >
+                <span className="block truncate font-black">{getTimeLabel(job)} {reference}</span>
+                {!compact && <span className="block truncate opacity-80">{getCompanyName(job)}</span>}
+            </button>
+        );
+    };
+
+    return (
+        <div className="flex min-h-0 flex-1 flex-col bg-white dark:bg-slate-950">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-lg font-black text-slate-950 dark:text-white">{monthLabel}</h2>
+                        <p className="text-xs font-semibold text-slate-500">{jobs.length.toLocaleString('en-GB')} filtered jobs on this calendar context</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button size="sm" variant="ghost" icon={ChevronLeft} onClick={() => moveCalendar(-1)} aria-label="Previous calendar period">Prev</Button>
+                        <Button size="sm" variant="ghost" icon={ChevronRight} iconPosition="right" onClick={() => moveCalendar(1)} aria-label="Next calendar period">Next</Button>
+                        <Button size="sm" variant="secondary" icon={CalendarDays} onClick={() => { onCursorChange(new Date()); setExpandedDay(null); }}>Today</Button>
+                        <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-800 dark:bg-slate-950">
+                            {(['month', 'week'] as CalendarViewMode[]).map(mode => (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    onClick={() => {
+                                        onViewModeChange(mode);
+                                        setExpandedDay(null);
+                                    }}
+                                    className={`rounded px-3 py-1.5 text-xs font-black uppercase tracking-wide ${viewMode === mode ? 'bg-white text-blue-700 shadow-sm dark:bg-slate-800 dark:text-blue-300' : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'}`}
+                                >
+                                    {mode}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+                {statusSummary.length > 0 && (
+                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                        {statusSummary.map(([status, count]) => (
+                            <span key={status} className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                                {status.replaceAll('_', ' ')} <span className="ml-1 text-slate-400">{count}</span>
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {viewMode === 'month' ? (
+                <div className="min-h-0 flex-1 overflow-auto">
+                    <div className="grid min-w-[980px] grid-cols-7 border-b border-slate-200 bg-white text-xs font-bold text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+                        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => <div key={day} className="px-3 py-2 text-center">{day}</div>)}
+                    </div>
+                    <div className="grid min-w-[980px] grid-cols-7">
+                        {visibleDays.map(day => {
+                            const key = getDateKey(day);
+                            const dayJobs = jobsByDay.get(key) || [];
+                            const isCurrentMonth = day.getMonth() === cursorDate.getMonth();
+                            const isToday = getDateKey(day) === getDateKey(today);
+                            return (
+                                <div
+                                    key={key}
+                                    className={`relative min-h-[118px] border-b border-r border-slate-200 p-2 dark:border-slate-800 ${isCurrentMonth ? 'bg-white dark:bg-slate-950' : 'bg-slate-50 text-slate-400 dark:bg-slate-900/60'} ${isToday ? 'ring-2 ring-inset ring-blue-500' : ''}`}
+                                >
+                                    <div className="mb-2 flex items-center justify-between">
+                                        <span className={`text-sm font-bold ${isToday ? 'rounded-full bg-blue-600 px-2 py-0.5 text-white' : 'text-slate-700 dark:text-slate-200'}`}>{day.getDate()}</span>
+                                        {dayJobs.length > 0 && <span className="text-[10px] font-black text-slate-400">{dayJobs.length}</span>}
+                                    </div>
+                                    <div className="space-y-1">
+                                        {dayJobs.slice(0, 3).map(job => renderEvent(job))}
+                                        {dayJobs.length > 3 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setExpandedDay(key)}
+                                                className="text-xs font-bold text-blue-700 hover:underline dark:text-blue-300"
+                                            >
+                                                +{dayJobs.length - 3} more
+                                            </button>
+                                        )}
+                                    </div>
+                                    {expandedDay === key && (
+                                        <div className="absolute left-3 top-10 z-[70] w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+                                            <div className="mb-2 flex items-center justify-between">
+                                                <p className="font-black text-slate-900 dark:text-white">{day.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                                                <button type="button" onClick={() => setExpandedDay(null)} className="rounded p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={14} /></button>
+                                            </div>
+                                            <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                                                {dayJobs.map(job => renderEvent(job))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            ) : (
+                <div className="min-h-0 flex-1 overflow-auto">
+                    <div className="sticky top-0 z-30 grid min-w-[1180px] grid-cols-[64px_repeat(7,minmax(150px,1fr))] border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                        <div className="border-r border-slate-200 dark:border-slate-800" />
+                        {visibleDays.map(day => (
+                            <div key={getDateKey(day)} className={`border-r border-slate-200 px-3 py-3 text-center dark:border-slate-800 ${getDateKey(day) === getDateKey(today) ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}>
+                                <p className="text-xs font-bold uppercase text-slate-400">{day.toLocaleDateString('en-GB', { weekday: 'short' })}</p>
+                                <p className="text-xl font-black text-slate-900 dark:text-white">{day.getDate()}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <div
+                        className="grid min-w-[1180px] grid-cols-[64px_repeat(7,minmax(150px,1fr))]"
+                        style={{ height: `${Math.max(560, (weekScale.endHour - weekScale.startHour) * 72)}px` }}
+                    >
+                        <div className="relative border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                            {weekScale.hours.slice(0, -1).map(hour => (
+                                <div
+                                    key={hour}
+                                    className="absolute left-0 right-0 border-t border-slate-200 px-2 pt-1 text-right text-[10px] font-semibold text-slate-400 dark:border-slate-800"
+                                    style={{ top: `${(hour - weekScale.startHour) * 72}px` }}
+                                >
+                                    {String(hour).padStart(2, '0')}:00
+                                </div>
+                            ))}
+                        </div>
+                        {visibleDays.map(day => {
+                            const key = getDateKey(day);
+                            const dayJobs = jobsByDay.get(key) || [];
+                            const dayHeight = Math.max(560, (weekScale.endHour - weekScale.startHour) * 72);
+                            return (
+                                <div key={key} className={`relative border-r border-slate-200 bg-slate-50/40 dark:border-slate-800 dark:bg-slate-950 ${getDateKey(day) === getDateKey(today) ? 'bg-blue-50/40 dark:bg-blue-950/10' : ''}`}>
+                                    {weekScale.hours.slice(0, -1).map(hour => (
+                                        <div
+                                            key={hour}
+                                            className="absolute left-0 right-0 border-t border-slate-200 dark:border-slate-800"
+                                            style={{ top: `${(hour - weekScale.startHour) * 72}px` }}
+                                        />
+                                    ))}
+                                    {dayJobs.length === 0 && (
+                                        <p className="absolute left-3 top-4 text-xs font-semibold text-slate-400">No jobs</p>
+                                    )}
+                                    {dayJobs.map((job, index) => {
+                                        const startMinutes = getTimeMinutes(job);
+                                        const top = Math.max(0, ((startMinutes - (weekScale.startHour * 60)) / 60) * 72);
+                                        const height = Math.max(34, (getDurationForCalendar(job) / 60) * 72);
+                                        const offset = (index % 3) * 6;
+                                        return (
+                                            <div
+                                                key={job.id}
+                                                className="absolute left-2 right-2"
+                                                style={{
+                                                    top: `${Math.min(top, Math.max(0, dayHeight - 40))}px`,
+                                                    height: `${Math.min(height, Math.max(34, dayHeight - top - 4))}px`,
+                                                    transform: `translateX(${offset}px)`,
+                                                    zIndex: 10 + (index % 8),
+                                                }}
+                                            >
+                                                {renderEvent(job, true)}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const ToolButton = ({
     icon: Icon,
@@ -195,7 +595,7 @@ const ToolButton = ({
     icon: React.ElementType;
     label: string;
     active?: boolean;
-    onClick: () => void;
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) => (
     <button
         onClick={onClick}
@@ -253,7 +653,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
     const [financeLane, setFinanceLane] = useState<FinanceLane>('clientBilling');
-    const [sortField, setSortField] = useState<SortField>('date');
+    const [boardMode, setBoardMode] = useState<BoardMode>('table');
+    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('month');
+    const [calendarCursorDate, setCalendarCursorDate] = useState(() => new Date());
+    const [sortField, setSortField] = useState<SortField>(workspace === 'finance' ? 'financePriority' : 'operationalPriority');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
@@ -276,6 +679,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     });
     const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
     const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel>(null);
+    const [toolPanelPosition, setToolPanelPosition] = useState<PopoverPosition | null>(null);
     const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
     const [isAllocationOpen, setIsAllocationOpen] = useState(false);
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -287,9 +691,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [viewSearchQuery, setViewSearchQuery] = useState('');
     const viewsMenuRef = useRef<HTMLDivElement>(null);
     const toolsRef = useRef<HTMLDivElement>(null);
-    const gridScrollRef = useRef<HTMLDivElement>(null);
+    const toolPanelRef = useRef<HTMLDivElement>(null);
     const isApplyingStoredLayoutRef = useRef(false);
-    const scrollAnimationRef = useRef<number | null>(null);
 
     useEffect(() => {
         isApplyingStoredLayoutRef.current = true;
@@ -327,12 +730,38 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         });
     };
 
+    const openToolPanel = (panel: ToolPanel, event: React.MouseEvent<HTMLButtonElement>, width = 288, forceOpen = false) => {
+        if (activeToolPanel === panel && !forceOpen) {
+            setActiveToolPanel(null);
+            setToolPanelPosition(null);
+            return;
+        }
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        const margin = 12;
+        const left = Math.min(
+            Math.max(rect.left, margin),
+            Math.max(margin, window.innerWidth - width - margin)
+        );
+        setToolPanelPosition({
+            top: rect.bottom + 8,
+            left,
+            width,
+        });
+        setActiveToolPanel(panel);
+    };
+
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
             const target = e.target as Node;
             if (viewsMenuRef.current && !viewsMenuRef.current.contains(target)) setIsViewsMenuOpen(false);
-            if (toolsRef.current && !toolsRef.current.contains(target)) {
+            if (
+                toolsRef.current
+                && !toolsRef.current.contains(target)
+                && !toolPanelRef.current?.contains(target)
+            ) {
                 setActiveToolPanel(null);
+                setToolPanelPosition(null);
             }
             if (target instanceof Element && activeColumnMenu) {
                 const activeColumn = target.closest(`[data-column-id="${activeColumnMenu}"]`);
@@ -349,6 +778,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             if (event.key === 'Escape') {
                 setActiveColumnMenu(null);
                 setActiveToolPanel(null);
+                setToolPanelPosition(null);
                 setIsViewsMenuOpen(false);
             }
         };
@@ -356,22 +786,12 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         return () => document.removeEventListener('keydown', handleEscape);
     }, []);
 
-    const syncFrozenScrollOffset = (scrollLeft = gridScrollRef.current?.scrollLeft || 0) => {
-        gridScrollRef.current?.style.setProperty('--grid-scroll-left', `${scrollLeft}px`);
-    };
-
-    useEffect(() => {
-        syncFrozenScrollOffset();
-    }, [activeViewId, pinnedColumns.length]);
-
-    useEffect(() => () => {
-        if (scrollAnimationRef.current !== null) cancelAnimationFrame(scrollAnimationRef.current);
-    }, []);
-
     useEffect(() => {
         const params = new URLSearchParams(location.search);
         const requestedView = params.get('view');
         const requestedLane = params.get('lane') as FinanceLane | null;
+        const requestedMode = params.get('mode');
+        const requestedCalendarView = params.get('calendar');
         const requestedClientId = params.get('clientId');
         const requestedInterpreterId = params.get('interpreterId');
 
@@ -389,13 +809,43 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             setCurrentPage(1);
         }
 
+        setBoardMode(requestedMode === 'calendar' ? 'calendar' : 'table');
+        if (requestedCalendarView === 'week' || requestedCalendarView === 'month') {
+            setCalendarViewMode(requestedCalendarView);
+        }
+
         if (requestedClientId || requestedInterpreterId) {
             setQuickFilter('ALL');
             setCurrentPage(1);
         }
     }, [location.search, views, setActiveViewId, isFinanceWorkspace]);
 
+    useEffect(() => {
+        const nextSort = getDefaultSortForView(workspace, activeView.id, activeView.sortBy);
+        setSortField(nextSort.field);
+        setSortDirection(nextSort.direction);
+    }, [workspace, activeView.id, activeView.sortBy]);
+
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
+    const setWorkspaceBoardMode = (nextMode: BoardMode) => {
+        const params = new URLSearchParams(location.search);
+        if (nextMode === 'calendar') {
+            params.set('mode', 'calendar');
+            params.set('calendar', calendarViewMode);
+        } else {
+            params.delete('mode');
+            params.delete('calendar');
+        }
+        navigate(`${workspacePath}${params.toString() ? `?${params.toString()}` : ''}`, { replace: true });
+        setBoardMode(nextMode);
+    };
+    const setWorkspaceCalendarView = (nextView: CalendarViewMode) => {
+        const params = new URLSearchParams(location.search);
+        params.set('mode', 'calendar');
+        params.set('calendar', nextView);
+        navigate(`${workspacePath}?${params.toString()}`, { replace: true });
+        setCalendarViewMode(nextView);
+    };
     const getColumnFilterValue = (job: Booking, columnId: string) => {
         switch (columnId) {
             case 'jobNumber':
@@ -835,10 +1285,13 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         return match ? Number(match[1]) : 120;
     };
     const getColumnWidthPx = (column: GridColumn) => columnWidths[column.id] || getDefaultColumnWidthPx(column);
-    const getColumnTrack = (column: GridColumn) => pinnedColumns.includes(column.id)
-        ? `${getColumnWidthPx(column)}px`
-        : columnWidths[column.id] ? `${columnWidths[column.id]}px` : column.width;
+    const getColumnTrack = (column: GridColumn) => `${getColumnWidthPx(column)}px`;
     const gridTemplateColumns = `44px ${displayColumns.map(getColumnTrack).join(' ')}`;
+    const gridRowStyle: React.CSSProperties = {
+        gridTemplateColumns,
+        width: 'max-content',
+        minWidth: '100%',
+    };
     const gridMinWidth = isFinanceWorkspace
         ? 'min-w-[1280px]'
         : hiddenColumns.has('location') ? 'min-w-[1040px]' : 'min-w-[1170px]';
@@ -859,15 +1312,24 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         saveGridLayoutPreference(columnWidths, columnOrder, []);
     };
 
+    const getFrozenLeftOffset = (columnId: string) => {
+        const columnIndex = displayColumns.findIndex(column => column.id === columnId);
+        if (columnIndex === -1) return 44;
+        return 44 + displayColumns
+            .slice(0, columnIndex)
+            .filter(column => pinnedColumns.includes(column.id))
+            .reduce((sum, column) => sum + getColumnWidthPx(column), 0);
+    };
+
     const getFrozenCellStyle = (columnId: string): React.CSSProperties => (
         pinnedColumns.includes(columnId)
-            ? { transform: 'translate3d(var(--grid-scroll-left, 0px), 0, 0)', willChange: 'transform' }
+            ? { position: 'sticky', left: `${getFrozenLeftOffset(columnId)}px` }
             : {}
     );
 
     const getFrozenIndexStyle = (): React.CSSProperties => ({
-        transform: 'translate3d(var(--grid-scroll-left, 0px), 0, 0)',
-        willChange: 'transform',
+        position: 'sticky',
+        left: 0,
     });
 
     const startColumnResize = (event: React.MouseEvent, column: GridColumn) => {
@@ -981,13 +1443,34 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
 
     const clientScopeId = useMemo(() => new URLSearchParams(location.search).get('clientId'), [location.search]);
     const interpreterScopeId = useMemo(() => new URLSearchParams(location.search).get('interpreterId'), [location.search]);
+    const serviceScope = useMemo<ServiceScope>(() => {
+        const raw = new URLSearchParams(location.search).get('service');
+        return raw === 'interpreting' || raw === 'translation' ? raw : 'all';
+    }, [location.search]);
 
-    const searchFilteredBookings = useMemo(() => {
-        const scopedBookings = bookings.filter(b => {
+    const scopedBookings = useMemo(() => {
+        const relationshipScoped = bookings.filter(b => {
             if (clientScopeId && b.clientId !== clientScopeId) return false;
             if (interpreterScopeId && b.interpreterId !== interpreterScopeId) return false;
             return true;
         });
+        return applyServiceScope(relationshipScoped, serviceScope);
+    }, [bookings, clientScopeId, interpreterScopeId, serviceScope]);
+
+    const serviceScopeCounts = useMemo(() => {
+        const relationshipScoped = bookings.filter(b => {
+            if (clientScopeId && b.clientId !== clientScopeId) return false;
+            if (interpreterScopeId && b.interpreterId !== interpreterScopeId) return false;
+            return true;
+        });
+        return {
+            all: relationshipScoped.length,
+            interpreting: applyServiceScope(relationshipScoped, 'interpreting').length,
+            translation: applyServiceScope(relationshipScoped, 'translation').length,
+        };
+    }, [bookings, clientScopeId, interpreterScopeId]);
+
+    const searchFilteredBookings = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return scopedBookings;
         return scopedBookings.filter(b => (
@@ -1005,7 +1488,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             b.interpreterName?.toLowerCase().includes(query) ||
             b.postcode?.toLowerCase().includes(query)
         ));
-    }, [bookings, clientScopeId, interpreterScopeId, searchQuery]);
+    }, [scopedBookings, searchQuery]);
 
     const scopedClientName = useMemo(() => {
         if (!clientScopeId) return '';
@@ -1079,17 +1562,34 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         return labels[quickFilter];
     }, [quickFilter]);
 
+    const serviceScopeLabel = serviceScope === 'translation'
+        ? 'Translation'
+        : serviceScope === 'interpreting'
+            ? 'Interpreting'
+            : 'All services';
+
+    const clearServiceScope = () => {
+        const params = new URLSearchParams(location.search);
+        params.delete('service');
+        navigate(`${workspacePath}${params.toString() ? `?${params.toString()}` : ''}`, { replace: true });
+    };
+
     const columnFilterColumn = useMemo(
         () => columnFilter ? orderedColumns.find(column => column.id === columnFilter.columnId) : null,
         [columnFilter, orderedColumns]
     );
 
-    const hasActiveGridFilters = Boolean(searchQuery.trim() || quickFilter !== 'ALL' || columnFilter?.value.trim());
+    const hasActiveGridFilters = Boolean(searchQuery.trim() || quickFilter !== 'ALL' || columnFilter?.value.trim() || serviceScope !== 'all');
 
     const clearGridFilters = () => {
         setSearchQuery('');
         setQuickFilter('ALL');
         setColumnFilter(null);
+        if (serviceScope !== 'all') {
+            const params = new URLSearchParams(location.search);
+            params.delete('service');
+            navigate(`${workspacePath}${params.toString() ? `?${params.toString()}` : ''}`, { replace: true });
+        }
         setCurrentPage(1);
     };
 
@@ -1102,6 +1602,28 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     }, [laneFilteredBookings, quickFilter, columnFilter]);
 
     const sortedBookings = useMemo(() => {
+        if (sortField === 'operationalPriority') {
+            return [...filteredBookings].sort((a, b) => {
+                const rank = getOperationalStatusRank(a) - getOperationalStatusRank(b);
+                if (rank !== 0) return sortDirection === 'asc' ? rank : -rank;
+                const bucket = getOperationalDateBucket(a) - getOperationalDateBucket(b);
+                if (bucket !== 0) return sortDirection === 'asc' ? bucket : -bucket;
+                const date = getComparableDate(a.date) - getComparableDate(b.date);
+                if (date !== 0) return date;
+                return String(a.displayRef || a.jobNumber || a.bookingRef || a.id).localeCompare(String(b.displayRef || b.jobNumber || b.bookingRef || b.id), undefined, { numeric: true, sensitivity: 'base' });
+            });
+        }
+
+        if (sortField === 'financePriority') {
+            return [...filteredBookings].sort((a, b) => {
+                const rank = getFinanceStatusRank(a) - getFinanceStatusRank(b);
+                if (rank !== 0) return sortDirection === 'asc' ? rank : -rank;
+                const date = getFinanceDate(a) - getFinanceDate(b);
+                if (date !== 0) return sortDirection === 'asc' ? date : -date;
+                return getCompanyName(a).localeCompare(getCompanyName(b), undefined, { numeric: true, sensitivity: 'base' });
+            });
+        }
+
         const column = columns.find(c => {
             if (sortField === 'bookingRef') return c.id === 'jobNumber';
             if (sortField === 'date') return c.id === 'bookedFor';
@@ -1118,7 +1640,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             const result = String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: 'base' });
             return sortDirection === 'asc' ? result : -result;
         });
-    }, [filteredBookings, columns, sortField, sortDirection]);
+    }, [filteredBookings, columns, sortField, sortDirection, getClientCompany]);
 
     const financeSummary = useMemo(() => {
         const totalClientCharge = sortedBookings.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0);
@@ -1530,7 +2052,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const ColumnMenu = ({ column }: { column: GridColumn }) => (
         <div data-column-menu="true" className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <button
-                onClick={() => { setActiveToolPanel('hide'); setActiveColumnMenu(null); }}
+                onClick={(event) => { openToolPanel('hide', event, 288, true); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <Pencil size={15} /> Field settings
@@ -1565,9 +2087,9 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 <Group size={15} /> Group by this field
             </button>
             <button
-                onClick={() => {
+                onClick={(event) => {
                     setColumnFilter(current => current?.columnId === column.id ? current : { columnId: column.id, value: '' });
-                    setActiveToolPanel('filter');
+                    openToolPanel('filter', event, 320, true);
                     setActiveColumnMenu(null);
                 }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -1618,9 +2140,29 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const ToolPanelContent = () => {
         if (!activeToolPanel) return null;
 
+        const panelClassName = "rounded-lg border border-slate-200 bg-white p-3 shadow-2xl ring-1 ring-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:ring-white/10";
+        const renderPanel = (content: React.ReactNode, width = toolPanelPosition?.width || 288) => {
+            if (!toolPanelPosition) return null;
+            return createPortal(
+                <div
+                    ref={toolPanelRef}
+                    data-tool-panel="true"
+                    className={`${panelClassName} fixed z-[1000] max-h-[calc(100dvh-7rem)] overflow-auto`}
+                    style={{
+                        top: toolPanelPosition.top,
+                        left: Math.min(toolPanelPosition.left, Math.max(12, window.innerWidth - width - 12)),
+                        width,
+                    }}
+                >
+                    {content}
+                </div>,
+                document.body
+            );
+        };
+
         if (activeToolPanel === 'hide') {
-            return (
-                <div className="absolute left-0 top-full z-50 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            return renderPanel(
+                <>
                     <p className="mb-2 text-xs font-semibold text-slate-500">Visible fields</p>
                     <div className="space-y-1">
                         {orderedColumns.filter(c => !c.primary).map(column => (
@@ -1634,7 +2176,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             </button>
                         ))}
                     </div>
-                </div>
+                </>,
+                288
             );
         }
 
@@ -1663,9 +2206,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 ['TRANSLATIONS', 'Translations', quickCounts.TRANSLATIONS],
                 ['CANCELLED', 'Cancelled', quickCounts.CANCELLED],
             ];
-            const quickFilterOptions = isFinanceWorkspace ? financeQuickFilterOptions : operationsQuickFilterOptions;
-            return (
-                <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            const quickFilterOptions = (isFinanceWorkspace ? financeQuickFilterOptions : operationsQuickFilterOptions)
+                .filter(([value]) => serviceScope === 'all' || (value !== 'INTERPRETING' && value !== 'TRANSLATIONS'));
+            return renderPanel(
+                <>
                     {filteredColumn && (
                         <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 p-2 dark:border-blue-900/50 dark:bg-blue-950/30">
                             <div className="mb-2 flex items-center justify-between gap-2">
@@ -1722,14 +2266,15 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             </button>
                         ))}
                     </div>
-                </div>
+                </>,
+                320
             );
         }
 
         if (activeToolPanel === 'group') {
             const options: Array<[GroupField, string]> = [['none', 'No grouping'], ['view', 'Use view grouping'], ['status', 'Status'], ['date', 'Booked date'], ['client', 'Client'], ['interpreter', 'Interpreter']];
-            return (
-                <div className="absolute left-0 top-full z-50 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            return renderPanel(
+                <>
                     <p className="mb-2 text-xs font-semibold text-slate-500">Group records</p>
                     <div className="space-y-1">
                         {options.map(([value, label]) => (
@@ -1743,13 +2288,24 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             </button>
                         ))}
                     </div>
-                </div>
+                </>,
+                288
             );
         }
 
-        const sortOptions: Array<[SortField, string]> = [['date', 'Booked date'], ['bookingRef', 'Job number'], ['status', 'Status'], ['client', 'Client'], ['language', 'Language'], ['interpreter', 'Interpreter']];
-        return (
-            <div className="absolute left-0 top-full z-50 mt-2 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+        const sortOptions: Array<[SortField, string]> = [
+            ...(isFinanceWorkspace
+                ? [[ 'financePriority', 'Billing priority' ] as [SortField, string]]
+                : [[ 'operationalPriority', 'Operational priority' ] as [SortField, string]]),
+            ['date', 'Booked date'] as [SortField, string],
+            ['bookingRef', 'Job number'] as [SortField, string],
+            ['status', 'Status'] as [SortField, string],
+            ['client', 'Client'] as [SortField, string],
+            ['language', 'Language'] as [SortField, string],
+            ['interpreter', 'Interpreter'] as [SortField, string]
+        ];
+        return renderPanel(
+            <>
                 <p className="mb-2 text-xs font-semibold text-slate-500">Sort records</p>
                 <div className="space-y-2">
                     <select
@@ -1764,7 +2320,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         <button onClick={() => setSortDirection('desc')} className={`rounded-md border px-3 py-2 text-sm font-semibold ${sortDirection === 'desc' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-800'}`}>Descending</button>
                     </div>
                 </div>
-            </div>
+            </>,
+            288
         );
     };
 
@@ -1784,12 +2341,13 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         const row = (
             <div
                 className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${rowBgClass}`}
-                style={{ gridTemplateColumns }}
+                style={gridRowStyle}
                 onClick={() => handleRowClick(job)}
                 onDoubleClick={() => openJobDetails(job)}
             >
                 <div
-                    className="relative z-40 flex items-center justify-center border-r border-slate-200 bg-slate-50 text-xs text-slate-500 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
+                    data-frozen-cell="true"
+                    className="relative z-20 flex items-center justify-center border-r border-slate-200 bg-slate-50 text-xs text-slate-500 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
                     style={getFrozenIndexStyle()}
                 >
                     <button
@@ -1807,7 +2365,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 {displayColumns.map(column => (
                     <div
                         key={column.id}
-                        className={`flex min-w-0 items-center overflow-hidden border-r border-slate-200 px-3 py-2 dark:border-slate-800 ${pinnedColumns.includes(column.id) ? `relative z-30 ${frozenCellBgClass} shadow-[1px_0_0_rgba(148,163,184,0.45)]` : ''}`}
+                        data-frozen-cell={pinnedColumns.includes(column.id) ? 'true' : undefined}
+                        className={`flex min-w-0 items-center overflow-hidden border-r border-slate-200 px-3 py-2 dark:border-slate-800 ${pinnedColumns.includes(column.id) ? `relative z-10 ${frozenCellBgClass} shadow-[1px_0_0_rgba(148,163,184,0.45)]` : ''}`}
                         style={getFrozenCellStyle(column.id)}
                     >
                         {column.render(job)}
@@ -1824,7 +2383,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     };
 
     return (
-        <div className="flex min-h-[calc(100dvh-3.5rem)] min-w-0 bg-white dark:bg-slate-950">
+        <div className="flex h-full min-w-0 overflow-hidden bg-white dark:bg-slate-950">
             <WorkspaceViewSidebar
                 activeView={activeView}
                 views={views}
@@ -1842,8 +2401,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 getViewCount={(view) => filterBookings(searchFilteredBookings, view).length}
             />
 
-            <section className="flex min-w-0 flex-1 flex-col">
-            <div ref={toolsRef} className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
+            <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div ref={toolsRef} data-jobs-toolbar="true" className="relative z-[90] shrink-0 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
                 <div className="flex flex-col gap-2 border-b border-slate-200 p-2 dark:border-slate-800 xl:flex-row xl:items-center">
                     <div className="relative" ref={viewsMenuRef}>
                         <WorkspaceViewMenu
@@ -1879,15 +2438,31 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         <Button onClick={refresh} icon={RefreshCw} variant="ghost" size="sm">Refresh</Button>
                         {isFinanceWorkspace && <Button onClick={() => navigate('/admin/billing/overview')} icon={PoundSterling} variant="ghost" size="sm">Overview</Button>}
                         {!isFinanceWorkspace && <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">New</Button>}
-                        <ToolButton icon={EyeOff} label="Hide fields" active={activeToolPanel === 'hide'} onClick={() => setActiveToolPanel(activeToolPanel === 'hide' ? null : 'hide')} />
-                        <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL' || Boolean(columnFilter)} onClick={() => setActiveToolPanel(activeToolPanel === 'filter' ? null : 'filter')} />
-                        <ToolButton icon={Group} label="Group" active={activeToolPanel === 'group' || groupField !== 'view'} onClick={() => setActiveToolPanel(activeToolPanel === 'group' ? null : 'group')} />
-                        <ToolButton icon={ArrowUpDown} label="Sort" active={activeToolPanel === 'sort'} onClick={() => setActiveToolPanel(activeToolPanel === 'sort' ? null : 'sort')} />
+                        <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-800 dark:bg-slate-950">
+                            <button
+                                type="button"
+                                onClick={() => setWorkspaceBoardMode('table')}
+                                className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-black ${boardMode === 'table' ? 'bg-white text-blue-700 shadow-sm dark:bg-slate-800 dark:text-blue-300' : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'}`}
+                            >
+                                <List size={14} /> Table
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setWorkspaceBoardMode('calendar')}
+                                className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-black ${boardMode === 'calendar' ? 'bg-white text-blue-700 shadow-sm dark:bg-slate-800 dark:text-blue-300' : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'}`}
+                            >
+                                <CalendarDays size={14} /> Calendar
+                            </button>
+                        </div>
+                        <ToolButton icon={EyeOff} label="Hide fields" active={activeToolPanel === 'hide'} onClick={(event) => openToolPanel('hide', event, 288)} />
+                        <ToolButton icon={Filter} label="Filter" active={activeToolPanel === 'filter' || quickFilter !== 'ALL' || Boolean(columnFilter) || serviceScope !== 'all'} onClick={(event) => openToolPanel('filter', event, 320)} />
+                        <ToolButton icon={Group} label="Group" active={activeToolPanel === 'group' || groupField !== 'view'} onClick={(event) => openToolPanel('group', event, 288)} />
+                        <ToolButton icon={ArrowUpDown} label="Sort" active={activeToolPanel === 'sort'} onClick={(event) => openToolPanel('sort', event, 288)} />
                         <ToolButton icon={Maximize2} label={clientScopeId || interpreterScopeId ? 'All jobs' : 'Open'} onClick={() => navigate(workspacePath)} />
                         <ToolPanelContent />
                     </div>
 
-                    <div className="relative min-w-0 flex-1 xl:order-2">
+                    <div data-jobs-search="true" className="relative min-w-0 flex-1 xl:order-2">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                             type="text"
@@ -1917,7 +2492,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             </div>
 
             {hasActiveGridFilters && (
-                <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900">
+                <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900">
                     <span className="font-black uppercase tracking-wide text-slate-400">Active filters</span>
                     {searchQuery.trim() && (
                         <button
@@ -1945,6 +2520,16 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                             <X size={12} />
                         </button>
                     )}
+                    {serviceScope !== 'all' && (
+                        <button
+                            type="button"
+                            onClick={clearServiceScope}
+                            className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 hover:border-emerald-300 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200"
+                        >
+                            Service: {serviceScopeLabel} ({serviceScopeCounts[serviceScope]})
+                            <X size={12} />
+                        </button>
+                    )}
                     {columnFilter?.value.trim() && columnFilterColumn && (
                         <button
                             type="button"
@@ -1969,7 +2554,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             )}
 
             {(clientScopeId || interpreterScopeId) && (
-                <div className="flex items-center justify-between gap-3 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
+                <div className="shrink-0 flex items-center justify-between gap-3 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
                     <div className="flex items-center gap-2 font-semibold">
                         {clientScopeId ? <Building2 size={14} /> : <User size={14} />}
                         Showing {clientScopeId ? 'client jobs' : 'professional jobs'} for <span className="font-black">{clientScopeId ? scopedClientName : scopedInterpreterName}</span>
@@ -1988,27 +2573,33 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 <FinanceSummaryBar lane={financeLane} recordCount={sortedBookings.length} summary={financeSummary} />
             )}
 
-            <div className="min-w-0 overflow-hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            {boardMode === 'calendar' ? (
+                <JobsCalendar
+                    jobs={sortedBookings}
+                    workspace={workspace}
+                    viewMode={calendarViewMode}
+                    cursorDate={calendarCursorDate}
+                    onViewModeChange={setWorkspaceCalendarView}
+                    onCursorChange={setCalendarCursorDate}
+                    onOpenJob={handleRowClick}
+                    getCompanyName={getCompanyName}
+                />
+            ) : (
+            <>
+            <div className="relative z-0 min-h-0 min-w-0 flex-1 isolate overflow-hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                 <div
-                    ref={gridScrollRef}
-                    className="min-w-0 overflow-x-auto overflow-y-visible"
-                    onScroll={(event) => {
-                        const scrollElement = event.currentTarget;
-                        const nextScrollLeft = scrollElement.scrollLeft;
-                        if (scrollAnimationRef.current !== null) cancelAnimationFrame(scrollAnimationRef.current);
-                        scrollAnimationRef.current = requestAnimationFrame(() => {
-                            scrollElement.style.setProperty('--grid-scroll-left', `${nextScrollLeft}px`);
-                            scrollAnimationRef.current = null;
-                        });
-                    }}
+                    data-jobs-grid-scroll="true"
+                    className="h-full min-w-0 overflow-auto overscroll-contain"
                 >
                     <div className={`${gridMinWidth} min-w-full`}>
                         <div
-                            className="grid h-10 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
-                            style={{ gridTemplateColumns }}
+                            data-jobs-grid-header="true"
+                            className="sticky top-0 z-40 grid h-10 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 shadow-[0_1px_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
+                            style={gridRowStyle}
                         >
                             <div
-                                className="relative z-40 flex items-center justify-center border-r border-slate-200 bg-slate-50 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
+                                data-frozen-cell="true"
+                                className="relative z-50 flex items-center justify-center border-r border-slate-200 bg-slate-50 shadow-[1px_0_0_rgba(148,163,184,0.35)] dark:border-slate-800 dark:bg-slate-950"
                                 style={getFrozenIndexStyle()}
                             >
                                 <button
@@ -2028,7 +2619,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                     key={column.id}
                                     data-column-id={column.id}
                                     onMouseDown={(event) => startColumnReorder(event, column)}
-                                    className={`group/header relative flex min-w-0 cursor-grab items-center justify-between gap-2 border-r border-slate-200 px-3 active:cursor-grabbing dark:border-slate-800 ${pinnedColumns.includes(column.id) ? 'z-40 bg-amber-100 shadow-[2px_0_0_rgb(203,213,225)] dark:bg-amber-950 dark:shadow-[2px_0_0_rgb(30,41,59)]' : 'bg-slate-50 dark:bg-slate-950'} ${draggedColumnId === column.id ? 'opacity-45' : ''}`}
+                                    data-frozen-cell={pinnedColumns.includes(column.id) ? 'true' : undefined}
+                                    className={`group/header relative flex min-w-0 cursor-grab items-center justify-between gap-2 border-r border-slate-200 px-3 active:cursor-grabbing dark:border-slate-800 ${pinnedColumns.includes(column.id) ? 'z-50 bg-amber-100 shadow-[2px_0_0_rgb(203,213,225)] dark:bg-amber-950 dark:shadow-[2px_0_0_rgb(30,41,59)]' : 'bg-slate-50 dark:bg-slate-950'} ${draggedColumnId === column.id ? 'opacity-45' : ''}`}
                                     style={getFrozenCellStyle(column.id)}
                                 >
                                     <div className="flex min-w-0 items-center gap-2">
@@ -2100,6 +2692,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                     setCurrentPage(1);
                 }}
             />
+            </>
+            )}
 
             <BulkActionBar
                 selectedIds={selectedIds}

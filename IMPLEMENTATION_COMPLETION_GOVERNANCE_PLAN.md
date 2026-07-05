@@ -50,13 +50,28 @@ Priority: HIGH.
 
 The daily Airtable mirror must not rely on "first 100 records" or any arbitrary record count as the primary sync strategy. For live Mirror Mode, synchronization must be driven by workflow risk:
 
-- [ ] Sync all jobs whose Airtable/platform status is not terminal/paid.
-- [ ] Sync all jobs modified since the last successful sync.
+- [x] Sync all jobs whose Airtable/platform status is not terminal/paid. Backend now supports `OPEN_WORKFLOW` strategy with Airtable server-side formula and safe fallback.
+- [x] Sync all jobs modified since the last successful sync. Backend now supports `UPDATED_SINCE_LAST_SYNC` using Airtable `LAST_MODIFIED_TIME()`.
 - [ ] Sync future jobs, today's jobs and overdue jobs that are not terminal.
-- [ ] Sync invoices/payables linked to any open, recently modified or financially incomplete job.
-- [ ] Treat `PAID` jobs as stable history after first successful sync, except when Airtable `Last Modified` is newer than platform `lastSyncedAt`.
-- [ ] Keep a manual `Full Audit Sync` for weekly/monthly reconciliation and go-live proof.
-- [ ] Replace/clarify the current `100/500/1000/5000 records` control with modes such as `Open workflow`, `Updated since last sync`, `Recent + open`, `Full audit` and `Custom limit`.
+- [x] Sync invoices/payables linked to any open, recently modified or financially incomplete job. Finance tables now use workflow source refs from mirrored active/financially open jobs as pull-through criteria in operational strategies.
+- [x] Treat `PAID` jobs as stable history after first successful sync, except when Airtable `Last Modified` is newer than platform `lastSyncedAt`. Terminal skipped rows now carry `TERMINAL_STABLE_ALREADY_MIRRORED` when fetched and unchanged.
+- [x] Keep a manual `Full Audit Sync` for weekly/monthly reconciliation and go-live proof.
+- [x] Replace/clarify the current `100/500/1000/5000 records` control with modes such as `Open workflow`, `Updated since last sync`, `Recent + open`, `Full audit` and `Custom limit`.
+
+Implementation note 2026-07-04:
+
+- Added `syncStrategy` support to manual callable syncs, maintenance sync and scheduled sync.
+- Added UI strategy selector in Airtable Sync Center. Record count is now only exposed for `Custom limit`.
+- `Open workflow`, `Updated since last sync`, `Recent + open`, `Full audit` and `Custom limit` are now first-class controls.
+- Build verified for app and functions. Browser runtime verification is still pending because the in-app browser automation timed out while loading the route.
+
+Implementation note 2026-07-04, pass 2:
+
+- Added finance pull-through filtering for client invoices, interpreter invoices, translation client invoices and translator invoices.
+- Operational sync strategies now consider active/financially open mirrored job `sourceRecordId` values before pulling finance rows.
+- Sync result exposes `financePullThrough` so the UI can show whether the filter was active and how many finance rows were excluded from the daily cycle.
+- Added explicit terminal skipped reason for unchanged `PAID`/`CANCELLED` rows that are inspected.
+- Build verified for app and functions. Still needs one real Dry Run against Airtable to confirm server-side formulas and finance field-name variants against live table schema.
 
 Acceptance:
 

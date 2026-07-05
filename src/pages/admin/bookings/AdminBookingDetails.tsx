@@ -251,6 +251,29 @@ export const AdminBookingDetails = () => {
     }
   };
 
+  const handleDeleteBooking = async () => {
+    if (!booking || !id) return;
+    const reference = booking.displayRef || booking.jobNumber || booking.bookingRef || id;
+    const ok = await confirm({
+      title: 'Delete Job Permanently',
+      message: `This will permanently delete ${reference} and direct assignments, timesheets and job events. Use this only for mock/test records or imports created by mistake.`,
+      confirmLabel: 'Delete Permanently',
+      variant: 'danger',
+    });
+    if (!ok) return;
+
+    setIsActionLoading(true);
+    try {
+      await BookingService.delete(id);
+      showToast('Job deleted permanently', 'success');
+      navigate(routeState?.returnTo || '/admin/bookings');
+    } catch {
+      showToast('Failed to delete job', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleVerifyTimesheet = async () => {
     if (!booking || !id) return;
     setIsActionLoading(true);
@@ -671,6 +694,13 @@ export const AdminBookingDetails = () => {
                     className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
                   >
                     <Trash2 size={15} /> Cancel booking
+                  </button>
+                  <div className="border-t border-slate-100 dark:border-slate-800" />
+                  <button
+                    onClick={() => { handleDeleteBooking(); setIsActionsOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-black text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30"
+                  >
+                    <Trash2 size={15} /> Delete permanently
                   </button>
                 </div>
               )}

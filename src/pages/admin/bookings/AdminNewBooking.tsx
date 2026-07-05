@@ -21,6 +21,7 @@ import {
     Save,
     Search,
     SlidersHorizontal,
+    Trash2,
     UserCheck,
     UserPlus,
     Video,
@@ -37,6 +38,7 @@ import { StatusBadge } from '../../../components/StatusBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { UkAddress } from '../../../services/addressService';
 import { PostcodeLookup } from '../../../components/ui/PostcodeLookup';
+import { useConfirm } from '../../../context/ConfirmContext';
 
 type ClientSource = 'EXISTING' | 'GUEST';
 
@@ -132,6 +134,7 @@ export const AdminNewBooking = () => {
     const location = useLocation();
     const { user } = useAuth();
     const { showToast } = useToast();
+    const { confirm } = useConfirm();
     const { id } = useParams<{ id: string }>();
     const isEditMode = Boolean(id);
     const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
@@ -447,6 +450,29 @@ export const AdminNewBooking = () => {
         }
     };
 
+    const handleDeleteBooking = async () => {
+        if (!isEditMode || !id || !originalBooking) return;
+        const reference = originalBooking.displayRef || originalBooking.jobNumber || originalBooking.bookingRef || id;
+        const ok = await confirm({
+            title: 'Delete Job Permanently',
+            message: `This will permanently delete ${reference} and direct assignments, timesheets and job events. Use this only for mock/test records or imports created by mistake.`,
+            confirmLabel: 'Delete Permanently',
+            variant: 'danger',
+        });
+        if (!ok) return;
+
+        setLoading(true);
+        try {
+            await BookingService.delete(id);
+            showToast('Job deleted permanently', 'success');
+            navigate(routeState?.returnTo || '/admin/bookings');
+        } catch {
+            showToast('Failed to delete job', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     if (initialLoading) {
         return (
             <div className="flex min-h-[60vh] items-center justify-center">
@@ -483,6 +509,11 @@ export const AdminNewBooking = () => {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                        {isEditMode && (
+                            <Button type="button" variant="ghost" icon={Trash2} onClick={handleDeleteBooking} disabled={loading} className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30">
+                                Delete job
+                            </Button>
+                        )}
                         <Button type="button" variant="secondary" onClick={returnToEditOrigin}>Cancel</Button>
                         <Button type="submit" icon={Save} isLoading={loading} disabled={loading || requiredMissing}>
                             {isEditMode ? 'Save changes' : 'Create booking'}

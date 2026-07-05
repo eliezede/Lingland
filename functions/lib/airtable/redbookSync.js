@@ -55,6 +55,7 @@ const TRANSLATOR_INVOICES_TABLE = 'INV TR';
 const MAX_DETAILS = 50;
 const MODULE_DETAIL_LIMIT = 30;
 const ASSIGNMENTS_COLLECTION = 'bookingAssignments';
+const DEFAULT_SYNC_STRATEGY = 'OPEN_WORKFLOW';
 const FULL_SYNC_MODULES = [
     'clients',
     'redbook',
@@ -1040,7 +1041,123 @@ const assertAdmin = async (context) => {
         throw new functions.https.HttpsError('permission-denied', 'Only admins can sync REDBOOK.');
     }
 };
-const fetchAirtableRecordBatch = async (limitRecords, tableName = DEFAULT_TABLE_NAME, startOffset = '') => {
+const normalizeSyncStrategy = (value) => {
+    const normalized = normalize(value).toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+    if ([
+        'OPEN_WORKFLOW',
+        'UPDATED_SINCE_LAST_SYNC',
+        'RECENT_OPEN',
+        'FULL_AUDIT',
+        'CUSTOM_LIMIT'
+    ].includes(normalized)) {
+        return normalized;
+    }
+    return DEFAULT_SYNC_STRATEGY;
+};
+const effectiveLimitForStrategy = (strategy, requestedLimit) => {
+    if (strategy === 'FULL_AUDIT' || strategy === 'CUSTOM_LIMIT')
+        return Math.min(Math.max(requestedLimit || 500, 1), 5000);
+    if (strategy === 'UPDATED_SINCE_LAST_SYNC')
+        return Math.min(Math.max(requestedLimit || 1000, 1), 3000);
+    if (strategy === 'RECENT_OPEN')
+        return Math.min(Math.max(requestedLimit || 1500, 1), 3000);
+    return Math.min(Math.max(requestedLimit || 2000, 1), 3000);
+};
+const getLastSyncIso = async () => {
+    const syncCenter = await db.collection('system').doc('airtableSyncCenter').get();
+    const legacy = await db.collection('system').doc('airtableRedbookSync').get();
+    return normalize(syncCenter.data()?.lastRunAt) || normalize(legacy.data()?.lastRunAt) || '';
+};
+const airtableDateLiteral = (iso) => iso.replace(/"/g, '');
+const buildAirtableFormula = (strategy, tableName, lastSyncIso = '') => {
+    if (strategy === 'FULL_AUDIT' || strategy === 'CUSTOM_LIMIT')
+        return undefined;
+    const statusOpenFormula = `NOT(REGEX_MATCH(LOWER({Status} & ''), 'paid|cancelled|canceled'))`;
+    const updatedFormula = lastSyncIso
+        ? `IS_AFTER(LAST_MODIFIED_TIME(), DATETIME_PARSE("${airtableDateLiteral(lastSyncIso)}"))`
+        : '';
+    const recentFormula = `IS_AFTER(CREATED_TIME(), DATEADD(TODAY(), -60, 'days'))`;
+    if (strategy === 'UPDATED_SINCE_LAST_SYNC') {
+        return updatedFormula || recentFormula;
+    }
+    const isWorkflowTable = [
+        DEFAULT_TABLE_NAME,
+        process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME,
+        TRANSLATIONS_TABLE,
+        WEB_TRANSLATIONS_TABLE
+    ].includes(tableName);
+    if (strategy === 'RECENT_OPEN') {
+        return isWorkflowTable
+            ? `OR(${statusOpenFormula}, ${updatedFormula || recentFormula}, ${recentFormula})`
+            : `OR(${updatedFormula || recentFormula}, ${recentFormula})`;
+    }
+    return isWorkflowTable
+        ? `OR(${statusOpenFormula}, ${updatedFormula || recentFormula})`
+        : (updatedFormula || undefined);
+};
+const FINANCIALLY_OPEN_STATUSES = [
+    'INCOMING',
+    'NEEDS_ASSIGNMENT',
+    'ASSIGNMENT_PENDING',
+    'OPENED',
+    'QUOTE_PENDING',
+    'BOOKED',
+    'SESSION_COMPLETED',
+    'TIMESHEET_SUBMITTED',
+    'TIMESHEET_VERIFIED',
+    'READY_FOR_INVOICE',
+    'INVOICING',
+    'INVOICED',
+    'ADMIN',
+    'ADMIN_HOLD'
+];
+const isTerminalStableStatus = (status) => ['PAID', 'CANCELLED'].includes(normalize(status).toUpperCase());
+const getWorkflowSourceRecordIds = async (strategy) => {
+    if (strategy === 'FULL_AUDIT' || strategy === 'CUSTOM_LIMIT')
+        return new Set();
+    const ids = new Set();
+    await Promise.all(FINANCIALLY_OPEN_STATUSES.map(async (status) => {
+        const snap = await db.collection('bookings')
+            .where('sourceSystem', '==', 'AIRTABLE')
+            .where('status', '==', status)
+            .limit(750)
+            .get();
+        snap.docs.forEach(doc => {
+            const sourceRecordId = normalize(doc.data().sourceRecordId);
+            if (sourceRecordId)
+                ids.add(sourceRecordId);
+        });
+    }));
+    return ids;
+};
+const getFinanceLinkedSourceIds = (record, tableName) => {
+    const fields = record.fields;
+    if (tableName === CLIENT_INVOICES_TABLE) {
+        return pickLinkedIds(fields, ['Job Number from redbook', 'ðŸ–¥ï¸ REDBOOK', 'Redbook ID (from Job Number from redbook)']);
+    }
+    if (tableName === INTERPRETER_INVOICES_TABLE) {
+        return pickLinkedIds(fields, ['ðŸ–¥ï¸ REDBOOK', 'Redbook ID (from ðŸ–¥ï¸ REDBOOK)']);
+    }
+    if (tableName === TRANSLATION_CLIENT_INVOICES_TABLE || tableName === TRANSLATOR_INVOICES_TABLE) {
+        return pickLinkedIds(fields, ['Translations', 'TR NUMBER (from Translations)', 'TR ID']);
+    }
+    return [];
+};
+const filterFinanceRecordsForWorkflow = (records, tableName, workflowSourceRecordIds, strategy) => {
+    if (strategy === 'FULL_AUDIT' || strategy === 'CUSTOM_LIMIT' || workflowSourceRecordIds.size === 0) {
+        return { records, dropped: 0, filterActive: false };
+    }
+    const filtered = records.filter(record => {
+        const linkedIds = getFinanceLinkedSourceIds(record, tableName);
+        return linkedIds.length === 0 || linkedIds.some(id => workflowSourceRecordIds.has(id));
+    });
+    return {
+        records: filtered,
+        dropped: records.length - filtered.length,
+        filterActive: true
+    };
+};
+const fetchAirtableRecordBatch = async (limitRecords, tableName = DEFAULT_TABLE_NAME, startOffset = '', options = {}) => {
     const apiKey = (process.env.AIRTABLE_API_KEY || '').trim();
     const baseId = process.env.AIRTABLE_REDBOOK_BASE_ID || DEFAULT_BASE_ID;
     const resolvedTableName = tableName === DEFAULT_TABLE_NAME
@@ -1051,12 +1168,15 @@ const fetchAirtableRecordBatch = async (limitRecords, tableName = DEFAULT_TABLE_
     }
     const records = [];
     let offset = startOffset;
+    let appliedFormula = options.filterByFormula || '';
     do {
         const params = {
             pageSize: Math.min(100, Math.max(limitRecords - records.length, 1))
         };
         if (offset)
             params.offset = offset;
+        if (appliedFormula)
+            params.filterByFormula = appliedFormula;
         let response = null;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
@@ -1070,6 +1190,11 @@ const fetchAirtableRecordBatch = async (limitRecords, tableName = DEFAULT_TABLE_
             catch (error) {
                 const isFinalAttempt = attempt === 3;
                 console.warn(`[REDBOOK Sync] Airtable fetch failed for ${resolvedTableName} attempt ${attempt}.`);
+                if (appliedFormula && attempt === 1) {
+                    console.warn(`[REDBOOK Sync] Formula filter rejected or unavailable for ${resolvedTableName}; retrying without server-side filter.`);
+                    delete params.filterByFormula;
+                    appliedFormula = '';
+                }
                 if (isFinalAttempt) {
                     throw new functions.https.HttpsError('deadline-exceeded', `Airtable did not respond in time while fetching ${resolvedTableName}. Please retry the sync.`);
                 }
@@ -1085,7 +1210,9 @@ const fetchAirtableRecordBatch = async (limitRecords, tableName = DEFAULT_TABLE_
     return {
         records: records.slice(0, limitRecords),
         nextOffset: offset,
-        tableName: resolvedTableName
+        tableName: resolvedTableName,
+        filterByFormula: appliedFormula,
+        strategy: options.strategy || DEFAULT_SYNC_STRATEGY
     };
 };
 const fetchAirtableRecords = async (limitRecords, tableName = DEFAULT_TABLE_NAME) => {
@@ -1644,6 +1771,9 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                     interpreterMatchConfidence: mapped.sourceSnapshot.translatorMatchConfidence,
                     ambiguousCandidates: mapped.sourceSnapshot.translatorAmbiguousCandidates,
                     status: mapped.booking.status,
+                    skipReason: action === 'skipped' && isTerminalStableStatus(mapped.booking.status)
+                        ? 'TERMINAL_STABLE_ALREADY_MIRRORED'
+                        : undefined,
                     wordCount: mapped.booking.wordCount,
                     totalAmount: mapped.booking.totalAmount,
                     workflowArtifacts
@@ -2420,14 +2550,22 @@ const syncRecords = async (mode, includeFinance = true) => {
     bookingByAirtableRecordCache.clear();
     const platformMode = await getPlatformMode();
     const importMode = platformMode.airtableImportMode || 'ON';
-    const redbookBatch = await fetchAirtableRecordBatch(mode.limitRecords, DEFAULT_TABLE_NAME, mode.tableOffsets?.[DEFAULT_TABLE_NAME] || '');
+    const lastSyncIso = await getLastSyncIso();
+    const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
+    const redbookFormula = buildAirtableFormula(mode.syncStrategy, redbookTableName, lastSyncIso);
+    const redbookBatch = await fetchAirtableRecordBatch(mode.limitRecords, DEFAULT_TABLE_NAME, mode.tableOffsets?.[DEFAULT_TABLE_NAME] || '', { filterByFormula: redbookFormula, strategy: mode.syncStrategy });
     const records = redbookBatch.records;
-    const [clientInvoiceRecords, interpreterInvoiceRecords] = includeFinance
+    const workflowSourceRecordIds = includeFinance ? await getWorkflowSourceRecordIds(mode.syncStrategy) : new Set();
+    const [rawClientInvoiceRecords, rawInterpreterInvoiceRecords] = includeFinance
         ? await Promise.all([
-            fetchAirtableRecordBatch(mode.limitRecords, CLIENT_INVOICES_TABLE, mode.tableOffsets?.[CLIENT_INVOICES_TABLE] || '').then(batch => batch.records),
-            fetchAirtableRecordBatch(mode.limitRecords, INTERPRETER_INVOICES_TABLE, mode.tableOffsets?.[INTERPRETER_INVOICES_TABLE] || '').then(batch => batch.records)
+            fetchAirtableRecordBatch(mode.limitRecords, CLIENT_INVOICES_TABLE, mode.tableOffsets?.[CLIENT_INVOICES_TABLE] || '', { filterByFormula: buildAirtableFormula(mode.syncStrategy, CLIENT_INVOICES_TABLE, lastSyncIso), strategy: mode.syncStrategy }).then(batch => batch.records),
+            fetchAirtableRecordBatch(mode.limitRecords, INTERPRETER_INVOICES_TABLE, mode.tableOffsets?.[INTERPRETER_INVOICES_TABLE] || '', { filterByFormula: buildAirtableFormula(mode.syncStrategy, INTERPRETER_INVOICES_TABLE, lastSyncIso), strategy: mode.syncStrategy }).then(batch => batch.records)
         ])
         : [[], []];
+    const clientFinanceSelection = filterFinanceRecordsForWorkflow(rawClientInvoiceRecords, CLIENT_INVOICES_TABLE, workflowSourceRecordIds, mode.syncStrategy);
+    const interpreterFinanceSelection = filterFinanceRecordsForWorkflow(rawInterpreterInvoiceRecords, INTERPRETER_INVOICES_TABLE, workflowSourceRecordIds, mode.syncStrategy);
+    const clientInvoiceRecords = clientFinanceSelection.records;
+    const interpreterInvoiceRecords = interpreterFinanceSelection.records;
     const nextOffsets = {
         [DEFAULT_TABLE_NAME]: redbookBatch.nextOffset || ''
     };
@@ -2595,6 +2733,9 @@ const syncRecords = async (mode, includeFinance = true) => {
                     interpreterMatchConfidence: mapped.sourceSnapshot.interpreterMatchConfidence,
                     ambiguousCandidates: mapped.sourceSnapshot.interpreterAmbiguousCandidates,
                     status: mapped.booking.status,
+                    skipReason: action === 'skipped' && isTerminalStableStatus(mapped.booking.status)
+                        ? 'TERMINAL_STABLE_ALREADY_MIRRORED'
+                        : undefined,
                     workflowArtifacts
                 });
             }
@@ -2624,6 +2765,8 @@ const syncRecords = async (mode, includeFinance = true) => {
         success: stats.error === 0 && (!includeFinance || financeErrorCount === 0),
         syncRunId: runRef.id,
         mappingVersion: 'redbook-status-finance-v3',
+        syncStrategy: mode.syncStrategy,
+        serverFilterApplied: redbookBatch.filterByFormula || '',
         dryRun: mode.dryRun || importMode === 'READ_ONLY',
         importMode,
         triggeredBy: mode.triggeredBy,
@@ -2633,6 +2776,12 @@ const syncRecords = async (mode, includeFinance = true) => {
         financeRecords: {
             clientInvoices: clientInvoiceRecords.length,
             interpreterInvoices: interpreterInvoiceRecords.length
+        },
+        financePullThrough: {
+            workflowSourceRecordIds: workflowSourceRecordIds.size,
+            clientInvoicesDropped: clientFinanceSelection.dropped,
+            interpreterInvoicesDropped: interpreterFinanceSelection.dropped,
+            filterActive: clientFinanceSelection.filterActive || interpreterFinanceSelection.filterActive
         },
         startedAt,
         finishedAt,
@@ -2655,6 +2804,7 @@ const syncRecords = async (mode, includeFinance = true) => {
             lastRunAt: finishedAt,
             lastStats: stats,
             lastTotalRecords: records.length,
+            lastSyncStrategy: mode.syncStrategy,
             tableOffsets: nextOffsets,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
@@ -2690,10 +2840,19 @@ const syncAirtableOperations = async (mode, modules) => {
     const overallStats = emptyActionStats();
     const moduleResults = [];
     const nextOffsets = {};
+    const lastSyncIso = await getLastSyncIso();
+    const workflowSourceRecordIds = await getWorkflowSourceRecordIds(mode.syncStrategy);
     const fetchModuleRecords = async (tableName) => {
-        const batch = await fetchAirtableRecordBatch(mode.limitRecords, tableName, mode.tableOffsets?.[tableName] || '');
+        const formula = buildAirtableFormula(mode.syncStrategy, tableName, lastSyncIso);
+        const batch = await fetchAirtableRecordBatch(mode.limitRecords, tableName, mode.tableOffsets?.[tableName] || '', { filterByFormula: formula, strategy: mode.syncStrategy });
         nextOffsets[tableName] = batch.nextOffset || '';
-        return batch.records;
+        const selection = filterFinanceRecordsForWorkflow(batch.records, tableName, workflowSourceRecordIds, mode.syncStrategy);
+        return {
+            records: selection.records,
+            rawRecords: batch.records.length,
+            dropped: selection.dropped,
+            filterActive: selection.filterActive
+        };
     };
     if (importMode === 'OFF') {
         return {
@@ -2717,14 +2876,17 @@ const syncAirtableOperations = async (mode, modules) => {
             tableNames,
             records,
             stats: result.stats,
-            details: result.details
+            details: result.details,
+            syncStrategy: mode.syncStrategy
         });
     };
     if (modules.includes('clients')) {
-        const [clients, clientsBook] = await Promise.all([
+        const [clientsBatch, clientsBookBatch] = await Promise.all([
             fetchModuleRecords(CLIENTS_TABLE),
             fetchModuleRecords(CLIENTS_BOOK_TABLE)
         ]);
+        const clients = clientsBatch.records;
+        const clientsBook = clientsBookBatch.records;
         const clientsResult = await syncClients(clients, CLIENTS_TABLE, effectiveMode, runRef.id);
         const clientsBookResult = await syncClients(clientsBook, CLIENTS_BOOK_TABLE, effectiveMode, runRef.id);
         const combined = {
@@ -2749,10 +2911,12 @@ const syncAirtableOperations = async (mode, modules) => {
         });
     }
     if (modules.includes('translations')) {
-        const [translations, webTranslations] = await Promise.all([
+        const [translationsBatch, webTranslationsBatch] = await Promise.all([
             fetchModuleRecords(TRANSLATIONS_TABLE),
             fetchModuleRecords(WEB_TRANSLATIONS_TABLE)
         ]);
+        const translations = translationsBatch.records;
+        const webTranslations = webTranslationsBatch.records;
         const translationResult = await syncTranslationBookings(translations, TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         const webTranslationResult = await syncTranslationBookings(webTranslations, WEB_TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         const combined = {
@@ -2764,22 +2928,26 @@ const syncAirtableOperations = async (mode, modules) => {
         pushModule('translations', 'Translation jobs', [TRANSLATIONS_TABLE, WEB_TRANSLATIONS_TABLE], translations.length + webTranslations.length, combined);
     }
     if (modules.includes('clientInvoices')) {
-        const records = await fetchModuleRecords(CLIENT_INVOICES_TABLE);
+        const selection = await fetchModuleRecords(CLIENT_INVOICES_TABLE);
+        const records = selection.records;
         const result = await syncClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         pushModule('clientInvoices', 'Client invoices', [CLIENT_INVOICES_TABLE], records.length, result);
     }
     if (modules.includes('interpreterInvoices')) {
-        const records = await fetchModuleRecords(INTERPRETER_INVOICES_TABLE);
+        const selection = await fetchModuleRecords(INTERPRETER_INVOICES_TABLE);
+        const records = selection.records;
         const result = await syncInterpreterInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         pushModule('interpreterInvoices', 'Interpreter invoices', [INTERPRETER_INVOICES_TABLE], records.length, result);
     }
     if (modules.includes('translationClientInvoices')) {
-        const records = await fetchModuleRecords(TRANSLATION_CLIENT_INVOICES_TABLE);
+        const selection = await fetchModuleRecords(TRANSLATION_CLIENT_INVOICES_TABLE);
+        const records = selection.records;
         const result = await syncTranslationClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         pushModule('translationClientInvoices', 'Translation client invoices', [TRANSLATION_CLIENT_INVOICES_TABLE], records.length, result);
     }
     if (modules.includes('translatorInvoices')) {
-        const records = await fetchModuleRecords(TRANSLATOR_INVOICES_TABLE);
+        const selection = await fetchModuleRecords(TRANSLATOR_INVOICES_TABLE);
+        const records = selection.records;
         const result = await syncTranslatorInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
         pushModule('translatorInvoices', 'Translator invoices', [TRANSLATOR_INVOICES_TABLE], records.length, result);
     }
@@ -2788,6 +2956,7 @@ const syncAirtableOperations = async (mode, modules) => {
         success: overallStats.error === 0,
         syncRunId: runRef.id,
         mappingVersion: 'airtable-sync-center-v1',
+        syncStrategy: mode.syncStrategy,
         dryRun: effectiveMode.dryRun,
         importMode,
         triggeredBy: mode.triggeredBy,
@@ -2797,6 +2966,10 @@ const syncAirtableOperations = async (mode, modules) => {
         finishedAt,
         stats: overallStats,
         nextOffsets,
+        financePullThrough: {
+            workflowSourceRecordIds: workflowSourceRecordIds.size,
+            filterActive: mode.syncStrategy !== 'FULL_AUDIT' && mode.syncStrategy !== 'CUSTOM_LIMIT' && workflowSourceRecordIds.size > 0
+        },
         moduleResults
     };
     const report = cleanReportData(result);
@@ -2827,6 +3000,7 @@ const syncAirtableOperations = async (mode, modules) => {
             lastRunAt: finishedAt,
             lastStats: overallStats,
             lastModules: modules,
+            lastSyncStrategy: mode.syncStrategy,
             tableOffsets: mergedTableOffsets,
             moduleCheckpoints,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -2841,10 +3015,12 @@ exports.syncRedbookJobs = functions.runWith({
 }).https.onCall(async (data, context) => {
     await assertAdmin(context);
     const dryRun = Boolean(data?.dryRun);
-    const limitRecords = Math.min(Number(data?.limitRecords || 500), 5000);
+    const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
+    const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(data?.limitRecords || 500));
     return syncRecords({
         dryRun,
         limitRecords,
+        syncStrategy,
         triggeredBy: 'manual',
         userId: context.auth?.uid,
         tableOffsets: data?.tableOffsets || data?.offsets || {}
@@ -2857,11 +3033,13 @@ exports.syncAirtableData = functions.runWith({
 }).https.onCall(async (data, context) => {
     await assertAdmin(context);
     const dryRun = Boolean(data?.dryRun);
-    const limitRecords = Math.min(Number(data?.limitRecords || 500), 5000);
+    const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
+    const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(data?.limitRecords || 500));
     const modules = normalizeModules(data?.modules);
     return syncAirtableOperations({
         dryRun,
         limitRecords,
+        syncStrategy,
         triggeredBy: 'manual',
         userId: context.auth?.uid,
         tableOffsets: data?.tableOffsets || data?.offsets || {}
@@ -2886,12 +3064,14 @@ exports.syncAirtableMaintenance = functions.runWith({
     }
     try {
         const dryRun = Boolean(req.body?.dryRun);
-        const limitRecords = Math.min(Number(req.body?.limitRecords || 100), 1000);
+        const syncStrategy = normalizeSyncStrategy(req.body?.syncStrategy);
+        const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(req.body?.limitRecords || 100));
         const modules = normalizeModules(req.body?.modules);
         const tableOffsets = req.body?.tableOffsets || req.body?.offsets || {};
         const result = await syncAirtableOperations({
             dryRun,
             limitRecords,
+            syncStrategy,
             triggeredBy: 'manual',
             userId: 'maintenance',
             tableOffsets
@@ -2929,17 +3109,20 @@ exports.scheduledRedbookSync = functions.runWith({
     const lastModuleIndex = Number(syncData.lastScheduledModuleIndex || 0);
     const moduleIndex = scheduledModules.length ? lastModuleIndex % scheduledModules.length : 0;
     const module = scheduledModules[moduleIndex] || 'redbook';
-    const limitRecords = Math.min(Number(syncData.limitRecords || legacyData.limitRecords || 250), 1000);
-    console.log(`[Airtable Sync] Scheduled module ${module} with limit ${limitRecords}.`);
+    const syncStrategy = normalizeSyncStrategy(syncData.syncStrategy || legacyData.syncStrategy || DEFAULT_SYNC_STRATEGY);
+    const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(syncData.limitRecords || legacyData.limitRecords || 250));
+    console.log(`[Airtable Sync] Scheduled module ${module} with ${syncStrategy} strategy and limit ${limitRecords}.`);
     await syncAirtableOperations({
         dryRun: false,
         limitRecords,
+        syncStrategy,
         triggeredBy: 'schedule',
         tableOffsets: syncData.tableOffsets || legacyData.tableOffsets || {}
     }, [module]);
     await syncCenterRef.set({
         scheduleEnabled: true,
         scheduledModules,
+        syncStrategy,
         lastScheduledModule: module,
         lastScheduledModuleIndex: moduleIndex + 1,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
