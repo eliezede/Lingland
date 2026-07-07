@@ -18,6 +18,7 @@ type SyncMode = {
   triggeredBy: 'manual' | 'schedule';
   userId?: string;
   tableOffsets?: Record<string, string>;
+  sourceRecordIds?: string[];
 };
 
 type AirtableSyncStrategy =
@@ -30,6 +31,7 @@ type AirtableSyncStrategy =
 type AirtableFetchOptions = {
   filterByFormula?: string;
   strategy?: AirtableSyncStrategy;
+  strictFormula?: boolean;
 };
 
 const db = admin.firestore();
@@ -1395,7 +1397,7 @@ const fetchAirtableRecordBatch = async (
       } catch (error) {
         const isFinalAttempt = attempt === 3;
         console.warn(`[REDBOOK Sync] Airtable fetch failed for ${resolvedTableName} attempt ${attempt}.`);
-        if (appliedFormula && attempt === 1) {
+        if (appliedFormula && attempt === 1 && !options.strictFormula) {
           console.warn(`[REDBOOK Sync] Formula filter rejected or unavailable for ${resolvedTableName}; retrying without server-side filter.`);
           delete params.filterByFormula;
           appliedFormula = '';
@@ -1439,6 +1441,46 @@ const getExistingRedbookBySourceId = async () => {
   return new Map(snap.docs
     .map(doc => [normalize(doc.data().sourceRecordId), doc] as const)
     .filter(([sourceRecordId]) => Boolean(sourceRecordId)));
+};
+
+const fetchAirtableRecordsByIds = async (
+  sourceRecordIds: string[],
+  tableName = DEFAULT_TABLE_NAME
+) => {
+  const uniqueIds = Array.from(new Set(sourceRecordIds.map(normalize).filter(Boolean))).slice(0, 100);
+  if (!uniqueIds.length) {
+    return {
+      records: [] as AirtableRecord[],
+      nextOffset: '',
+      tableName,
+      filterByFormula: '',
+      strategy: DEFAULT_SYNC_STRATEGY
+    };
+  }
+
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueIds.length; index += 80) {
+    chunks.push(uniqueIds.slice(index, index + 80));
+  }
+
+  const batches = await Promise.all(chunks.map(chunk => fetchAirtableRecordBatch(
+    chunk.length,
+    tableName,
+    '',
+    {
+      filterByFormula: `OR(${chunk.map(id => `RECORD_ID()='${id.replace(/'/g, "\\'")}'`).join(',')})`,
+      strategy: DEFAULT_SYNC_STRATEGY,
+      strictFormula: true
+    }
+  )));
+
+  return {
+    records: batches.flatMap(batch => batch.records),
+    nextOffset: '',
+    tableName: batches[0]?.tableName || tableName,
+    filterByFormula: 'RECORD_ID() IN selected missing ids',
+    strategy: DEFAULT_SYNC_STRATEGY
+  };
 };
 
 const shouldUseSelectiveRedbookProcessing = (strategy: AirtableSyncStrategy) => (
@@ -1803,7 +1845,12 @@ const cleanData = (data: Record<string, unknown>) => {
   return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
 };
 
-const cleanReportData = <T>(data: T): T => JSON.parse(JSON.stringify(data));
+const cleanReportData = <T>(data: T): T => JSON.parse(JSON.stringify(data, (_key, value) => {
+  if (value && typeof value === 'object' && typeof value._seconds === 'number') {
+    return new Date(value._seconds * 1000 + Math.floor((value._nanoseconds || 0) / 1000000)).toISOString();
+  }
+  return value;
+}));
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => (
   Boolean(value)
@@ -2926,15 +2973,17 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
   const lastSyncIso = await getLastSyncIso();
   const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
   const redbookFormula = buildAirtableFormula(mode.syncStrategy, redbookTableName, lastSyncIso);
-  const redbookBatch = await fetchAirtableRecordBatch(
-    mode.limitRecords,
-    DEFAULT_TABLE_NAME,
-    mode.tableOffsets?.[DEFAULT_TABLE_NAME] || '',
-    { filterByFormula: redbookFormula, strategy: mode.syncStrategy }
-  );
+  const redbookBatch = mode.sourceRecordIds?.length
+    ? await fetchAirtableRecordsByIds(mode.sourceRecordIds, DEFAULT_TABLE_NAME)
+    : await fetchAirtableRecordBatch(
+      mode.limitRecords,
+      DEFAULT_TABLE_NAME,
+      mode.tableOffsets?.[DEFAULT_TABLE_NAME] || '',
+      { filterByFormula: redbookFormula, strategy: mode.syncStrategy }
+    );
   const redbookExistingBySourceId = await getExistingRedbookBySourceId();
   const allRedbookRecords = redbookBatch.records;
-  const selectiveRedbookProcessing = shouldUseSelectiveRedbookProcessing(mode.syncStrategy);
+  const selectiveRedbookProcessing = shouldUseSelectiveRedbookProcessing(mode.syncStrategy) && !mode.sourceRecordIds?.length;
   const records = selectiveRedbookProcessing
     ? allRedbookRecords.filter(record => shouldProcessRedbookRecord(record, redbookExistingBySourceId))
     : allRedbookRecords;
@@ -3562,6 +3611,63 @@ export const getAirtableSyncAuditTrail = functions.runWith({
       id: doc.id,
       ...cleanReportData(doc.data())
     }))
+  };
+});
+
+export const repairMissingRedbookRecords = functions.runWith({
+  secrets: ['AIRTABLE_API_KEY'],
+  timeoutSeconds: 300,
+  memory: '1GB'
+}).https.onCall(async (data, context) => {
+  await assertAdmin(context);
+
+  const dryRun = Boolean(data?.dryRun);
+  const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
+  const limitRecords = Math.min(Math.max(Number(data?.limitRecords || 100), 1), 100);
+  const lastSyncIso = await getLastSyncIso();
+  const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
+  const redbookFormula = buildAirtableFormula(syncStrategy, redbookTableName, lastSyncIso);
+  const redbookBatch = await fetchAirtableRecordBatch(
+    effectiveLimitForStrategy(syncStrategy, Number(data?.auditLimit || 5000)),
+    DEFAULT_TABLE_NAME,
+    '',
+    { filterByFormula: redbookFormula, strategy: syncStrategy }
+  );
+  const existingBySourceId = await getExistingRedbookBySourceId();
+  const missingIds = redbookBatch.records
+    .filter(record => !existingBySourceId.has(record.id))
+    .map(record => record.id)
+    .slice(0, limitRecords);
+
+  if (!missingIds.length) {
+    return {
+      success: true,
+      dryRun,
+      importMode: (await getPlatformMode()).airtableImportMode || 'ON',
+      syncStrategy,
+      totalRecords: redbookBatch.records.length,
+      processedRecords: 0,
+      missingRecords: 0,
+      stats: emptyActionStats(),
+      details: [],
+      message: 'No missing REDBOOK records found for the selected strategy.'
+    };
+  }
+
+  const result = await syncRecords({
+    dryRun,
+    limitRecords: missingIds.length,
+    syncStrategy,
+    triggeredBy: 'manual',
+    userId: context.auth?.uid,
+    sourceRecordIds: missingIds
+  }, false);
+
+  return {
+    ...result,
+    repairMode: 'MISSING_REDBOOK',
+    missingRecords: missingIds.length,
+    sourceRecordIds: missingIds
   };
 });
 

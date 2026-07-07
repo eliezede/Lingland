@@ -86,6 +86,13 @@ Implementation note 2026-07-07:
 - Firebase logs after deployment showed the previously timing-out REDBOOK Dry Run completing with status 200 in approximately 264 seconds. Further optimization is still required before marking the daily cycle as fully ergonomic.
 - Build verified for app and functions.
 
+Implementation note 2026-07-07, pass 2:
+
+- Added a targeted `repairMissingRedbookRecords` admin callable for the exact case exposed by Mirror Proof: Airtable returns a REDBOOK source record for the selected workflow strategy, but the platform has no booking with that `sourceRecordId`.
+- The repair flow is capped to 100 missing REDBOOK records per run, requires a clean Dry repair before Write repair in the UI, and targets explicit Airtable `RECORD_ID()` values rather than relying on arbitrary first-page order.
+- The record-id Airtable fetch now uses strict formula mode, so it will fail safely instead of falling back to an unfiltered fetch if Airtable rejects the formula.
+- Migration/Reconciliation UI now normalizes Firestore Timestamp-shaped values before rendering sync runs and conflicts, preventing Error Boundary crashes from serialized `{_seconds, _nanoseconds}` objects.
+
 Acceptance:
 
 - [ ] Admin can run one safe daily Mirror Cycle without knowing Airtable table internals.
@@ -93,6 +100,7 @@ Acceptance:
 - [ ] Closed/paid historical jobs do not make daily sync unnecessarily heavy.
 - [ ] Every skipped terminal record has an auditable reason.
 - [ ] Admin can run a read-only mirror proof and see whether Airtable REDBOOK and platform bookings are balanced for the selected strategy.
+- [ ] Admin can repair missing REDBOOK mirror gaps in controlled batches after a clean Dry repair.
 
 ## 4. Current Baseline After Latest Deploy
 

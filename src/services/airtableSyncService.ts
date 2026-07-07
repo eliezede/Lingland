@@ -219,6 +219,16 @@ export const AirtableSyncService = {
     return response.data as AirtableMirrorAudit;
   },
 
+  repairMissingRedbook: async (
+    dryRun: boolean,
+    limitRecords = 100,
+    syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
+  ): Promise<AirtableSyncResult & { missingRecords?: number; repairMode?: string; sourceRecordIds?: string[] }> => {
+    const repairFn = httpsCallable(functions, 'repairMissingRedbookRecords');
+    const response = await repairFn({ dryRun, limitRecords, syncStrategy });
+    return response.data as AirtableSyncResult & { missingRecords?: number; repairMode?: string; sourceRecordIds?: string[] };
+  },
+
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {
     const snap = await getDoc(doc(db, 'system', 'airtableSyncCenter'));
     return snap.exists() ? snap.data() as AirtableSyncCheckpoint : null;

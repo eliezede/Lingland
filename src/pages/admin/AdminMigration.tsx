@@ -109,10 +109,36 @@ const moduleTone: Record<string, string> = {
 
 const fullOrder: AirtableSyncModule[] = AIRTABLE_SYNC_MODULES.map(module => module.id);
 
-const formatDateTime = (value?: string) => {
-  if (!value) return 'Never';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+const normalizeDateInput = (value?: unknown): string => {
+  if (!value) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    const data = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number; _seconds?: number; _nanoseconds?: number };
+    if (typeof data.toDate === 'function') return data.toDate().toISOString();
+    if (typeof data.seconds === 'number') {
+      return new Date(data.seconds * 1000 + Math.floor((data.nanoseconds || 0) / 1000000)).toISOString();
+    }
+    if (typeof data._seconds === 'number') {
+      return new Date(data._seconds * 1000 + Math.floor((data._nanoseconds || 0) / 1000000)).toISOString();
+    }
+  }
+  return '';
+};
+
+const formatDateTime = (value?: unknown) => {
+  const normalized = normalizeDateInput(value);
+  if (!normalized) return 'Never';
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? normalized : parsed.toLocaleString();
+};
+
+const safeInlineText = (value: unknown, fallback = 'N/A') => {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  const normalizedDate = normalizeDateInput(value);
+  if (normalizedDate) return formatDateTime(normalizedDate);
+  return fallback;
 };
 
 const StatPill = ({ label, value, className = '' }: { label: string; value: number; className?: string }) => (
@@ -139,6 +165,8 @@ export const AdminMigration = () => {
   const [openConflicts, setOpenConflicts] = useState<AirtableSyncConflict[]>([]);
   const [mirrorAudit, setMirrorAudit] = useState<AirtableMirrorAudit | null>(null);
   const [mirrorAuditLoading, setMirrorAuditLoading] = useState(false);
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [cleanRepairDryRun, setCleanRepairDryRun] = useState(false);
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
   const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
   const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
@@ -256,6 +284,7 @@ export const AdminMigration = () => {
     try {
       const audit = await AirtableSyncService.getMirrorAudit(recordLimit, syncStrategy);
       setMirrorAudit(audit);
+      setCleanRepairDryRun(false);
       if (audit.missingInPlatformCount > 0) {
         showToast(`${audit.missingInPlatformCount} Airtable REDBOOK records are not mirrored yet`, 'info');
       } else {
@@ -266,6 +295,45 @@ export const AdminMigration = () => {
       showToast('Error running Airtable mirror audit', 'error');
     } finally {
       setMirrorAuditLoading(false);
+    }
+  };
+
+  const runMissingRedbookRepair = async (dryRun: boolean) => {
+    if (!dryRun && importLocked) {
+      showToast(`Repair is locked because Airtable Import Mode is ${importMode}.`, 'error');
+      return;
+    }
+    if (!dryRun && !cleanRepairDryRun) {
+      showToast('Run Dry repair before writing missing REDBOOK records.', 'error');
+      return;
+    }
+    if (!dryRun && !window.confirm('Write missing REDBOOK records from Airtable into the platform? This only targets records missing from Mirror proof.')) return;
+
+    setRepairLoading(true);
+    setSyncError(null);
+    setSyncResult(null);
+    setSyncAttemptLabel(`${dryRun ? 'Dry repair' : 'Write repair'} · Missing REDBOOK · ${activeStrategyConfig.label}`);
+    try {
+      const result = await AirtableSyncService.repairMissingRedbook(dryRun, 100, syncStrategy);
+      setSyncResult(result);
+      setCleanRepairDryRun(dryRun && result.success && result.stats.error === 0);
+      await Promise.all([loadCheckpoint(), loadDependencyCounts(), loadSyncAuditTrail()]);
+      if (!dryRun) {
+        setCleanRepairDryRun(false);
+        await runMirrorAudit();
+      }
+      showToast(
+        dryRun
+          ? `Dry repair complete: ${result.missingRecords || 0} missing REDBOOK record(s) inspected.`
+          : `Repair complete: ${result.stats.created} created, ${result.stats.updated} updated.`,
+        result.success ? 'success' : 'error'
+      );
+    } catch (err: any) {
+      const message = err?.message || 'Missing REDBOOK repair failed';
+      setSyncError(message);
+      showToast(message, 'error');
+    } finally {
+      setRepairLoading(false);
     }
   };
 
@@ -775,7 +843,7 @@ export const AdminMigration = () => {
           </div>
         )}
 
-        {loading && syncAttemptLabel && (
+        {(loading || repairLoading) && syncAttemptLabel && (
           <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
             <div className="flex gap-2">
               <Loader2 size={18} className="mt-0.5 shrink-0 animate-spin" />
@@ -784,7 +852,7 @@ export const AdminMigration = () => {
           </div>
         )}
 
-        {syncError && !loading && (
+        {syncError && !loading && !repairLoading && (
           <div className="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
             <div className="flex gap-2">
               <AlertCircle size={18} className="mt-0.5 shrink-0" />
@@ -929,10 +997,10 @@ export const AdminMigration = () => {
                         <div key={run.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-black text-slate-950 dark:text-white">
-                              {run.kind || 'AIRTABLE_SYNC'} · {run.dryRun ? 'Dry Run' : 'Sync'}
+                              {safeInlineText(run.kind, 'AIRTABLE_SYNC')} · {run.dryRun ? 'Dry Run' : 'Sync'}
                             </p>
                             <p className="text-xs text-slate-500 dark:text-slate-400">
-                              {formatDateTime(run.finishedAt)} · {run.modules?.join(', ') || 'redbook'} · {run.id}
+                              {formatDateTime(run.finishedAt)} · {run.modules?.join(', ') || 'redbook'} · {safeInlineText(run.id)}
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2 text-xs font-black">
@@ -965,14 +1033,14 @@ export const AdminMigration = () => {
                         <div key={conflict.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm dark:border-amber-900/40 dark:bg-slate-950">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate font-black text-slate-950 dark:text-white">{conflict.legacyRef || conflict.sourceRecordId}</p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">{conflict.sourceTable} · {conflict.reason}</p>
+                              <p className="truncate font-black text-slate-950 dark:text-white">{safeInlineText(conflict.legacyRef || conflict.sourceRecordId)}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{safeInlineText(conflict.sourceTable, 'Unknown source')} · {safeInlineText(conflict.reason, 'UNCLASSIFIED')}</p>
                             </div>
                             <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
                               {conflict.severity || 'MEDIUM'}
                             </span>
                           </div>
-                          <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{conflict.recommendedAction}</p>
+                          <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{safeInlineText(conflict.recommendedAction, 'Review source record and rerun sync.')}</p>
                         </div>
                       )) : (
                         <p className="rounded-lg border border-amber-200 bg-white p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-slate-950 dark:text-amber-200">
@@ -1185,6 +1253,35 @@ export const AdminMigration = () => {
                         <StatPill label="Outside set" value={mirrorAudit.platformOnlyCount} />
                       </div>
 
+                      {mirrorAudit.missingInPlatformCount > 0 && (
+                        <div className="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/30 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-sm font-black text-red-800 dark:text-red-100">Repair missing REDBOOK records</p>
+                            <p className="text-sm text-red-700 dark:text-red-200">
+                              Targets only records that Airtable returns for this strategy but the platform does not have by source record id.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => runMissingRedbookRepair(true)}
+                              disabled={repairLoading || mirrorAuditLoading}
+                              className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-black text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-slate-950 dark:text-red-200 dark:hover:bg-red-950/40"
+                            >
+                              {repairLoading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                              Dry repair
+                            </button>
+                            <button
+                              onClick={() => runMissingRedbookRepair(false)}
+                              disabled={repairLoading || mirrorAuditLoading || !cleanRepairDryRun || importLocked}
+                              className="inline-flex h-10 items-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-black text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+                            >
+                              {repairLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
+                              Write repair
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="grid gap-4 xl:grid-cols-2">
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
                           <p className="text-xs font-black uppercase tracking-widest text-slate-500">Airtable status counts</p>
@@ -1294,14 +1391,14 @@ export const AdminMigration = () => {
                           </span>
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-black text-slate-950 dark:text-white">{conflict.legacyRef || conflict.sourceRecordId || 'N/A'}</p>
-                          <p className="truncate text-xs text-slate-500">{conflict.sourceTable || conflict.entityType || 'Unknown source'}</p>
+                          <p className="truncate font-black text-slate-950 dark:text-white">{safeInlineText(conflict.legacyRef || conflict.sourceRecordId)}</p>
+                          <p className="truncate text-xs text-slate-500">{safeInlineText(conflict.sourceTable || conflict.entityType, 'Unknown source')}</p>
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-black text-slate-800 dark:text-slate-100">{conflict.reason || 'UNCLASSIFIED'}</p>
-                          <p className="truncate text-xs text-slate-500">{conflict.entityType || 'entity'} · {conflict.lastSeenAt ? formatDateTime(conflict.lastSeenAt) : 'No timestamp'}</p>
+                          <p className="truncate font-black text-slate-800 dark:text-slate-100">{safeInlineText(conflict.reason, 'UNCLASSIFIED')}</p>
+                          <p className="truncate text-xs text-slate-500">{safeInlineText(conflict.entityType, 'entity')} · {conflict.lastSeenAt ? formatDateTime(conflict.lastSeenAt) : 'No timestamp'}</p>
                         </div>
-                        <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">{conflict.recommendedAction || 'Review source record and rerun sync.'}</p>
+                        <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">{safeInlineText(conflict.recommendedAction, 'Review source record and rerun sync.')}</p>
                       </div>
                     )) : (
                       <div className="p-6 text-sm font-semibold text-slate-500 dark:text-slate-400">
