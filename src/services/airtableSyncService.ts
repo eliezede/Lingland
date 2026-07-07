@@ -108,6 +108,34 @@ export type AirtableSyncConflict = {
 
 export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
 
+export type AirtableMirrorAuditRow = {
+  sourceRecordId?: string;
+  bookingId?: string;
+  jobNumber?: string;
+  status?: string;
+  bookedFor?: string;
+  lastSyncedAt?: string;
+};
+
+export type AirtableMirrorAudit = {
+  success: boolean;
+  syncStrategy: AirtableSyncStrategy;
+  limitRecords: number;
+  sourceTable: string;
+  filterByFormula?: string;
+  generatedAt: string;
+  airtableRecords: number;
+  platformRecords: number;
+  matchedRecords: number;
+  missingInPlatformCount: number;
+  platformOnlyCount: number;
+  nextOffset?: string;
+  airtableStatusCounts: Record<string, number>;
+  platformStatusCounts: Record<string, number>;
+  missingInPlatform: AirtableMirrorAuditRow[];
+  platformOnly: AirtableMirrorAuditRow[];
+};
+
 export const AIRTABLE_SYNC_MODULES: Array<{
   id: AirtableSyncModule;
   label: string;
@@ -175,6 +203,15 @@ export const AirtableSyncService = {
     const syncFn = httpsCallable(functions, 'syncAirtableData');
     const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy });
     return response.data as AirtableSyncResult;
+  },
+
+  getMirrorAudit: async (
+    limitRecords = 5000,
+    syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
+  ): Promise<AirtableMirrorAudit> => {
+    const auditFn = httpsCallable(functions, 'getAirtableMirrorAudit');
+    const response = await auditFn({ limitRecords, syncStrategy });
+    return response.data as AirtableMirrorAudit;
   },
 
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {

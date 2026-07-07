@@ -34,6 +34,7 @@ import {
   AirtableSyncRunSummary,
   AirtableSyncStrategy,
   AirtableSyncResult,
+  AirtableMirrorAudit,
   AirtableSyncService
 } from '../../services/airtableSyncService';
 import { useToast } from '../../context/ToastContext';
@@ -134,6 +135,8 @@ export const AdminMigration = () => {
   const [dependencyCounts, setDependencyCounts] = useState<AirtableDependencyCounts>({});
   const [recentRuns, setRecentRuns] = useState<AirtableSyncRunSummary[]>([]);
   const [openConflicts, setOpenConflicts] = useState<AirtableSyncConflict[]>([]);
+  const [mirrorAudit, setMirrorAudit] = useState<AirtableMirrorAudit | null>(null);
+  const [mirrorAuditLoading, setMirrorAuditLoading] = useState(false);
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
   const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
   const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
@@ -246,6 +249,24 @@ export const AdminMigration = () => {
       console.warn('Failed to load Airtable sync audit trail', err);
       setRecentRuns([]);
       setOpenConflicts([]);
+    }
+  };
+
+  const runMirrorAudit = async () => {
+    setMirrorAuditLoading(true);
+    try {
+      const audit = await AirtableSyncService.getMirrorAudit(recordLimit, syncStrategy);
+      setMirrorAudit(audit);
+      if (audit.missingInPlatformCount > 0) {
+        showToast(`${audit.missingInPlatformCount} Airtable REDBOOK records are not mirrored yet`, 'info');
+      } else {
+        showToast('Airtable REDBOOK mirror audit is balanced for this strategy', 'success');
+      }
+    } catch (err) {
+      console.warn('Failed to run Airtable mirror audit', err);
+      showToast('Error running Airtable mirror audit', 'error');
+    } finally {
+      setMirrorAuditLoading(false);
     }
   };
 
@@ -1093,6 +1114,14 @@ export const AdminMigration = () => {
                         Refresh
                       </button>
                       <button
+                        onClick={runMirrorAudit}
+                        disabled={mirrorAuditLoading}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 text-sm font-black text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200 dark:hover:bg-blue-950/50"
+                      >
+                        {mirrorAuditLoading ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                        Mirror proof
+                      </button>
+                      <button
                         onClick={exportConflictReport}
                         disabled={!filteredConflicts.length}
                         className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
@@ -1109,6 +1138,78 @@ export const AdminMigration = () => {
                     <StatPill label="Medium" value={conflictSummary.bySeverity.MEDIUM || 0} className="border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-200" />
                     <StatPill label="Low" value={conflictSummary.bySeverity.LOW || 0} />
                   </div>
+
+                  {mirrorAudit && (
+                    <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 dark:border-slate-800">
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Mirror proof</p>
+                          <h3 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Airtable REDBOOK vs platform</h3>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">
+                            {mirrorAudit.syncStrategy} · {mirrorAudit.limitRecords.toLocaleString()} record limit · {formatDateTime(mirrorAudit.generatedAt)}
+                          </p>
+                        </div>
+                        {mirrorAudit.nextOffset && (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                            Airtable has more pages beyond this audit limit
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                        <StatPill label="Airtable" value={mirrorAudit.airtableRecords} />
+                        <StatPill label="Platform" value={mirrorAudit.platformRecords} />
+                        <StatPill label="Matched" value={mirrorAudit.matchedRecords} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
+                        <StatPill label="Missing" value={mirrorAudit.missingInPlatformCount} className={mirrorAudit.missingInPlatformCount ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
+                        <StatPill label="Outside set" value={mirrorAudit.platformOnlyCount} />
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-500">Airtable status counts</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {Object.entries(mirrorAudit.airtableStatusCounts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([status, count]) => (
+                              <span key={status} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800">
+                                {status}: {count}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-500">Platform source status counts</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {Object.entries(mirrorAudit.platformStatusCounts).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([status, count]) => (
+                              <span key={status} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800">
+                                {status}: {count}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {mirrorAudit.missingInPlatform.length > 0 && (
+                        <div className="overflow-hidden rounded-lg border border-red-200 dark:border-red-900/40">
+                          <div className="grid grid-cols-[minmax(180px,1fr)_120px_160px] gap-3 bg-red-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-red-700 dark:bg-red-950/30 dark:text-red-200">
+                            <span>Missing Airtable job</span>
+                            <span>Status</span>
+                            <span>Booked for</span>
+                          </div>
+                          <div className="divide-y divide-red-100 bg-white dark:divide-red-900/30 dark:bg-slate-900">
+                            {mirrorAudit.missingInPlatform.slice(0, 10).map(row => (
+                              <div key={row.sourceRecordId} className="grid grid-cols-[minmax(180px,1fr)_120px_160px] gap-3 px-4 py-2 text-sm">
+                                <div className="min-w-0">
+                                  <p className="truncate font-black text-slate-950 dark:text-white">{row.jobNumber || row.sourceRecordId}</p>
+                                  <p className="truncate text-xs text-slate-500">{row.sourceRecordId}</p>
+                                </div>
+                                <span className="font-bold text-slate-700 dark:text-slate-200">{row.status || 'Unknown'}</span>
+                                <span className="text-slate-500 dark:text-slate-400">{row.bookedFor || 'N/A'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="mt-5 grid gap-3 lg:grid-cols-[220px_260px_minmax(0,1fr)]">
                     <label className="block">

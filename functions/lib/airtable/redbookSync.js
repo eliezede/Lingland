@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = void 0;
+exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.getAirtableMirrorAudit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const axios_1 = __importDefault(require("axios"));
@@ -3008,6 +3008,68 @@ const syncAirtableOperations = async (mode, modules) => {
     }
     return result;
 };
+const countByStatus = (values) => values.reduce((acc, value) => {
+    const label = normalize(value) || 'Unknown';
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+}, {});
+const getMirrorAuditSample = (records, platformBySourceId) => records
+    .filter(record => !platformBySourceId.has(record.id))
+    .slice(0, 50)
+    .map(record => ({
+    sourceRecordId: record.id,
+    jobNumber: normalize(record.fields['Job Number']) || normalize(record.fields['TR NUMBER']) || record.id,
+    status: normalize(record.fields.Status),
+    bookedFor: normalize(record.fields['Booking Date & Time']) || normalize(record.fields['Booking Date'])
+}));
+exports.getAirtableMirrorAudit = functions.runWith({
+    secrets: ['AIRTABLE_API_KEY'],
+    timeoutSeconds: 540,
+    memory: '1GB'
+}).https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
+    const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(data?.limitRecords || 5000));
+    const lastSyncIso = await getLastSyncIso();
+    const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
+    const redbookFormula = buildAirtableFormula(syncStrategy, redbookTableName, lastSyncIso);
+    const redbookBatch = await fetchAirtableRecordBatch(limitRecords, DEFAULT_TABLE_NAME, '', { filterByFormula: redbookFormula, strategy: syncStrategy });
+    const platformSnap = await db.collection('bookings')
+        .where('sourceTable', '==', DEFAULT_TABLE_NAME)
+        .get();
+    const platformDocs = platformSnap.docs.filter(doc => normalize(doc.data().sourceRecordId));
+    const platformBySourceId = new Map(platformDocs.map(doc => [normalize(doc.data().sourceRecordId), doc]));
+    const airtableIds = new Set(redbookBatch.records.map(record => record.id));
+    const matched = redbookBatch.records.filter(record => platformBySourceId.has(record.id));
+    const platformOnlyDocs = platformDocs.filter(doc => !airtableIds.has(normalize(doc.data().sourceRecordId)));
+    return {
+        success: true,
+        syncStrategy,
+        limitRecords,
+        sourceTable: redbookBatch.tableName,
+        filterByFormula: redbookBatch.filterByFormula || '',
+        generatedAt: new Date().toISOString(),
+        airtableRecords: redbookBatch.records.length,
+        platformRecords: platformDocs.length,
+        matchedRecords: matched.length,
+        missingInPlatformCount: redbookBatch.records.length - matched.length,
+        platformOnlyCount: platformOnlyDocs.length,
+        nextOffset: redbookBatch.nextOffset || '',
+        airtableStatusCounts: countByStatus(redbookBatch.records.map(record => normalize(record.fields.Status))),
+        platformStatusCounts: countByStatus(platformDocs.map(doc => normalize(doc.data().sourceStatusRaw) || normalize(doc.data().status))),
+        missingInPlatform: getMirrorAuditSample(redbookBatch.records, platformBySourceId),
+        platformOnly: platformOnlyDocs.slice(0, 50).map(doc => {
+            const booking = doc.data();
+            return {
+                bookingId: doc.id,
+                sourceRecordId: normalize(booking.sourceRecordId),
+                jobNumber: normalize(booking.jobNumber) || normalize(booking.displayRef) || doc.id,
+                status: normalize(booking.sourceStatusRaw) || normalize(booking.status),
+                lastSyncedAt: normalize(booking.lastSyncedAt)
+            };
+        })
+    };
+});
 exports.syncRedbookJobs = functions.runWith({
     secrets: ['AIRTABLE_API_KEY'],
     timeoutSeconds: 540,
