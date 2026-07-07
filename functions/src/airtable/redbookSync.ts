@@ -3486,6 +3486,37 @@ export const getAirtableMirrorAudit = functions.runWith({
   };
 });
 
+export const getAirtableSyncAuditTrail = functions.runWith({
+  timeoutSeconds: 60,
+  memory: '256MB'
+}).https.onCall(async (data, context) => {
+  await assertAdmin(context);
+
+  const runLimit = Math.min(Math.max(Number(data?.runLimit || 5), 1), 25);
+  const conflictLimit = Math.min(Math.max(Number(data?.conflictLimit || 50), 1), 100);
+  const [runsSnap, conflictsSnap] = await Promise.all([
+    db.collection('syncRuns')
+      .orderBy('finishedAt', 'desc')
+      .limit(runLimit)
+      .get(),
+    db.collection('syncConflicts')
+      .where('resolutionStatus', '==', 'OPEN')
+      .limit(conflictLimit)
+      .get()
+  ]);
+
+  return {
+    runs: runsSnap.docs.map(doc => ({
+      id: doc.id,
+      ...cleanReportData(doc.data())
+    })),
+    conflicts: conflictsSnap.docs.map(doc => ({
+      id: doc.id,
+      ...cleanReportData(doc.data())
+    }))
+  };
+});
+
 export const syncRedbookJobs = functions.runWith({
   secrets: ['AIRTABLE_API_KEY'],
   timeoutSeconds: 540,

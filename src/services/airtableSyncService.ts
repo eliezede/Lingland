@@ -108,6 +108,11 @@ export type AirtableSyncConflict = {
 
 export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
 
+export type AirtableSyncAuditTrail = {
+  runs: AirtableSyncRunSummary[];
+  conflicts: AirtableSyncConflict[];
+};
+
 export type AirtableMirrorAuditRow = {
   sourceRecordId?: string;
   bookingId?: string;
@@ -217,6 +222,12 @@ export const AirtableSyncService = {
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {
     const snap = await getDoc(doc(db, 'system', 'airtableSyncCenter'));
     return snap.exists() ? snap.data() as AirtableSyncCheckpoint : null;
+  },
+
+  getAuditTrail: async (runLimit = 5, conflictLimit = 50): Promise<AirtableSyncAuditTrail> => {
+    const auditFn = httpsCallable(functions, 'getAirtableSyncAuditTrail');
+    const response = await auditFn({ runLimit, conflictLimit });
+    return response.data as AirtableSyncAuditTrail;
   },
 
   getDependencyCounts: async (): Promise<AirtableDependencyCounts> => {

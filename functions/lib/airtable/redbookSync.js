@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.getAirtableMirrorAudit = void 0;
+exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const axios_1 = __importDefault(require("axios"));
@@ -3068,6 +3068,34 @@ exports.getAirtableMirrorAudit = functions.runWith({
                 lastSyncedAt: normalize(booking.lastSyncedAt)
             };
         })
+    };
+});
+exports.getAirtableSyncAuditTrail = functions.runWith({
+    timeoutSeconds: 60,
+    memory: '256MB'
+}).https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const runLimit = Math.min(Math.max(Number(data?.runLimit || 5), 1), 25);
+    const conflictLimit = Math.min(Math.max(Number(data?.conflictLimit || 50), 1), 100);
+    const [runsSnap, conflictsSnap] = await Promise.all([
+        db.collection('syncRuns')
+            .orderBy('finishedAt', 'desc')
+            .limit(runLimit)
+            .get(),
+        db.collection('syncConflicts')
+            .where('resolutionStatus', '==', 'OPEN')
+            .limit(conflictLimit)
+            .get()
+    ]);
+    return {
+        runs: runsSnap.docs.map(doc => ({
+            id: doc.id,
+            ...cleanReportData(doc.data())
+        })),
+        conflicts: conflictsSnap.docs.map(doc => ({
+            id: doc.id,
+            ...cleanReportData(doc.data())
+        }))
     };
 });
 exports.syncRedbookJobs = functions.runWith({

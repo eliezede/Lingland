@@ -79,7 +79,9 @@ Implementation note 2026-07-07:
 - Reconciliation UI now has a `Mirror proof` action comparing Airtable records returned by the active sync strategy against platform bookings by `sourceRecordId`.
 - The audit exposes Airtable/platform/matched/missing/outside-set counts, status-count breakdowns and a sample of missing Airtable records.
 - This directly addresses the observed issue where Airtable showed 9 `Opened` jobs while the platform showed only 3 after a partial sync.
-- Build verified for app and functions. Remote function deployment is required before the button can run in production.
+- Deployed `getAirtableMirrorAudit` and hosting. Live proof on 2026-07-07 showed 2,122 Airtable REDBOOK records in `OPEN_WORKFLOW`, 2,214 platform REDBOOK records, 2,059 matched and 63 missing from the platform for the selected strategy.
+- Added admin callable `getAirtableSyncAuditTrail` so Migration/Reconciliation no longer reads `syncRuns` and `syncConflicts` directly from the browser, avoiding Firestore permission failures.
+- Build verified for app and functions.
 
 Acceptance:
 

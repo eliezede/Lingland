@@ -239,12 +239,9 @@ export const AdminMigration = () => {
 
   const loadSyncAuditTrail = async () => {
     try {
-      const [runs, conflicts] = await Promise.all([
-        AirtableSyncService.getRecentRuns(),
-        AirtableSyncService.getOpenConflicts()
-      ]);
-      setRecentRuns(runs);
-      setOpenConflicts(conflicts);
+      const auditTrail = await AirtableSyncService.getAuditTrail();
+      setRecentRuns(auditTrail.runs);
+      setOpenConflicts(auditTrail.conflicts);
     } catch (err) {
       console.warn('Failed to load Airtable sync audit trail', err);
       setRecentRuns([]);
