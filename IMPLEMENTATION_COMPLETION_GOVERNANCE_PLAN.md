@@ -81,6 +81,9 @@ Implementation note 2026-07-07:
 - This directly addresses the observed issue where Airtable showed 9 `Opened` jobs while the platform showed only 3 after a partial sync.
 - Deployed `getAirtableMirrorAudit` and hosting. Live proof on 2026-07-07 showed 2,122 Airtable REDBOOK records in `OPEN_WORKFLOW`, 2,214 platform REDBOOK records, 2,059 matched and 63 missing from the platform for the selected strategy.
 - Added admin callable `getAirtableSyncAuditTrail` so Migration/Reconciliation no longer reads `syncRuns` and `syncConflicts` directly from the browser, avoiding Firestore permission failures.
+- Added persistent sync execution feedback in the Migration UI so a Dry Run/Write Sync shows an in-page running state and a durable error if the callable fails.
+- Optimized REDBOOK `OPEN_WORKFLOW`/`RECENT_OPEN` processing to pre-load existing platform records and process only missing records, source-tracking backfill candidates and real status divergences instead of remapping every active Airtable row.
+- Firebase logs after deployment showed the previously timing-out REDBOOK Dry Run completing with status 200 in approximately 264 seconds. Further optimization is still required before marking the daily cycle as fully ergonomic.
 - Build verified for app and functions.
 
 Acceptance:

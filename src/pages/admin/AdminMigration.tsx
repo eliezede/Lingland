@@ -130,6 +130,8 @@ export const AdminMigration = () => {
   const [syncStrategy, setSyncStrategy] = useState<AirtableSyncStrategy>('OPEN_WORKFLOW');
   const [recordLimit, setRecordLimit] = useState(() => getStrategyConfig('OPEN_WORKFLOW').defaultLimit);
   const [syncResult, setSyncResult] = useState<AirtableSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncAttemptLabel, setSyncAttemptLabel] = useState<string>('');
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
   const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
   const [dependencyCounts, setDependencyCounts] = useState<AirtableDependencyCounts>({});
@@ -351,6 +353,8 @@ export const AdminMigration = () => {
 
     setLoading(true);
     setSyncResult(null);
+    setSyncError(null);
+    setSyncAttemptLabel(`${dryRun ? 'Dry Run' : 'Write Sync'} · ${moduleLabel} · ${activeStrategyConfig.label}`);
     try {
       const result = await AirtableSyncService.run(dryRun, modules, recordLimit, syncStrategy);
       setSyncResult(result);
@@ -367,7 +371,9 @@ export const AdminMigration = () => {
         result.success ? 'success' : 'error'
       );
     } catch (err: any) {
-      showToast(err?.message || 'Airtable sync failed', 'error');
+      const message = err?.message || 'Airtable sync failed';
+      setSyncError(message);
+      showToast(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -765,6 +771,24 @@ export const AdminMigration = () => {
             <div className="flex gap-2">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" />
               <span>Run a clean {activeDryRunLabel} with the current {activeStrategyConfig.label} strategy before writing data.</span>
+            </div>
+          </div>
+        )}
+
+        {loading && syncAttemptLabel && (
+          <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+            <div className="flex gap-2">
+              <Loader2 size={18} className="mt-0.5 shrink-0 animate-spin" />
+              <span>{syncAttemptLabel} is running. Keep this page open until the result appears.</span>
+            </div>
+          </div>
+        )}
+
+        {syncError && !loading && (
+          <div className="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+            <div className="flex gap-2">
+              <AlertCircle size={18} className="mt-0.5 shrink-0" />
+              <span>{syncAttemptLabel ? `${syncAttemptLabel} failed: ` : ''}{syncError}</span>
             </div>
           </div>
         )}

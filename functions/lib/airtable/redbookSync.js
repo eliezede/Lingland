@@ -1219,6 +1219,37 @@ const fetchAirtableRecords = async (limitRecords, tableName = DEFAULT_TABLE_NAME
     const batch = await fetchAirtableRecordBatch(limitRecords, tableName);
     return batch.records;
 };
+const getExistingRedbookBySourceId = async () => {
+    const snap = await db.collection('bookings')
+        .where('sourceTable', '==', DEFAULT_TABLE_NAME)
+        .get();
+    return new Map(snap.docs
+        .map(doc => [normalize(doc.data().sourceRecordId), doc])
+        .filter(([sourceRecordId]) => Boolean(sourceRecordId)));
+};
+const shouldUseSelectiveRedbookProcessing = (strategy) => (strategy === 'OPEN_WORKFLOW' || strategy === 'RECENT_OPEN');
+const shouldProcessRedbookRecord = (record, existingBySourceId) => {
+    const existingSnap = existingBySourceId.get(record.id);
+    if (!existingSnap)
+        return true;
+    const existing = existingSnap.data();
+    const rawStatus = normalize(record.fields.Status);
+    const existingStatus = normalize(existing.sourceStatusRaw)
+        || normalize(existing.airtableOperationalStatus)
+        || normalize(existing.status);
+    const sourceBackfillNeeded = needsSourceTrackingBackfill(existing, {
+        sourceSystem: 'AIRTABLE',
+        sourceBaseId: DEFAULT_BASE_ID,
+        sourceTable: DEFAULT_TABLE_NAME,
+        sourceRecordId: record.id,
+        snapshotHash: 'pending'
+    });
+    if (sourceBackfillNeeded)
+        return true;
+    if (rawStatus && rawStatus.toLowerCase() !== existingStatus.toLowerCase())
+        return true;
+    return false;
+};
 const findExistingBooking = async (record, jobNumber, legacyRef) => {
     const bySource = await db.collection('bookings')
         .where('sourceRecordId', '==', record.id)
@@ -2554,7 +2585,12 @@ const syncRecords = async (mode, includeFinance = true) => {
     const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
     const redbookFormula = buildAirtableFormula(mode.syncStrategy, redbookTableName, lastSyncIso);
     const redbookBatch = await fetchAirtableRecordBatch(mode.limitRecords, DEFAULT_TABLE_NAME, mode.tableOffsets?.[DEFAULT_TABLE_NAME] || '', { filterByFormula: redbookFormula, strategy: mode.syncStrategy });
-    const records = redbookBatch.records;
+    const redbookExistingBySourceId = await getExistingRedbookBySourceId();
+    const allRedbookRecords = redbookBatch.records;
+    const selectiveRedbookProcessing = shouldUseSelectiveRedbookProcessing(mode.syncStrategy);
+    const records = selectiveRedbookProcessing
+        ? allRedbookRecords.filter(record => shouldProcessRedbookRecord(record, redbookExistingBySourceId))
+        : allRedbookRecords;
     const workflowSourceRecordIds = includeFinance ? await getWorkflowSourceRecordIds(mode.syncStrategy) : new Set();
     const [rawClientInvoiceRecords, rawInterpreterInvoiceRecords] = includeFinance
         ? await Promise.all([
@@ -2574,7 +2610,7 @@ const syncRecords = async (mode, includeFinance = true) => {
     const stats = {
         created: 0,
         updated: 0,
-        skipped: 0,
+        skipped: selectiveRedbookProcessing ? allRedbookRecords.length - records.length : 0,
         conflict: 0,
         error: 0
     };
@@ -2608,17 +2644,20 @@ const syncRecords = async (mode, includeFinance = true) => {
             let existingRef = null;
             let existingSnap = null;
             let existing = null;
+            const preloadedExistingSnap = redbookExistingBySourceId.get(record.id);
             if (mode.dryRun) {
-                const bySource = await db.collection('bookings')
-                    .where('sourceRecordId', '==', record.id)
-                    .limit(1)
-                    .get();
-                existingSnap = bySource.empty ? null : bySource.docs[0];
+                existingSnap = preloadedExistingSnap || null;
                 existing = existingSnap?.exists ? existingSnap.data() || null : null;
             }
             else {
-                existingRef = await findExistingBooking(record, mapped.booking.jobNumber, mapped.booking.legacyAirtableRef);
-                existingSnap = await existingRef.get();
+                if (preloadedExistingSnap) {
+                    existingRef = preloadedExistingSnap.ref;
+                    existingSnap = preloadedExistingSnap;
+                }
+                else {
+                    existingRef = await findExistingBooking(record, mapped.booking.jobNumber, mapped.booking.legacyAirtableRef);
+                    existingSnap = await existingRef.get();
+                }
                 existing = existingSnap.exists ? existingSnap.data() || null : null;
             }
             mapped.booking.status = preserveStatusIfLocalAhead(existing?.status, mapped.booking.status, platformMode.sourceOfTruth);
@@ -2771,7 +2810,8 @@ const syncRecords = async (mode, includeFinance = true) => {
         importMode,
         triggeredBy: mode.triggeredBy,
         userId: mode.userId || '',
-        totalRecords: records.length,
+        totalRecords: allRedbookRecords.length,
+        processedRecords: records.length,
         nextOffsets,
         financeRecords: {
             clientInvoices: clientInvoiceRecords.length,
@@ -2803,7 +2843,8 @@ const syncRecords = async (mode, includeFinance = true) => {
             lastRunId: runRef.id,
             lastRunAt: finishedAt,
             lastStats: stats,
-            lastTotalRecords: records.length,
+            lastTotalRecords: allRedbookRecords.length,
+            lastProcessedRecords: records.length,
             lastSyncStrategy: mode.syncStrategy,
             tableOffsets: nextOffsets,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
