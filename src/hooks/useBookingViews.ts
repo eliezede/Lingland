@@ -114,7 +114,8 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
             serviceCategory: ServiceCategory.TRANSLATION
         },
         sortBy: 'dateAsc',
-        groupBy: 'status'
+        groupBy: 'status',
+        hiddenColumns: ['location', 'contact', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef', 'translationFormat']
     },
     {
         id: 'sys-timesheets',
@@ -141,7 +142,8 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
             dateRange: 'NEXT_7_DAYS'
         },
         sortBy: 'dateAsc',
-        groupBy: 'date'
+        groupBy: 'date',
+        hiddenColumns: ['status', 'location', 'contact', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef', 'translationFormat']
     },
     {
         id: 'sys-today-tomorrow',

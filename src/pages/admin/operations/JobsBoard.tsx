@@ -80,8 +80,9 @@ type BoardMode = 'table' | 'calendar';
 type CalendarViewMode = 'month' | 'week';
 type ServiceScope = 'all' | 'interpreting' | 'translation';
 
-const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef'];
-const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin'];
+const TRANSLATION_ONLY_COLUMNS = ['translationDeadline', 'translationVolume', 'translationFormat', 'deliveryState'];
+const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef', ...TRANSLATION_ONLY_COLUMNS];
+const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin', ...TRANSLATION_ONLY_COLUMNS];
 const FINANCE_COLUMN_ORDER = [
     'jobNumber',
     'billingState',
@@ -1063,6 +1064,71 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             ),
         },
         {
+            id: 'translationDeadline',
+            label: 'Translation Deadline',
+            width: 'minmax(144px, .78fr)',
+            icon: CalendarDays,
+            getSortValue: job => job.translationDeadline || job.date || '',
+            render: job => isTranslationJob(job) ? (
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {formatDate(job.translationDeadline || job.date)}
+                    </p>
+                    <p className="truncate text-[10px] font-semibold uppercase text-slate-500">Delivery due</p>
+                </div>
+            ) : <span className="text-slate-400">-</span>,
+        },
+        {
+            id: 'translationVolume',
+            label: 'Words / Documents',
+            width: 'minmax(142px, .76fr)',
+            icon: FileText,
+            getSortValue: job => job.wordCount || 0,
+            render: job => isTranslationJob(job) ? (
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {job.wordCount ? `${job.wordCount.toLocaleString('en-GB')} words` : 'No word count'}
+                    </p>
+                    <p className="truncate text-xs text-slate-500">
+                        {job.numberOfDocs ? `${job.numberOfDocs} documents` : `${job.sourceFiles?.length || 0} source files`}
+                    </p>
+                </div>
+            ) : <span className="text-slate-400">-</span>,
+        },
+        {
+            id: 'translationFormat',
+            label: 'Translation Format',
+            width: 'minmax(132px, .7fr)',
+            icon: FileText,
+            getSortValue: job => job.translationFormat || job.translationFormatOther || '',
+            render: job => isTranslationJob(job)
+                ? <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{job.translationFormat || job.translationFormatOther || 'Not specified'}</span>
+                : <span className="text-slate-400">-</span>,
+        },
+        {
+            id: 'deliveryState',
+            label: 'Delivery State',
+            width: 'minmax(132px, .7fr)',
+            icon: CheckCircle2,
+            getSortValue: job => job.statusMappingState?.deliveryState || (job.translationDeliveredAt ? 'DELIVERED' : job.translationCompletedAt ? 'COMPLETED' : 'PENDING'),
+            render: job => {
+                if (!isTranslationJob(job)) return <span className="text-slate-400">-</span>;
+                const state = job.statusMappingState?.deliveryState
+                    || (job.translationDeliveredAt ? 'DELIVERED' : job.translationCompletedAt ? 'COMPLETED' : 'PENDING');
+                return (
+                    <span className={`inline-flex max-w-full rounded-full px-2 py-1 text-[10px] font-black uppercase ${
+                        state === 'DELIVERED'
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : state === 'COMPLETED'
+                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                    }`}>
+                        <span className="truncate">{state}</span>
+                    </span>
+                );
+            },
+        },
+        {
             id: 'contact',
             label: 'Contact',
             width: 'minmax(150px, .8fr)',
@@ -1271,7 +1337,13 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         return [...ordered, ...remaining];
     }, [columnOrder, defaultOrderedColumns]);
 
-    const visibleColumns = orderedColumns.filter(column => column.primary || !hiddenColumns.has(column.id));
+    const requestedServiceScope = new URLSearchParams(location.search).get('service');
+    const isInterpretationFocusedView = requestedServiceScope === 'interpreting'
+        || activeView.filters.serviceCategory === ServiceCategory.INTERPRETATION;
+    const visibleColumns = orderedColumns.filter(column => (
+        (column.primary || !hiddenColumns.has(column.id))
+        && (!isInterpretationFocusedView || !TRANSLATION_ONLY_COLUMNS.includes(column.id))
+    ));
     const displayColumns = useMemo(() => {
         const visibleIds = new Set(visibleColumns.map(column => column.id));
         const activePinned = pinnedColumns.filter(columnId => visibleIds.has(columnId));

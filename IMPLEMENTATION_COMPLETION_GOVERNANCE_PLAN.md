@@ -93,6 +93,13 @@ Implementation note 2026-07-07, pass 2:
 - The record-id Airtable fetch now uses strict formula mode, so it will fail safely instead of falling back to an unfiltered fetch if Airtable rejects the formula.
 - Migration/Reconciliation UI now normalizes Firestore Timestamp-shaped values before rendering sync runs and conflicts, preventing Error Boundary crashes from serialized `{_seconds, _nanoseconds}` objects.
 
+Live verification 2026-07-08:
+
+- Browser verification completed against the local Migration/Reconciliation UI.
+- `OPEN_WORKFLOW` Mirror Proof returned 2,128 Airtable REDBOOK records, 2,214 platform REDBOOK records, 2,059 matched, 69 missing and 155 platform records outside the selected set.
+- The increase from 63 to 69 missing records while matched records remained stable proves that the Airtable source continues to change and that a repeatable repair cycle is required.
+- Targeted Dry repair completed without an error and enabled Write repair. The write was intentionally not executed without explicit confirmation because it will create/update real platform records.
+
 Acceptance:
 
 - [ ] Admin can run one safe daily Mirror Cycle without knowing Airtable table internals.
@@ -100,7 +107,8 @@ Acceptance:
 - [ ] Closed/paid historical jobs do not make daily sync unnecessarily heavy.
 - [ ] Every skipped terminal record has an auditable reason.
 - [ ] Admin can run a read-only mirror proof and see whether Airtable REDBOOK and platform bookings are balanced for the selected strategy.
-- [ ] Admin can repair missing REDBOOK mirror gaps in controlled batches after a clean Dry repair.
+- [x] Admin can prepare missing REDBOOK mirror gaps in controlled batches after a clean Dry repair.
+- [ ] Admin has executed a confirmed Write repair and re-run Mirror Proof to prove the missing count decreases.
 
 ## 4. Current Baseline After Latest Deploy
 
@@ -359,6 +367,13 @@ Evidence:
 
 Status: PARTIAL. Translation records now enter the shared bookings model with `serviceCategory: TRANSLATION`, translator resolution, Airtable source tracking, translation-specific status state, deadline/completion/delivery fields, source documents and a dedicated Booking Detail section. The importer also parses combined language values such as `French to English` so future syncs do not display duplicated language strings. Remaining work is evidence-driven: dry run with real translation samples, Jobs Board translation column/view polish, and billing handoff validation.
 
+Implementation note 2026-07-08:
+
+- Added translation-only Jobs Board columns for delivery deadline, word/document volume, requested format and delivery state.
+- Translation system views now expose the operational translation fields while keeping generic/finance noise hidden.
+- Interpretation-focused views enforce a service boundary so old saved layouts cannot leak translation-only columns back into the interpretation workspace.
+- Browser verification confirmed the Translation view exposes `Translation Deadline`, `Words / Documents` and `Delivery State`; the Interpreting view exposes none of the translation-only columns.
+
 Goal: translations enter the same platform as jobs with `serviceCategory: TRANSLATION`, not as a disconnected system.
 
 Tables:
@@ -386,13 +401,13 @@ Tasks:
 - [x] Resolve client.
 - [x] Resolve translator.
 - [x] Add translation-specific fields to Booking Detail.
-- [ ] Add translation-specific optional columns/views to Jobs Board.
-- [ ] Ensure interpretation views do not get polluted by translation-only columns.
+- [x] Add translation-specific optional columns/views to Jobs Board.
+- [x] Ensure interpretation views do not get polluted by translation-only columns.
 
 Acceptance:
 
-- [ ] Translation appears in Jobs Board.
-- [ ] Translation has correct service badge and fields.
+- [x] Translation appears in Jobs Board.
+- [x] Translation has correct service badge and fields.
 - [ ] Translation can flow into billing.
 
 Evidence:

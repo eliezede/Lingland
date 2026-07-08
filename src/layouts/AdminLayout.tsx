@@ -208,8 +208,20 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const isFinanceCalendarView = location.pathname === '/admin/billing' && boardModeParam === 'calendar';
   const buildScopedBoardPath = (path: '/admin/bookings' | '/admin/billing', service?: 'interpreting' | 'translation') => {
     const params = new URLSearchParams(location.pathname === path ? location.search : '');
-    if (service) params.set('service', service);
-    else params.delete('service');
+    if (service) {
+      params.set('service', service);
+      const currentView = params.get('view');
+      const translationOnlyViews = new Set(['sys-translations', 'sys-translations-due', 'fin-translation-invoices']);
+      const interpretingOnlyViews = new Set(['sys-interpreting', 'fin-interpreting-invoices']);
+      if (
+        (service === 'interpreting' && currentView && translationOnlyViews.has(currentView))
+        || (service === 'translation' && currentView && interpretingOnlyViews.has(currentView))
+      ) {
+        params.set('view', path === '/admin/billing' ? 'fin-billing-queue' : 'sys-all');
+      }
+    } else {
+      params.delete('service');
+    }
     return `${path}${params.toString() ? `?${params.toString()}` : ''}`;
   };
   const buildBoardModePath = (path: '/admin/bookings' | '/admin/billing', mode: 'table' | 'calendar') => {
