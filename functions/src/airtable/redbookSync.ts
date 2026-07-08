@@ -3507,8 +3507,14 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   return result;
 };
 
+const canonicalStatusLabel = (value?: string) => {
+  const raw = normalize(value);
+  if (!raw) return 'UNKNOWN';
+  return canonicalAirtableStatus(raw).replace(/\s+/g, '_').toUpperCase();
+};
+
 const countByStatus = (values: Array<string | undefined>) => values.reduce<Record<string, number>>((acc, value) => {
-  const label = normalize(value) || 'Unknown';
+  const label = canonicalStatusLabel(value);
   acc[label] = (acc[label] || 0) + 1;
   return acc;
 }, {});
@@ -3525,6 +3531,30 @@ const getMirrorAuditSample = (
     status: normalize(record.fields.Status),
     bookedFor: normalize(record.fields['Booking Date & Time']) || normalize(record.fields['Booking Date'])
   }));
+
+const getMirrorStatusDivergences = (
+  records: AirtableRecord[],
+  platformBySourceId: Map<string, admin.firestore.QueryDocumentSnapshot>
+) => records.flatMap(record => {
+  const platformDoc = platformBySourceId.get(record.id);
+  if (!platformDoc) return [];
+  const booking = platformDoc.data();
+  const airtableStatus = canonicalStatusLabel(normalize(record.fields.Status));
+  const platformSourceStatus = canonicalStatusLabel(
+    normalize(booking.sourceStatusRaw) || normalize(booking.airtableOperationalStatus)
+  );
+  if (airtableStatus === platformSourceStatus) return [];
+  return [{
+    sourceRecordId: record.id,
+    bookingId: platformDoc.id,
+    jobNumber: normalize(record.fields['Job Number'])
+      || normalize(booking.jobNumber)
+      || normalize(booking.displayRef)
+      || record.id,
+    airtableStatus,
+    platformSourceStatus
+  }];
+});
 
 export const getAirtableMirrorAudit = functions.runWith({
   secrets: ['AIRTABLE_API_KEY'],
@@ -3553,6 +3583,7 @@ export const getAirtableMirrorAudit = functions.runWith({
   const airtableIds = new Set(redbookBatch.records.map(record => record.id));
   const matched = redbookBatch.records.filter(record => platformBySourceId.has(record.id));
   const platformOnlyDocs = platformDocs.filter(doc => !airtableIds.has(normalize(doc.data().sourceRecordId)));
+  const statusDivergences = getMirrorStatusDivergences(redbookBatch.records, platformBySourceId);
 
   return {
     success: true,
@@ -3566,10 +3597,12 @@ export const getAirtableMirrorAudit = functions.runWith({
     matchedRecords: matched.length,
     missingInPlatformCount: redbookBatch.records.length - matched.length,
     platformOnlyCount: platformOnlyDocs.length,
+    statusDivergenceCount: statusDivergences.length,
     nextOffset: redbookBatch.nextOffset || '',
     airtableStatusCounts: countByStatus(redbookBatch.records.map(record => normalize(record.fields.Status))),
     platformStatusCounts: countByStatus(platformDocs.map(doc => normalize(doc.data().sourceStatusRaw) || normalize(doc.data().status))),
     missingInPlatform: getMirrorAuditSample(redbookBatch.records, platformBySourceId),
+    statusDivergences: statusDivergences.slice(0, 50),
     platformOnly: platformOnlyDocs.slice(0, 50).map(doc => {
       const booking = doc.data();
       return {
@@ -3623,7 +3656,9 @@ export const repairMissingRedbookRecords = functions.runWith({
 
   const dryRun = Boolean(data?.dryRun);
   const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
-  const limitRecords = Math.min(Math.max(Number(data?.limitRecords || 100), 1), 100);
+  // A booking repair also resolves clients, assignments, workflow artifacts and
+  // audit events. Keep each callable deliberately small so repair is resumable.
+  const limitRecords = Math.min(Math.max(Number(data?.limitRecords || 20), 1), 25);
   const lastSyncIso = await getLastSyncIso();
   const redbookTableName = process.env.AIRTABLE_REDBOOK_TABLE || DEFAULT_TABLE_NAME;
   const redbookFormula = buildAirtableFormula(syncStrategy, redbookTableName, lastSyncIso);
@@ -3634,10 +3669,11 @@ export const repairMissingRedbookRecords = functions.runWith({
     { filterByFormula: redbookFormula, strategy: syncStrategy }
   );
   const existingBySourceId = await getExistingRedbookBySourceId();
-  const missingIds = redbookBatch.records
+  const allMissingIds = redbookBatch.records
     .filter(record => !existingBySourceId.has(record.id))
-    .map(record => record.id)
-    .slice(0, limitRecords);
+    .map(record => record.id);
+  const missingIds = allMissingIds.slice(0, limitRecords);
+  const remainingBeforeRepair = Math.max(allMissingIds.length - missingIds.length, 0);
 
   if (!missingIds.length) {
     return {
@@ -3648,6 +3684,8 @@ export const repairMissingRedbookRecords = functions.runWith({
       totalRecords: redbookBatch.records.length,
       processedRecords: 0,
       missingRecords: 0,
+      remainingMissingRecords: 0,
+      hasMoreMissingRecords: false,
       stats: emptyActionStats(),
       details: [],
       message: 'No missing REDBOOK records found for the selected strategy.'
@@ -3667,6 +3705,8 @@ export const repairMissingRedbookRecords = functions.runWith({
     ...result,
     repairMode: 'MISSING_REDBOOK',
     missingRecords: missingIds.length,
+    remainingMissingRecords: remainingBeforeRepair,
+    hasMoreMissingRecords: remainingBeforeRepair > 0,
     sourceRecordIds: missingIds
   };
 });

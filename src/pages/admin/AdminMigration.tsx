@@ -314,7 +314,7 @@ export const AdminMigration = () => {
     setSyncResult(null);
     setSyncAttemptLabel(`${dryRun ? 'Dry repair' : 'Write repair'} · Missing REDBOOK · ${activeStrategyConfig.label}`);
     try {
-      const result = await AirtableSyncService.repairMissingRedbook(dryRun, 100, syncStrategy);
+      const result = await AirtableSyncService.repairMissingRedbook(dryRun, 20, syncStrategy);
       setSyncResult(result);
       setCleanRepairDryRun(dryRun && result.success && result.stats.error === 0);
       await Promise.all([loadCheckpoint(), loadDependencyCounts(), loadSyncAuditTrail()]);
@@ -324,8 +324,8 @@ export const AdminMigration = () => {
       }
       showToast(
         dryRun
-          ? `Dry repair complete: ${result.missingRecords || 0} missing REDBOOK record(s) inspected.`
-          : `Repair complete: ${result.stats.created} created, ${result.stats.updated} updated.`,
+          ? `Dry repair complete: ${result.missingRecords || 0} record(s) inspected${result.hasMoreMissingRecords ? `, ${result.remainingMissingRecords} queued after this batch` : ''}.`
+          : `Repair complete: ${result.stats.created} created, ${result.stats.updated} updated${result.hasMoreMissingRecords ? `; ${result.remainingMissingRecords} remain for the next safe batch` : ''}.`,
         result.success ? 'success' : 'error'
       );
     } catch (err: any) {
@@ -1245,11 +1245,12 @@ export const AdminMigration = () => {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
                         <StatPill label="Airtable" value={mirrorAudit.airtableRecords} />
                         <StatPill label="Platform" value={mirrorAudit.platformRecords} />
                         <StatPill label="Matched" value={mirrorAudit.matchedRecords} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
                         <StatPill label="Missing" value={mirrorAudit.missingInPlatformCount} className={mirrorAudit.missingInPlatformCount ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
+                        <StatPill label="Status drift" value={mirrorAudit.statusDivergenceCount || 0} className={mirrorAudit.statusDivergenceCount ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
                         <StatPill label="Outside set" value={mirrorAudit.platformOnlyCount} />
                       </div>
 
@@ -1258,7 +1259,7 @@ export const AdminMigration = () => {
                           <div>
                             <p className="text-sm font-black text-red-800 dark:text-red-100">Repair missing REDBOOK records</p>
                             <p className="text-sm text-red-700 dark:text-red-200">
-                              Targets only records that Airtable returns for this strategy but the platform does not have by source record id.
+                              Targets only missing source record ids. Repairs run in resumable batches of 20 to avoid partial writes caused by callable timeouts.
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -1321,6 +1322,28 @@ export const AdminMigration = () => {
                                 </div>
                                 <span className="font-bold text-slate-700 dark:text-slate-200">{row.status || 'Unknown'}</span>
                                 <span className="text-slate-500 dark:text-slate-400">{row.bookedFor || 'N/A'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {mirrorAudit.statusDivergences?.length > 0 && (
+                        <div className="overflow-hidden rounded-lg border border-amber-200 dark:border-amber-900/40">
+                          <div className="grid grid-cols-[minmax(180px,1fr)_140px_140px] gap-3 bg-amber-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+                            <span>Matched job with status drift</span>
+                            <span>Airtable</span>
+                            <span>Platform source</span>
+                          </div>
+                          <div className="divide-y divide-amber-100 bg-white dark:divide-amber-900/30 dark:bg-slate-900">
+                            {mirrorAudit.statusDivergences.slice(0, 10).map(row => (
+                              <div key={row.sourceRecordId} className="grid grid-cols-[minmax(180px,1fr)_140px_140px] gap-3 px-4 py-3 text-sm">
+                                <div className="min-w-0">
+                                  <p className="truncate font-black text-slate-900 dark:text-white">{row.jobNumber}</p>
+                                  <p className="truncate text-xs text-slate-500">{row.sourceRecordId}</p>
+                                </div>
+                                <span className="font-bold text-slate-700 dark:text-slate-200">{row.airtableStatus}</span>
+                                <span className="font-bold text-amber-700 dark:text-amber-200">{row.platformSourceStatus}</span>
                               </div>
                             ))}
                           </div>

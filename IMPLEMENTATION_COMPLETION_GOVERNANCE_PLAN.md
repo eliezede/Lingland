@@ -108,7 +108,10 @@ Acceptance:
 - [ ] Every skipped terminal record has an auditable reason.
 - [ ] Admin can run a read-only mirror proof and see whether Airtable REDBOOK and platform bookings are balanced for the selected strategy.
 - [x] Admin can prepare missing REDBOOK mirror gaps in controlled batches after a clean Dry repair.
-- [ ] Admin has executed a confirmed Write repair and re-run Mirror Proof to prove the missing count decreases.
+- [x] Admin has executed a confirmed Write repair and re-run Mirror Proof to prove the missing count decreases (69 to 2 during the controlled repair run).
+- [x] Missing REDBOOK repair is bounded to resumable batches and reports the remaining queue.
+- [x] Mirror proof status counts are canonicalized for comparison while preserving each job's raw Airtable status.
+- [x] Mirror proof compares canonical Airtable status against platform source status per matched `sourceRecordId` and exposes drift samples.
 
 ## 4. Current Baseline After Latest Deploy
 

@@ -59,6 +59,14 @@ export type AirtableSyncResult = {
   moduleResults: AirtableModuleResult[];
 };
 
+export type AirtableRedbookRepairResult = AirtableSyncResult & {
+  missingRecords?: number;
+  remainingMissingRecords?: number;
+  hasMoreMissingRecords?: boolean;
+  repairMode?: string;
+  sourceRecordIds?: string[];
+};
+
 export type AirtableSyncCheckpoint = {
   lastRunId?: string;
   lastRunAt?: string;
@@ -122,6 +130,14 @@ export type AirtableMirrorAuditRow = {
   lastSyncedAt?: string;
 };
 
+export type AirtableMirrorStatusDivergence = {
+  sourceRecordId: string;
+  bookingId: string;
+  jobNumber: string;
+  airtableStatus: string;
+  platformSourceStatus: string;
+};
+
 export type AirtableMirrorAudit = {
   success: boolean;
   syncStrategy: AirtableSyncStrategy;
@@ -134,10 +150,12 @@ export type AirtableMirrorAudit = {
   matchedRecords: number;
   missingInPlatformCount: number;
   platformOnlyCount: number;
+  statusDivergenceCount: number;
   nextOffset?: string;
   airtableStatusCounts: Record<string, number>;
   platformStatusCounts: Record<string, number>;
   missingInPlatform: AirtableMirrorAuditRow[];
+  statusDivergences: AirtableMirrorStatusDivergence[];
   platformOnly: AirtableMirrorAuditRow[];
 };
 
@@ -221,12 +239,12 @@ export const AirtableSyncService = {
 
   repairMissingRedbook: async (
     dryRun: boolean,
-    limitRecords = 100,
+    limitRecords = 20,
     syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
-  ): Promise<AirtableSyncResult & { missingRecords?: number; repairMode?: string; sourceRecordIds?: string[] }> => {
+  ): Promise<AirtableRedbookRepairResult> => {
     const repairFn = httpsCallable(functions, 'repairMissingRedbookRecords');
     const response = await repairFn({ dryRun, limitRecords, syncStrategy });
-    return response.data as AirtableSyncResult & { missingRecords?: number; repairMode?: string; sourceRecordIds?: string[] };
+    return response.data as AirtableRedbookRepairResult;
   },
 
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {
