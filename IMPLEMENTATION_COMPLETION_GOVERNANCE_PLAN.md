@@ -125,18 +125,18 @@ Last deployed milestone:
 
 | Area | Current state | Label |
 | --- | --- | --- |
-| Platform mode / email suppression | `platformMode`, `communicationMode`, import mode and job numbering exist. Email/user services respect suppression/internal/live mode in key paths. | PARTIAL |
-| Manual admin operation | Staff can record interpreter response, completion, timesheet, invoice and payment in several operational screens. | PARTIAL |
+| Platform mode / email suppression | Shared fail-closed delivery policy now governs email and push. Browser verified current `SUPPRESSED` mode and audit events retain every attempted delivery. | IMPLEMENTED / PROVEN |
+| Manual admin operation | Staff can assign, record responses, complete work, submit/approve timesheets, issue invoices and record settlements for passive profiles. | IMPLEMENTED / PROVEN |
 | Airtable REDBOOK job sync | Interpretation jobs can be imported/mirrored, with source identity in parts of the model. | PARTIAL |
 | Client import | Still not fully proven from `Clients` and `Clients Book` with dedupe/conflicts. | NOT_STARTED/PARTIAL |
 | Translation import | Translation service category exists, but import from `Translations` / `Web translations` is not complete. | PARTIAL |
 | Client invoices | Interpretation invoice import/flow exists partially. Translation invoice import is not complete. | PARTIAL |
 | Interpreter/translator invoices | Interpreter payable flow exists partially. Translator invoices/payment mapping not complete. | PARTIAL |
-| Jobs Board | Strong Airtable-like UI foundation exists: views, filters, column menu, resize, freeze, pagination, manual actions. Needs final service-aware validation and view persistence audit. | PARTIAL |
+| Jobs Board | Airtable-like views, service scope, filters, column menu, resize/reorder/freeze, pagination and manual actions are implemented and browser-proven. | IMPLEMENTED / PROVEN |
 | Booking Detail/Edit | Shared record shell, nested return context, interpretation/translation panels and assignment-safe editing are browser-proven. | IMPLEMENTED / PROVEN |
 | Operations CRM / Finance CRM | Shared jobs workspace, role-specific defaults, saved views, finance lanes and responsive grid are implemented and browser-proven. | IMPLEMENTED / PROVEN |
-| Data Center / Audit Control | Now honest readiness/control pages, but not a real immutable audit ledger. | UI_ONLY/PARTIAL |
-| Interpreter app | Dashboard/jobs/timesheets improved and translation-aware in places. Needs end-to-end passive/active interpreter validation. | PARTIAL |
+| Data Center / Audit Control | Immutable semantic ledger covers operations, finance, communication and synchronization with actor/source context and before/after inspection. | IMPLEMENTED / PROVEN |
+| Interpreter app | Web/native lifecycle, imported history, offers, timesheets, translations, invoices, activation continuity and support chat are implemented. A final live interpreter credential check remains. | IMPLEMENTED / FINAL_ACCEPTANCE_PENDING |
 
 ### Phase Progress Ledger
 
@@ -772,44 +772,55 @@ Evidence recorded 2026-07-12:
 
 Goal: operational changes become durable audit events.
 
+Status: COMPLETE. Critical collections are observed server-side and the ledger exposes semantic actions with actor, source, communication and synchronization context.
+
 Tasks:
 
-- [ ] Define `auditEvents` collection/model.
-- [ ] Add writer helper.
-- [ ] Capture:
-  - [ ] actor
-  - [ ] actor role
-  - [ ] entity type/id
-  - [ ] action
-  - [ ] old value
-  - [ ] new value
-  - [ ] source
-  - [ ] communication mode
-  - [ ] sync run id if relevant
-  - [ ] timestamp
-- [ ] Wire events for:
-  - [ ] status change
-  - [ ] assignment
-  - [ ] offer response
-  - [ ] timesheet
-  - [ ] invoice issued
-  - [ ] payment received/sent
-  - [ ] email suppressed/sent
-  - [ ] sync run
-  - [ ] conflict resolution
-- [ ] Update Audit Control page to show real events.
+- [x] Define `auditEvents` collection/model.
+- [x] Add writer helper.
+- [x] Capture:
+  - [x] actor
+  - [x] actor role
+  - [x] entity type/id
+  - [x] action
+  - [x] old value
+  - [x] new value
+  - [x] source
+  - [x] communication mode
+  - [x] sync run id if relevant
+  - [x] timestamp
+- [x] Wire events for:
+  - [x] status change
+  - [x] assignment
+  - [x] offer response
+  - [x] timesheet
+  - [x] invoice issued
+  - [x] payment received/sent
+  - [x] email suppressed/sent
+  - [x] sync run
+  - [x] conflict resolution
+- [x] Update Audit Control page to show real events.
 
 Acceptance:
 
-- [ ] Audit Control is no longer a readiness-only page.
-- [ ] Critical operations have trace.
-- [ ] Go-live automation cannot bypass audit writer.
+- [x] Audit Control is no longer a readiness-only page.
+- [x] Critical operations have trace.
+- [x] Go-live automation cannot bypass audit writer.
 
 Evidence:
 
-- [ ] Browser check real audit rows.
-- [ ] Manual operation creates audit event.
-- [ ] Build passes.
+- [x] Browser check real audit rows.
+- [x] Manual operation creates audit event.
+- [x] Build passes.
+
+Evidence recorded 2026-07-12:
+
+- [x] Server-side triggers observe bookings, assignments, job events, timesheets, client/interpreter invoices, users, clients, interpreters, mail, email delivery, notifications, sync runs and sync conflicts.
+- [x] Semantic policy tests cover assignment acceptance, status changes, client payment receipt, interpreter payment sent, email suppression and conflict resolution.
+- [x] Every event stores schema version, immutable id, actor/role, source, communication mode, sync lineage, changed fields, before/after values and timestamp.
+- [x] An admin-only health check proves the writer without changing any commercial record.
+- [x] Browser evidence showed `AUDIT_HEALTH_CHECK` with `SUPER_ADMIN`, `ADMIN_DIAGNOSTIC`, `SUPPRESSED` and the expected before/after detail.
+- [x] 10 test files / 43 tests, Functions TypeScript build, web typecheck and production web build pass.
 
 ## 20. Phase O - Go-Live Readiness
 
