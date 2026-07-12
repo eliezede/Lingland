@@ -80,9 +80,30 @@ type BoardMode = 'table' | 'calendar';
 type CalendarViewMode = 'month' | 'week';
 type ServiceScope = 'all' | 'interpreting' | 'translation';
 
+interface JobsWorkspaceSnapshot {
+    searchQuery: string;
+    quickFilter: QuickFilter;
+    currentPage: number;
+    pageSize: number;
+    sortField: SortField;
+    sortDirection: 'asc' | 'desc';
+    groupField: GroupField;
+    columnFilter: ColumnFilter;
+    financeLane: FinanceLane;
+    boardMode: BoardMode;
+    calendarViewMode: CalendarViewMode;
+    calendarCursorDate: string;
+    gridScrollLeft: number;
+    gridScrollTop: number;
+}
+
+interface JobsWorkspaceReturnState {
+    workspaceSnapshot?: Partial<JobsWorkspaceSnapshot>;
+}
+
 const TRANSLATION_ONLY_COLUMNS = ['translationDeadline', 'translationVolume', 'translationFormat', 'deliveryState'];
-const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'professionalCost', 'margin', 'costCode', 'invoiceRef', ...TRANSLATION_ONLY_COLUMNS];
-const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'margin', ...TRANSLATION_ONLY_COLUMNS];
+const OPERATIONS_DEFAULT_HIDDEN_COLUMNS = ['contact', 'service', 'duration', 'amount', 'vat', 'professionalCost', 'margin', 'costCode', 'invoiceRef', ...TRANSLATION_ONLY_COLUMNS];
+const FINANCE_DEFAULT_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', ...TRANSLATION_ONLY_COLUMNS];
 const FINANCE_COLUMN_ORDER = [
     'jobNumber',
     'billingState',
@@ -92,7 +113,9 @@ const FINANCE_COLUMN_ORDER = [
     'interpreter',
     'service',
     'amount',
+    'vat',
     'professionalCost',
+    'margin',
     'costCode',
     'invoiceRef',
     'action',
@@ -269,6 +292,52 @@ const getNextAction = (job: Booking) => {
 };
 
 const isTranslationJob = (job: Booking) => job.serviceCategory === ServiceCategory.TRANSLATION;
+
+const firstNonZeroAmount = (...values: unknown[]) => {
+    for (const value of values) {
+        const amount = Number(value);
+        if (Number.isFinite(amount) && Math.abs(amount) >= 0.005) return amount;
+    }
+    return 0;
+};
+
+const getClientChargeValue = (job: Booking) => firstNonZeroAmount(
+    job.clientInvoiceTotal,
+    job.totalAmount,
+    job.finalQuote,
+);
+
+const getProfessionalCostValue = (job: Booking) => firstNonZeroAmount(
+    job.interpreterInvoiceTotal,
+    job.interpreterAmountCalculated,
+    job.professionalCost,
+    (job as any).interpreterCost,
+);
+
+const getVatValue = (job: Booking) => {
+    const value = job.clientInvoiceVatAmount ?? job.vatAmount;
+    const amount = Number(value);
+    return value !== undefined && value !== null && Number.isFinite(amount) ? amount : null;
+};
+
+const getExternalInvoiceRef = (...values: unknown[]) => {
+    const value = values.map(item => String(item || '').trim()).find(item => (
+        item && !/^rec[a-z0-9]+$/i.test(item) && !/^airtable[_-]/i.test(item)
+    ));
+    return value || '';
+};
+
+const PAYABLE_FINANCE_VIEWS = new Set([
+    'fin-timesheets',
+    'fin-interpreter-invoices',
+    'fin-translator-payables',
+]);
+
+const getFinanceLaneForView = (viewId: string): FinanceLane | null => {
+    if (PAYABLE_FINANCE_VIEWS.has(viewId)) return 'interpreterPayables';
+    if (viewId.startsWith('fin-')) return 'clientBilling';
+    return null;
+};
 
 const getProfessionalLabel = (job: Booking) => isTranslationJob(job) ? 'Translator' : 'Interpreter';
 
@@ -600,6 +669,9 @@ const ToolButton = ({
 }) => (
     <button
         onClick={onClick}
+        data-jobs-tool-trigger="true"
+        aria-label={label}
+        title={label}
         className={`inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-semibold transition-colors ${
             active
                 ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
@@ -607,7 +679,7 @@ const ToolButton = ({
         }`}
     >
         <Icon size={14} />
-        <span className="hidden sm:inline">{label}</span>
+        <span className="hidden xl:inline">{label}</span>
     </button>
 );
 
@@ -619,6 +691,20 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const isFinanceWorkspace = workspace === 'finance';
     const navigate = useNavigate();
     const location = useLocation();
+    const restoredWorkspaceSnapshot = (location.state as JobsWorkspaceReturnState | null)?.workspaceSnapshot;
+    const locationParams = new URLSearchParams(location.search);
+    const restoredPageSize = [10, 25, 50, 100].includes(Number(restoredWorkspaceSnapshot?.pageSize))
+        ? Number(restoredWorkspaceSnapshot?.pageSize)
+        : 25;
+    const initialFinanceLane = restoredWorkspaceSnapshot?.financeLane
+        || (locationParams.get('lane') === 'interpreterPayables' ? 'interpreterPayables' : 'clientBilling');
+    const initialBoardMode = restoredWorkspaceSnapshot?.boardMode
+        || (locationParams.get('mode') === 'calendar' ? 'calendar' : 'table');
+    const initialCalendarViewMode = restoredWorkspaceSnapshot?.calendarViewMode
+        || (locationParams.get('calendar') === 'week' ? 'week' : 'month');
+    const restoredCalendarCursor = restoredWorkspaceSnapshot?.calendarCursorDate
+        ? new Date(restoredWorkspaceSnapshot.calendarCursorDate)
+        : new Date();
     const { user } = useAuth();
     const { getClientCompany } = useClients();
     const { showToast } = useToast();
@@ -651,18 +737,18 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [isBulkLoading, setIsBulkLoading] = useState(false);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
-    const [financeLane, setFinanceLane] = useState<FinanceLane>('clientBilling');
-    const [boardMode, setBoardMode] = useState<BoardMode>('table');
-    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('month');
-    const [calendarCursorDate, setCalendarCursorDate] = useState(() => new Date());
-    const [sortField, setSortField] = useState<SortField>(workspace === 'finance' ? 'financePriority' : 'operationalPriority');
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-    const [currentPage, setCurrentPage] = useState(1);
-    const [pageSize, setPageSize] = useState(25);
-    const [groupField, setGroupField] = useState<GroupField>('view');
-    const [columnFilter, setColumnFilter] = useState<ColumnFilter>(null);
+    const [searchQuery, setSearchQuery] = useState(restoredWorkspaceSnapshot?.searchQuery || '');
+    const [quickFilter, setQuickFilter] = useState<QuickFilter>(restoredWorkspaceSnapshot?.quickFilter || 'ALL');
+    const [financeLane, setFinanceLane] = useState<FinanceLane>(initialFinanceLane);
+    const [boardMode, setBoardMode] = useState<BoardMode>(initialBoardMode);
+    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>(initialCalendarViewMode);
+    const [calendarCursorDate, setCalendarCursorDate] = useState(() => Number.isNaN(restoredCalendarCursor.getTime()) ? new Date() : restoredCalendarCursor);
+    const [sortField, setSortField] = useState<SortField>(restoredWorkspaceSnapshot?.sortField || (workspace === 'finance' ? 'financePriority' : 'operationalPriority'));
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(restoredWorkspaceSnapshot?.sortDirection || 'asc');
+    const [currentPage, setCurrentPage] = useState(Math.max(1, Number(restoredWorkspaceSnapshot?.currentPage || 1)));
+    const [pageSize, setPageSize] = useState(restoredPageSize);
+    const [groupField, setGroupField] = useState<GroupField>(restoredWorkspaceSnapshot?.groupField || 'view');
+    const [columnFilter, setColumnFilter] = useState<ColumnFilter>(restoredWorkspaceSnapshot?.columnFilter || null);
     const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(
         new Set(readStoredGridLayout().hidden || (isFinanceWorkspace ? FINANCE_DEFAULT_HIDDEN_COLUMNS : OPERATIONS_DEFAULT_HIDDEN_COLUMNS))
     );
@@ -691,9 +777,23 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const [isViewsSidebarCollapsed, setIsViewsSidebarCollapsed] = useState(false);
     const [viewSearchQuery, setViewSearchQuery] = useState('');
     const viewsMenuRef = useRef<HTMLDivElement>(null);
-    const toolsRef = useRef<HTMLDivElement>(null);
     const toolPanelRef = useRef<HTMLDivElement>(null);
     const isApplyingStoredLayoutRef = useRef(false);
+    const restoredGridPositionRef = useRef(false);
+
+    useEffect(() => {
+        if (loading || restoredGridPositionRef.current || !restoredWorkspaceSnapshot) return;
+        const scrollLeft = Number(restoredWorkspaceSnapshot.gridScrollLeft || 0);
+        const scrollTop = Number(restoredWorkspaceSnapshot.gridScrollTop || 0);
+        window.requestAnimationFrame(() => {
+            const grid = document.querySelector<HTMLElement>('[data-jobs-grid-scroll="true"]');
+            if (grid) {
+                grid.scrollLeft = scrollLeft;
+                grid.scrollTop = scrollTop;
+            }
+            restoredGridPositionRef.current = true;
+        });
+    }, [loading, restoredWorkspaceSnapshot, boardMode]);
 
     useEffect(() => {
         isApplyingStoredLayoutRef.current = true;
@@ -756,11 +856,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         const handleClickOutside = (e: MouseEvent) => {
             const target = e.target as Node;
             if (viewsMenuRef.current && !viewsMenuRef.current.contains(target)) setIsViewsMenuOpen(false);
-            if (
-                toolsRef.current
-                && !toolsRef.current.contains(target)
-                && !toolPanelRef.current?.contains(target)
-            ) {
+            const isToolTrigger = target instanceof Element && Boolean(target.closest('[data-jobs-tool-trigger="true"]'));
+            if (!isToolTrigger && !toolPanelRef.current?.contains(target)) {
                 setActiveToolPanel(null);
                 setToolPanelPosition(null);
             }
@@ -798,34 +895,40 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
 
         if (requestedView && views.some(view => view.id === requestedView)) {
             setActiveViewId(requestedView);
-            setQuickFilter('ALL');
-            setCurrentPage(1);
+            if (!restoredWorkspaceSnapshot) {
+                setQuickFilter('ALL');
+                setCurrentPage(1);
+            }
         }
 
-        if (
-            isFinanceWorkspace
-            && (requestedLane === 'clientBilling' || requestedLane === 'interpreterPayables')
-        ) {
-            setFinanceLane(requestedLane);
-            setCurrentPage(1);
+        const inferredLane = requestedView ? getFinanceLaneForView(requestedView) : null;
+        const nextFinanceLane = requestedLane === 'clientBilling' || requestedLane === 'interpreterPayables'
+            ? requestedLane
+            : inferredLane;
+        if (isFinanceWorkspace && nextFinanceLane) {
+            setFinanceLane(nextFinanceLane);
+            if (!restoredWorkspaceSnapshot) setCurrentPage(1);
         }
 
-        setBoardMode(requestedMode === 'calendar' ? 'calendar' : 'table');
-        if (requestedCalendarView === 'week' || requestedCalendarView === 'month') {
+        setBoardMode(restoredWorkspaceSnapshot?.boardMode || (requestedMode === 'calendar' ? 'calendar' : 'table'));
+        if (!restoredWorkspaceSnapshot?.calendarViewMode && (requestedCalendarView === 'week' || requestedCalendarView === 'month')) {
             setCalendarViewMode(requestedCalendarView);
         }
 
         if (requestedClientId || requestedInterpreterId) {
-            setQuickFilter('ALL');
-            setCurrentPage(1);
+            if (!restoredWorkspaceSnapshot) {
+                setQuickFilter('ALL');
+                setCurrentPage(1);
+            }
         }
     }, [location.search, views, setActiveViewId, isFinanceWorkspace]);
 
     useEffect(() => {
+        if (restoredWorkspaceSnapshot?.sortField) return;
         const nextSort = getDefaultSortForView(workspace, activeView.id, activeView.sortBy);
         setSortField(nextSort.field);
         setSortDirection(nextSort.direction);
-    }, [workspace, activeView.id, activeView.sortBy]);
+    }, [workspace, activeView.id, activeView.sortBy, restoredWorkspaceSnapshot?.sortField]);
 
     const getCompanyName = (job: Booking) => getClientCompany(job.clientId, job.guestContact?.organisation || job.clientName);
     const setWorkspaceBoardMode = (nextMode: BoardMode) => {
@@ -870,12 +973,14 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             case 'contact':
                 return `${job.guestContact?.name || ''} ${(job as any).contactName || ''}`;
             case 'amount':
-                return `${job.totalAmount || ''} ${job.currency || 'GBP'}`;
+                return `${getClientChargeValue(job) || ''} ${job.currency || 'GBP'}`;
+            case 'vat':
+                return `${getVatValue(job) ?? ''} VAT`;
             case 'professionalCost':
-                return `${(job as any).interpreterAmountCalculated || ''} ${(job as any).professionalCost || ''}`;
+                return `${getProfessionalCostValue(job) || ''}`;
             case 'margin': {
-                const revenue = Number(job.totalAmount) || 0;
-                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                const revenue = getClientChargeValue(job);
+                const cost = getProfessionalCostValue(job);
                 return `${revenue - cost}`;
             }
             case 'costCode':
@@ -893,16 +998,37 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     const workspaceLabel = location.search
         ? (isFinanceWorkspace ? 'Filtered Finance Centre' : 'Filtered Job Centre')
         : (isFinanceWorkspace ? 'Finance Centre' : 'Job Centre');
+    const createWorkspaceReturnState = (): JobsWorkspaceReturnState => {
+        const grid = document.querySelector<HTMLElement>('[data-jobs-grid-scroll="true"]');
+        return {
+            workspaceSnapshot: {
+                searchQuery,
+                quickFilter,
+                currentPage,
+                pageSize,
+                sortField,
+                sortDirection,
+                groupField,
+                columnFilter,
+                financeLane,
+                boardMode,
+                calendarViewMode,
+                calendarCursorDate: calendarCursorDate.toISOString(),
+                gridScrollLeft: grid?.scrollLeft || 0,
+                gridScrollTop: grid?.scrollTop || 0,
+            },
+        };
+    };
 
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
-            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel },
+            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel, returnState: createWorkspaceReturnState() },
         });
     };
 
     const openEditJob = (job: Booking) => {
         navigate(`/admin/bookings/edit/${job.id}`, {
-            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel },
+            state: { returnTo: workspaceReturnPath, returnLabel: workspaceLabel, returnState: createWorkspaceReturnState() },
         });
     };
 
@@ -1141,24 +1267,47 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             label: 'Client Charge',
             width: 'minmax(118px, .65fr)',
             icon: Receipt,
-            getSortValue: job => job.totalAmount || 0,
-            render: job => (
-                <div className="min-w-0">
-                    <p className="truncate text-sm font-black text-slate-950 dark:text-white">
-                        {job.totalAmount ? `GBP ${job.totalAmount.toFixed(2)}` : 'TBC'}
-                    </p>
-                    <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{job.currency || 'GBP'}</p>
-                </div>
-            ),
+            getSortValue: getClientChargeValue,
+            render: job => {
+                const value = getClientChargeValue(job);
+                return (
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-950 dark:text-white">
+                            {value ? `GBP ${value.toFixed(2)}` : 'TBC'}
+                        </p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">{job.currency || 'GBP'}</p>
+                    </div>
+                );
+            },
+        },
+        {
+            id: 'vat',
+            label: 'VAT',
+            width: 'minmax(92px, .52fr)',
+            icon: Receipt,
+            getSortValue: job => getVatValue(job) ?? -1,
+            render: job => {
+                const value = getVatValue(job);
+                return (
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-950 dark:text-white">
+                            {value === null ? 'TBC' : `GBP ${value.toFixed(2)}`}
+                        </p>
+                        <p className="truncate text-[10px] font-semibold uppercase text-slate-500">
+                            {value === null ? 'Not indexed' : value === 0 ? 'No VAT' : 'Tax'}
+                        </p>
+                    </div>
+                );
+            },
         },
         {
             id: 'professionalCost',
             label: 'Professional Cost',
             width: 'minmax(126px, .68fr)',
             icon: PoundSterling,
-            getSortValue: job => (job as any).interpreterAmountCalculated || (job as any).professionalCost || 0,
+            getSortValue: getProfessionalCostValue,
             render: job => {
-                const value = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost || 0);
+                const value = getProfessionalCostValue(job);
                 return (
                     <div className="min-w-0">
                         <p className="truncate text-sm font-black text-slate-950 dark:text-white">
@@ -1175,13 +1324,13 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             width: 'minmax(110px, .62fr)',
             icon: BarChart3,
             getSortValue: job => {
-                const revenue = Number(job.totalAmount) || 0;
-                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                const revenue = getClientChargeValue(job);
+                const cost = getProfessionalCostValue(job);
                 return revenue - cost;
             },
             render: job => {
-                const revenue = Number(job.totalAmount) || 0;
-                const cost = Number((job as any).interpreterAmountCalculated || (job as any).professionalCost) || 0;
+                const revenue = getClientChargeValue(job);
+                const cost = getProfessionalCostValue(job);
                 const value = revenue - cost;
                 const canCalculate = Boolean(revenue && cost);
                 return (
@@ -1212,13 +1361,23 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             label: 'Billing State',
             width: 'minmax(126px, .7fr)',
             icon: Receipt,
-            getSortValue: job => (job as any).paymentStatus || job.status,
+            getSortValue: job => financeLane === 'interpreterPayables'
+                ? (job.interpreterPaymentStatus || job.interpreterInvoiceStatus || job.status)
+                : (job.paymentStatus || job.clientInvoiceStatus || job.status),
             render: job => {
-                const paymentStatus = (job as any).paymentStatus;
+                const paymentStatus = financeLane === 'interpreterPayables'
+                    ? (job.interpreterPaymentStatus || job.interpreterInvoiceStatus)
+                    : (job.paymentStatus || job.clientInvoiceStatus);
                 const paymentLabels: Record<string, string> = {
                     NOT_READY: 'Not ready',
                     READY_FOR_INVOICE: financeLane === 'interpreterPayables' ? 'Pay run ready' : 'Invoice ready',
                     INVOICED: financeLane === 'interpreterPayables' ? 'Awaiting payout' : 'Awaiting payment',
+                    DRAFT: 'Invoice draft',
+                    SENT: 'Awaiting payment',
+                    SUBMITTED: 'Payable review',
+                    APPROVED: 'Pay run ready',
+                    REJECTED: 'Payable rejected',
+                    CANCELLED: 'Cancelled',
                     PAID: 'Paid',
                     ISSUE: 'Billing issue',
                 };
@@ -1239,11 +1398,11 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             width: 'minmax(122px, .68fr)',
             icon: Receipt,
             getSortValue: job => financeLane === 'interpreterPayables'
-                ? ((job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference || (job as any).interpreterInvoiceId || '')
-                : ((job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceId || ''),
+                ? getExternalInvoiceRef(job.interpreterInvoiceNumber, job.interpreterInvoiceReference)
+                : getExternalInvoiceRef(job.clientInvoiceNumber, (job as any).invoiceNumber, job.clientInvoiceReference),
             render: job => {
-                const invoiceRef = (job as any).clientInvoiceNumber || (job as any).invoiceNumber || (job as any).clientInvoiceReference || (job as any).clientInvoiceId;
-                const interpreterRef = (job as any).interpreterInvoiceNumber || (job as any).interpreterInvoiceReference || (job as any).interpreterInvoiceId;
+                const invoiceRef = getExternalInvoiceRef(job.clientInvoiceNumber, (job as any).invoiceNumber, job.clientInvoiceReference);
+                const interpreterRef = getExternalInvoiceRef(job.interpreterInvoiceNumber, job.interpreterInvoiceReference);
                 const primaryRef = financeLane === 'interpreterPayables' ? interpreterRef : invoiceRef;
                 const secondaryRef = financeLane === 'interpreterPayables'
                     ? (invoiceRef ? `Client ${invoiceRef}` : 'Interpreter payable')
@@ -1263,7 +1422,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             icon: ArrowUpRight,
             render: job => {
                 if (isFinanceWorkspace) {
-                    const hasBlockingBillingIssue = Boolean((job as any).billingIssueFlag || !job.costCode || !job.totalAmount);
+                    const hasBlockingBillingIssue = Boolean(job.billingIssueFlag || !job.costCode || !getClientChargeValue(job));
                     if (hasBlockingBillingIssue && [BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING].includes(job.status)) {
                         return <Button size="sm" variant="secondary" icon={AlertCircle} onClick={(e) => { e.stopPropagation(); handleFlagBillingIssue(job); }}>Flag issue</Button>;
                     }
@@ -1715,9 +1874,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     }, [filteredBookings, columns, sortField, sortDirection, getClientCompany]);
 
     const financeSummary = useMemo(() => {
-        const totalClientCharge = sortedBookings.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0);
-        const getProfessionalCost = (job: Booking) => Number((job as any).interpreterAmountCalculated || (job as any).professionalCost || 0);
-        const totalProfessionalCost = sortedBookings.reduce((sum, job) => sum + getProfessionalCost(job), 0);
+        const totalClientCharge = sortedBookings.reduce((sum, job) => sum + getClientChargeValue(job), 0);
+        const totalProfessionalCost = sortedBookings.reduce((sum, job) => sum + getProfessionalCostValue(job), 0);
         const readyForInvoice = sortedBookings.filter(job => invoiceWorkStatuses.includes(job.status));
         const awaitingPayment = sortedBookings.filter(job => job.status === BookingStatus.INVOICED);
         const missingCostCode = sortedBookings.filter(job => !job.costCode);
@@ -1728,10 +1886,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             totalClientCharge,
             totalProfessionalCost,
             readyCount: readyForInvoice.length,
-            readyAmount: readyForInvoice.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
-            payRunReadyAmount: readyForInvoice.reduce((sum, job) => sum + getProfessionalCost(job), 0),
+            readyAmount: readyForInvoice.reduce((sum, job) => sum + getClientChargeValue(job), 0),
+            payRunReadyAmount: readyForInvoice.reduce((sum, job) => sum + getProfessionalCostValue(job), 0),
             awaitingPaymentCount: awaitingPayment.length,
-            awaitingPaymentAmount: awaitingPayment.reduce((sum, job) => sum + Number(job.totalAmount || 0), 0),
+            awaitingPaymentAmount: awaitingPayment.reduce((sum, job) => sum + getClientChargeValue(job), 0),
             missingCostCodeCount: missingCostCode.length,
             timesheetNeededCount: timesheetNeeded.length,
             timesheetReviewCount: timesheetReview.length,
@@ -1749,12 +1907,8 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
     );
 
     useEffect(() => {
-        setCurrentPage(1);
-    }, [searchQuery, quickFilter, sortField, sortDirection, groupField, activeView.id, pageSize, financeLane]);
-
-    useEffect(() => {
-        if (currentPage > totalPages) setCurrentPage(totalPages);
-    }, [currentPage, totalPages]);
+        if (!loading && currentPage > totalPages) setCurrentPage(totalPages);
+    }, [currentPage, totalPages, loading]);
 
     const groupedRows = useMemo(() => {
         const resolvedGroup = groupField === 'view' ? (activeView.groupBy || 'none') : groupField;
@@ -1796,6 +1950,16 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
         setActiveViewId(viewId);
         setColumnFilter(null);
         setCurrentPage(1);
+        const params = new URLSearchParams(location.search);
+        params.set('view', viewId);
+        if (isFinanceWorkspace) {
+            const lane = getFinanceLaneForView(viewId);
+            if (lane) {
+                setFinanceLane(lane);
+                params.set('lane', lane);
+            }
+        }
+        navigate(`${workspacePath}?${params.toString()}`, { replace: true });
     };
 
     const openViewEditor = (viewId: string | null) => {
@@ -2141,19 +2305,19 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             </button>
             <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
             <button
-                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('asc'); setActiveColumnMenu(null); }}
+                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('asc'); setCurrentPage(1); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <ArrowDownAZ size={15} /> Sort A to Z
             </button>
             <button
-                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('desc'); setActiveColumnMenu(null); }}
+                onClick={() => { setSortField(column.id === 'jobNumber' ? 'bookingRef' : column.id === 'bookedFor' ? 'date' : column.id === 'service' ? 'serviceCategory' : column.id as SortField); setSortDirection('desc'); setCurrentPage(1); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <ArrowUpDown size={15} /> Sort Z to A
             </button>
             <button
-                onClick={() => { setGroupField(column.id === 'bookedFor' ? 'date' : column.id === 'jobNumber' ? 'none' : column.id === 'service' ? 'serviceCategory' : column.id as GroupField); setActiveColumnMenu(null); }}
+                onClick={() => { setGroupField(column.id === 'bookedFor' ? 'date' : column.id === 'jobNumber' ? 'none' : column.id === 'service' ? 'serviceCategory' : column.id as GroupField); setCurrentPage(1); setActiveColumnMenu(null); }}
                 className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
                 <Group size={15} /> Group by this field
@@ -2161,6 +2325,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             <button
                 onClick={(event) => {
                     setColumnFilter(current => current?.columnId === column.id ? current : { columnId: column.id, value: '' });
+                    setCurrentPage(1);
                     openToolPanel('filter', event, 320, true);
                     setActiveColumnMenu(null);
                 }}
@@ -2290,7 +2455,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                 </p>
                                 <button
                                     type="button"
-                                    onClick={() => setColumnFilter(null)}
+                                    onClick={() => { setColumnFilter(null); setCurrentPage(1); }}
                                     className="rounded px-1.5 py-1 text-[10px] font-black uppercase text-blue-600 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
                                 >
                                     Clear
@@ -2316,6 +2481,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                 onClick={() => {
                                     setQuickFilter('ALL');
                                     setColumnFilter(null);
+                                    setCurrentPage(1);
                                 }}
                                 className="rounded-md px-2 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
                             >
@@ -2352,7 +2518,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         {options.map(([value, label]) => (
                             <button
                                 key={value}
-                                onClick={() => setGroupField(value)}
+                                onClick={() => { setGroupField(value); setCurrentPage(1); }}
                                 className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-sm font-semibold ${groupField === value ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                             >
                                 {label}
@@ -2382,14 +2548,14 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 <div className="space-y-2">
                     <select
                         value={sortField}
-                        onChange={(e) => setSortField(e.target.value as SortField)}
+                        onChange={(e) => { setSortField(e.target.value as SortField); setCurrentPage(1); }}
                         className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-slate-800 dark:bg-slate-950"
                     >
                         {sortOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </select>
                     <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => setSortDirection('asc')} className={`rounded-md border px-3 py-2 text-sm font-semibold ${sortDirection === 'asc' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-800'}`}>Ascending</button>
-                        <button onClick={() => setSortDirection('desc')} className={`rounded-md border px-3 py-2 text-sm font-semibold ${sortDirection === 'desc' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-800'}`}>Descending</button>
+                        <button onClick={() => { setSortDirection('asc'); setCurrentPage(1); }} className={`rounded-md border px-3 py-2 text-sm font-semibold ${sortDirection === 'asc' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-800'}`}>Ascending</button>
+                        <button onClick={() => { setSortDirection('desc'); setCurrentPage(1); }} className={`rounded-md border px-3 py-2 text-sm font-semibold ${sortDirection === 'desc' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-800'}`}>Descending</button>
                     </div>
                 </div>
             </>,
@@ -2406,10 +2572,10 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                 ? 'bg-violet-50/35 hover:bg-violet-50 dark:bg-violet-950/10 dark:hover:bg-violet-950/20'
                 : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/60';
         const frozenCellBgClass = selected
-            ? 'bg-amber-50 dark:bg-amber-950/80'
+            ? 'bg-amber-50 dark:bg-amber-950'
             : translation
-                ? 'bg-amber-50 dark:bg-amber-950/80'
-                : 'bg-amber-50 dark:bg-amber-950/80';
+                ? 'bg-amber-50 dark:bg-amber-950'
+                : 'bg-amber-50 dark:bg-amber-950';
         const row = (
             <div
                 className={`grid min-h-11 cursor-pointer border-b border-slate-200 text-sm transition-colors dark:border-slate-800 ${rowBgClass}`}
@@ -2474,9 +2640,9 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
             />
 
             <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div ref={toolsRef} data-jobs-toolbar="true" className="relative z-20 shrink-0 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
-                <div className="flex flex-col gap-2 border-b border-slate-200 p-2 dark:border-slate-800 xl:flex-row xl:items-center">
-                    <div className="relative" ref={viewsMenuRef}>
+            <div data-jobs-toolbar="true" className="relative z-20 shrink-0 border-b border-slate-200 bg-white shadow-sm shadow-slate-950/5 dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/20">
+                <div className="grid grid-cols-1 gap-2 border-b border-slate-200 p-2 dark:border-slate-800 md:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] md:items-center xl:grid-cols-[auto_minmax(260px,1fr)_auto]">
+                    <div className="relative md:col-start-1 md:row-start-1" ref={viewsMenuRef}>
                         <WorkspaceViewMenu
                             activeView={activeView}
                             views={views}
@@ -2496,7 +2662,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         />
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1 xl:order-3">
+                    <div className="flex flex-wrap items-center gap-1 md:col-span-2 md:row-start-2 xl:col-span-1 xl:col-start-3 xl:row-start-1">
                         {isFinanceWorkspace && (
                             <FinanceLaneToggle
                                 lane={financeLane}
@@ -2504,11 +2670,41 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                                     setFinanceLane(lane);
                                     setQuickFilter('ALL');
                                     setCurrentPage(1);
+                                    const viewId = lane === 'interpreterPayables'
+                                        ? 'fin-interpreter-invoices'
+                                        : 'fin-billing-queue';
+                                    setActiveViewId(viewId);
+                                    const params = new URLSearchParams(location.search);
+                                    params.set('lane', lane);
+                                    params.set('view', viewId);
+                                    navigate(`${workspacePath}?${params.toString()}`, { replace: true });
                                 }}
                             />
                         )}
-                        <Button onClick={refresh} icon={RefreshCw} variant="ghost" size="sm">Refresh</Button>
-                        {isFinanceWorkspace && <Button onClick={() => navigate('/admin/billing/overview')} icon={PoundSterling} variant="ghost" size="sm">Overview</Button>}
+                        <Button
+                            onClick={refresh}
+                            icon={RefreshCw}
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Refresh"
+                            title="Refresh"
+                            className={isFinanceWorkspace ? 'px-2.5 [&>span]:hidden sm:[&>span]:inline' : ''}
+                        >
+                            Refresh
+                        </Button>
+                        {isFinanceWorkspace && (
+                            <Button
+                                onClick={() => navigate('/admin/billing/overview')}
+                                icon={PoundSterling}
+                                variant="ghost"
+                                size="sm"
+                                aria-label="Overview"
+                                title="Overview"
+                                className="px-2.5 [&>span]:hidden sm:[&>span]:inline"
+                            >
+                                Overview
+                            </Button>
+                        )}
                         {!isFinanceWorkspace && <Button onClick={() => navigate('/admin/bookings/new')} icon={Plus} size="sm">New</Button>}
                         <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-800 dark:bg-slate-950">
                             <button
@@ -2534,7 +2730,7 @@ export const JobsBoard = ({ workspace = 'operations' }: JobsBoardProps) => {
                         <ToolPanelContent />
                     </div>
 
-                    <div data-jobs-search="true" className="relative min-w-0 flex-1 xl:order-2">
+                    <div data-jobs-search="true" className="relative min-w-0 md:col-start-2 md:row-start-1 xl:col-start-2">
                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                             type="text"

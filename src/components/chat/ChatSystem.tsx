@@ -56,7 +56,8 @@ export const ChatSystem = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  if (!user || location.pathname.endsWith('/messages')) return null;
+  // Admin already has the persistent Comms workspace in primary navigation.
+  if (!user || isAdmin || location.pathname.endsWith('/messages')) return null;
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +78,7 @@ export const ChatSystem = () => {
 
     setIsUploading(true);
     try {
-      const path = `chats/${activeThreadId}/${Date.now()}_${file.name}`;
+      const path = `chat/${activeThreadId}/${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
 
       const type = file.type.startsWith('image/') ? 'IMAGE' : 'DOCUMENT';

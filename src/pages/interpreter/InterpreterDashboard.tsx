@@ -22,6 +22,12 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { Interpreter } from '../../types';
 import { isInterpreterLocked, requiresInterpreterOnboarding } from '../../utils/interpreterFlow';
 import { formatLanguagePair } from '../../utils/languageDisplay';
+import {
+  getInterpreterBookingAmount,
+  isInterpreterOfferBooking,
+  isPendingInterpreterTimesheet,
+  isUpcomingInterpreterBooking,
+} from '../../utils/interpreterJobLifecycle';
 
 // --- Sub-components matching Admin Dashboard ---
 
@@ -48,7 +54,7 @@ const HighDensityActivityTable = ({ title, data, loading, onRowClick }: { title:
             <th className="px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Service</th>
             <th className="px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Status</th>
             <th className="px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Date & Time</th>
-            <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wide text-slate-400">Estimated</th>
+            <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wide text-slate-400">Pay</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -126,9 +132,7 @@ export const InterpreterDashboard = () => {
     completedBookings: 0,
     liveOffers: 0,
     upcomingBookings: 0,
-    rating: 4.96,
-    hoursWorked: '84.5h',
-    nextPayout: 'GBP 4,280.00'
+    approvedEarnings: 'GBP 0.00'
   });
 
   useEffect(() => {
@@ -142,27 +146,27 @@ export const InterpreterDashboard = () => {
   const loadDashboardData = async (interpreterId: string) => {
     setLoading(true);
     try {
-      const [schedule, offerList, totalEarnings, realStats] = await Promise.all([
+      const [schedule, offerList, totalEarnings, realStats, timesheets] = await Promise.all([
         BookingService.getInterpreterSchedule(interpreterId),
         BookingService.getInterpreterOffers(interpreterId),
         BillingService.getInterpreterEarnings(interpreterId),
-        StatsService.getInterpreterStats(interpreterId)
+        StatsService.getInterpreterStats(interpreterId),
+        BillingService.getInterpreterTimesheets(interpreterId),
       ]);
 
-      const isPending = (s: string) => s === BookingStatus.OPENED || s === BookingStatus.ASSIGNMENT_PENDING || s === 'PENDING_ASSIGNMENT';
       const assignmentByBooking = new Map(offerList.map((assignment: BookingAssignment) => [assignment.bookingId, assignment]));
-      const confirmed = schedule.filter((b: Booking) => !isPending(b.status as string));
       const directPending = schedule
-        .filter((b: Booking) => isPending(b.status as string))
+        .filter((b: Booking) => isInterpreterOfferBooking(b))
         .map(b => ({ ...b, _isDirect: true, _assignmentId: assignmentByBooking.get(b.id)?.id }));
 
-      const upcoming = confirmed
-        .filter((b: Booking) => new Date(b.date + 'T' + (b.startTime || '00:00')) > new Date())
-        .sort((a: Booking, b: Booking) => new Date(a.date + 'T' + (a.startTime || '00:00')).getTime() - new Date(b.date + 'T' + (b.startTime || '00:00')).getTime());
+      const upcoming = schedule
+        .filter((booking: Booking) => isUpcomingInterpreterBooking(booking))
+        .sort((a: Booking, b: Booking) => `${a.date}T${a.startTime || ''}`.localeCompare(`${b.date}T${b.startTime || ''}`));
 
-      const pastPendingTs = confirmed
-        .filter((b: Booking) => String(b.status) === 'BOOKED' && new Date(b.date + 'T' + (b.startTime || '23:59')) <= new Date())
-        .sort((a: Booking, b: Booking) => new Date(b.date + 'T' + (b.startTime || '00:00')).getTime() - new Date(a.date + 'T' + (a.startTime || '00:00')).getTime());
+      const timesheetBookingIds = new Set(timesheets.map(timesheet => timesheet.bookingId));
+      const pastPendingTs = schedule
+        .filter((booking: Booking) => isPendingInterpreterTimesheet(booking, timesheetBookingIds))
+        .sort((a: Booking, b: Booking) => `${b.date}T${b.startTime || ''}`.localeCompare(`${a.date}T${a.startTime || ''}`));
 
       setUpcomingJobs(upcoming.map(job => ({
         client: job.clientName,
@@ -170,7 +174,9 @@ export const InterpreterDashboard = () => {
         service: formatLanguagePair(job.languageFrom, job.languageTo),
         date: new Date(job.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
         time: job.startTime,
-        pay: 'GBP 45.00', // Mocked payload for assignment
+        pay: getInterpreterBookingAmount(job) > 0
+          ? `GBP ${getInterpreterBookingAmount(job).toFixed(2)}`
+          : 'Pending',
         raw: job
       })));
       setPendingTimesheets(pastPendingTs);
@@ -195,15 +201,14 @@ export const InterpreterDashboard = () => {
       );
 
       const directIds = new Set(directPending.map((b: any) => b.id));
-      setOffers([...directPending, ...enrichedOffers.filter(offer => !directIds.has(offer.id))]);
+      const combinedOffers = [...directPending, ...enrichedOffers.filter(offer => !directIds.has(offer.id))];
+      setOffers(combinedOffers);
 
       setStats({
         completedBookings: realStats.completedBookings || 0,
-        liveOffers: (realStats.liveOffers || 0) + directPending.length,
+        liveOffers: combinedOffers.length,
         upcomingBookings: upcoming.length,
-        rating: 4.96,
-        hoursWorked: '84.5h', // Mock for design
-        nextPayout: `GBP ${totalEarnings.toLocaleString('en-GB') || '0.00'}`
+        approvedEarnings: `GBP ${totalEarnings.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       });
 
       // Fetch full interpreter profile to check status
@@ -216,6 +221,7 @@ export const InterpreterDashboard = () => {
       }
     } catch (error) {
       console.error("Failed to load dashboard data", error);
+      showToast('Dashboard data could not be loaded. Please retry.', 'error');
     } finally {
       setLoading(false);
     }
@@ -229,7 +235,7 @@ export const InterpreterDashboard = () => {
   const handleAcceptJob = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const assignments = await BookingService.getAssignmentsByBookingId(id, user?.profileId);
         const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user?.profileId && assignment.status === AssignmentStatus.OFFERED);
         const targetAssignment = directAssignment || await BookingService.ensureInterpreterAssignment(id, user!.profileId!);
         await BookingService.acceptOffer(targetAssignment.id);
@@ -246,7 +252,7 @@ export const InterpreterDashboard = () => {
   const handleRejectJob = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const assignments = await BookingService.getAssignmentsByBookingId(id, user?.profileId);
         const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user?.profileId && assignment.status === AssignmentStatus.OFFERED);
         const targetAssignment = directAssignment || await BookingService.ensureInterpreterAssignment(id, user!.profileId!);
         await BookingService.declineOffer(targetAssignment.id);
@@ -264,18 +270,7 @@ export const InterpreterDashboard = () => {
     if (!user) return;
 
     try {
-      const adminUser = await ChatService.getAdminSupportUser();
-      if (!adminUser) {
-        showToast('No operations user is available for chat', 'error');
-        return;
-      }
-
-      const threadId = await ChatService.getOrCreateBookingThread(
-        bookingId,
-        user,
-        adminUser,
-        { name: `Job ${bookingId}` }
-      );
+      const threadId = await ChatService.getOrCreateSupportThread(bookingId);
       openThread(threadId);
     } catch (e) {
       showToast('Failed to start chat', 'error');
@@ -365,7 +360,7 @@ export const InterpreterDashboard = () => {
               ) : [
                 { label: 'Active Offers', value: offers.length, badge: 'New', badgeColor: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-300' },
                 { label: 'Booked Sessions', value: upcomingJobs.length, badge: 'Active', badgeColor: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300' },
-                { label: 'Settled Earnings', value: stats.nextPayout, badge: 'Total', badgeColor: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-300' },
+                { label: 'Approved Earnings', value: stats.approvedEarnings, badge: 'Total', badgeColor: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-300' },
               ].map((m, i) => (
                 <div key={i} className="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
                   <div className="min-w-0">

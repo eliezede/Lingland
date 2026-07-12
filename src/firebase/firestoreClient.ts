@@ -1,18 +1,21 @@
 
-import { BookingService } from "../services/api";
-import { Booking, BookingStatus } from "../types";
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../services/firebaseConfig';
+import { Booking } from "../types";
 
 /**
- * Firestore Client Service (Mock Wrapper)
- * Redirects to Mock API for demo stability.
+ * Client booking gateway backed by the production booking service.
  */
 export const FirestoreClientService = {
   
   createBookingRequest: async (bookingData: Omit<Booking, 'id' | 'status' | 'interpreterId' | 'interpreterName'>) => {
-    return await BookingService.create(bookingData);
+    const response = await httpsCallable(functions, 'submitClientBookingRequest')(bookingData);
+    const result = response.data as { success: boolean; booking: Booking };
+    if (!result?.success || !result.booking?.id) throw new Error('Booking request was not persisted.');
+    return result.booking;
   },
 
   cancelBooking: async (bookingId: string) => {
-    return await BookingService.updateStatus(bookingId, BookingStatus.CANCELLED);
+    return await httpsCallable(functions, 'cancelOwnBooking')({ bookingId });
   }
 };

@@ -1,85 +1,37 @@
 
-import { collection, query, where, getDocs, addDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebaseConfig';
-import { AirtableService } from './airtableService';
-import { Interpreter, User, UserRole } from '../types';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebaseConfig';
+import { User, UserRole } from '../types';
 import { InterpreterService } from './interpreterService';
-import { ensureInterpreterOnboarding } from '../utils/interpreterFlow';
 
 import { UserService } from './userService';
 
 export const MigrationService = {
+  getActiveInterpreterStats: async () => {
+    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters');
+    const result = await syncInterpreters({ dryRun: true });
+    const stats = (result.data as any)?.stats;
+    return {
+      total: Number(stats?.total || 0),
+      deduplicated: Number(stats?.deduplicated || 0),
+    };
+  },
+
   /**
    * Performs the actual migration from Airtable to Firestore
    * Returns stats about the migration
    */
   migrateActiveInterpreters: async () => {
-    const interpreters = await AirtableService.fetchActiveInterpreters();
-    let created = 0;
-    let skipped = 0;
-    let errors = 0;
-
-    for (const data of interpreters) {
-      try {
-        if (!data.email) {
-          console.warn(`Skipping interpreter ${data.name} due to missing email`);
-          skipped++;
-          continue;
-        }
-
-        // 1. Check if user already exists
-        const userQuery = query(collection(db, 'users'), where('email', '==', data.email.toLowerCase()));
-        const userSnap = await getDocs(userQuery);
-
-        // 2. Create/Update Interpreter Profile
-        let interpreterProfile;
-        if (!userSnap.empty && userSnap.docs[0].data().profileId) {
-          // Already has a profile, maybe update?
-          console.log(`User ${data.email} already exists with profile, updating...`);
-          const existingUser = userSnap.docs[0].data();
-          await InterpreterService.updateProfile(existingUser.profileId, {
-            ...(data as any),
-            status: existingUser.status === 'ACTIVE' ? ((data as any).status || 'ACTIVE') : 'IMPORTED',
-            onboarding: ensureInterpreterOnboarding(data as any),
-          });
-          interpreterProfile = { id: existingUser.profileId };
-          skipped++;
-        } else {
-          console.log(`Creating new profile for ${data.email}...`);
-          interpreterProfile = await InterpreterService.create({
-            ...(data as any),
-            status: 'IMPORTED',
-            isAvailable: false,
-            onboarding: ensureInterpreterOnboarding(data as any),
-          });
-          
-          // 3. Create/Update User Document
-          const userDocData: Omit<User, 'id'> = {
-            displayName: data.name || 'Interpreter',
-            email: data.email.toLowerCase(),
-            role: UserRole.INTERPRETER,
-            status: 'IMPORTED',
-            profileId: interpreterProfile.id,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-
-          if (!userSnap.empty) {
-            console.log(`Linking existing user ${data.email} to new profile...`);
-            await setDoc(doc(db, 'users', userSnap.docs[0].id), userDocData, { merge: true });
-          } else {
-            console.log(`Creating new user doc for ${data.email}...`);
-            await addDoc(collection(db, 'users'), userDocData);
-          }
-          created++;
-        }
-      } catch (err) {
-        console.error(`Error migrating ${data.name}:`, err);
-        errors++;
-      }
-    }
-
-    return { created, skipped, errors };
+    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters');
+    const result = await syncInterpreters({ dryRun: false });
+    const stats = (result.data as any)?.stats;
+    return {
+      created: Number(stats?.created || 0),
+      skipped: Number(stats?.skipped || 0),
+      errors: Number(stats?.errors || 0),
+      updated: Number(stats?.updated || 0),
+    };
   },
 
   /**

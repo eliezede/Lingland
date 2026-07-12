@@ -10,6 +10,7 @@ import { TableSkeleton } from '../../../components/ui/Skeleton';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { useToast } from '../../../context/ToastContext';
 import { PageHeader } from '../../../components/layout/PageHeader';
+import { WorkspacePagination } from '../../../components/operations/WorkspacePagination';
 
 export const AdminInterpreterInvoicesPage = () => {
   const [invoices, setInvoices] = useState<InterpreterInvoice[]>([]);
@@ -17,6 +18,8 @@ export const AdminInterpreterInvoicesPage = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const scopedInterpreterId = searchParams.get('interpreterId') || '';
@@ -25,10 +28,13 @@ export const AdminInterpreterInvoicesPage = () => {
 
   const fetchInvoices = () => {
     setLoading(true);
-    BillingService.getInterpreterInvoices(scopedInterpreterId || undefined).then(data => {
-      setInvoices(data);
-      setLoading(false);
-    });
+    BillingService.getInterpreterInvoices(scopedInterpreterId || undefined)
+      .then(setInvoices)
+      .catch(error => {
+        console.error('Failed to load interpreter invoice registry', error);
+        showToast('Interpreter invoice registry could not be loaded.', 'error');
+      })
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -51,6 +57,16 @@ export const AdminInterpreterInvoicesPage = () => {
       ].filter(Boolean).some(value => String(value).toLowerCase().includes(query));
     });
   }, [invoices, searchTerm, statusFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, scopedInterpreterId]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
+  const pageEndIndex = Math.min(pageStartIndex + pageSize, filteredInvoices.length);
+  const paginatedInvoices = filteredInvoices.slice(pageStartIndex, pageEndIndex);
 
   const handleGenerateInvoices = async () => {
     setIsGenerating(true);
@@ -124,7 +140,7 @@ export const AdminInterpreterInvoicesPage = () => {
           className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
         >
           <option value="ALL">All statuses</option>
-          {[InvoiceStatus.SUBMITTED, InvoiceStatus.APPROVED, InvoiceStatus.PAID, InvoiceStatus.REJECTED, InvoiceStatus.CANCELLED].map(status => (
+          {[InvoiceStatus.DRAFT, InvoiceStatus.SUBMITTED, InvoiceStatus.APPROVED, InvoiceStatus.PAID, InvoiceStatus.REJECTED, InvoiceStatus.CANCELLED].map(status => (
             <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>
           ))}
         </select>
@@ -140,7 +156,24 @@ export const AdminInterpreterInvoicesPage = () => {
       ) : filteredInvoices.length === 0 ? (
         <EmptyState title="No Matching Documents" description="No interpreter invoices match the current search or status." icon={FileText} />
       ) : (
-        <InvoiceTable invoices={filteredInvoices} type="INTERPRETER" boardPath={payablesBoardPath} />
+        <>
+          <InvoiceTable invoices={paginatedInvoices} type="INTERPRETER" boardPath={payablesBoardPath} />
+          <WorkspacePagination
+            totalCount={filteredInvoices.length}
+            pageStartIndex={pageStartIndex}
+            pageEndIndex={pageEndIndex}
+            currentPage={safeCurrentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            onPreviousPage={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+            onNextPage={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
+            entityLabel="invoice"
+          />
+        </>
       )}
     </div>
   );

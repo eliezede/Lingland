@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
@@ -21,7 +22,6 @@ import {
   Users,
   Wallet
 } from 'lucide-react';
-import { AirtableService } from '../../services/airtableService';
 import { MigrationService } from '../../services/migrationService';
 import {
   AIRTABLE_SYNC_MODULES,
@@ -35,6 +35,7 @@ import {
   AirtableSyncStrategy,
   AirtableSyncResult,
   AirtableMirrorAudit,
+  FinancialReconciliationAudit,
   AirtableSyncService
 } from '../../services/airtableSyncService';
 import { useToast } from '../../context/ToastContext';
@@ -165,6 +166,8 @@ export const AdminMigration = () => {
   const [openConflicts, setOpenConflicts] = useState<AirtableSyncConflict[]>([]);
   const [mirrorAudit, setMirrorAudit] = useState<AirtableMirrorAudit | null>(null);
   const [mirrorAuditLoading, setMirrorAuditLoading] = useState(false);
+  const [financialAudit, setFinancialAudit] = useState<FinancialReconciliationAudit | null>(null);
+  const [financialAuditLoading, setFinancialAuditLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [cleanRepairDryRun, setCleanRepairDryRun] = useState(false);
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
@@ -174,6 +177,7 @@ export const AdminMigration = () => {
   const [showInfo, setShowInfo] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
+  const interpreterStatsRequestedRef = useRef(false);
   const { showToast } = useToast();
   const { settings } = useSettings();
   const platformMode = settings.platformMode;
@@ -236,11 +240,7 @@ export const AdminMigration = () => {
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
     try {
-      const data = await AirtableService.fetchActiveInterpreters();
-      setStats({
-        total: data.length,
-        deduplicated: data.filter(d => d.languages && d.languages.length > 1).length
-      });
+      setStats(await MigrationService.getActiveInterpreterStats());
     } catch {
       showToast('Error loading Airtable interpreter stats', 'error');
     } finally {
@@ -298,6 +298,25 @@ export const AdminMigration = () => {
     }
   };
 
+  const runFinancialAudit = async () => {
+    setFinancialAuditLoading(true);
+    try {
+      const audit = await AirtableSyncService.getFinancialReconciliationAudit();
+      setFinancialAudit(audit);
+      showToast(
+        audit.affectedInvoices
+          ? `${audit.affectedInvoices} invoice document(s) require reconciliation`
+          : 'Financial invoice reconciliation is balanced',
+        audit.affectedInvoices ? 'info' : 'success'
+      );
+    } catch (err) {
+      console.warn('Failed to run financial reconciliation audit', err);
+      showToast('Error running financial reconciliation audit', 'error');
+    } finally {
+      setFinancialAuditLoading(false);
+    }
+  };
+
   const runMissingRedbookRepair = async (dryRun: boolean) => {
     if (!dryRun && importLocked) {
       showToast(`Repair is locked because Airtable Import Mode is ${importMode}.`, 'error');
@@ -344,6 +363,20 @@ export const AdminMigration = () => {
     const link = document.createElement('a');
     link.href = url;
     link.download = `airtable-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportFinancialAudit = () => {
+    if (!financialAudit?.issues.length) return;
+    const csv = AirtableSyncService.exportFinancialAuditCsv(financialAudit.issues);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `financial-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -448,11 +481,16 @@ export const AdminMigration = () => {
   };
 
   useEffect(() => {
-    loadInterpreterStats();
     loadCheckpoint();
     loadDependencyCounts();
     loadSyncAuditTrail();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'interpreters' || interpreterStatsRequestedRef.current) return;
+    interpreterStatsRequestedRef.current = true;
+    loadInterpreterStats();
+  }, [activeTab]);
 
   const renderStats = (result?: AirtableModuleResult | null) => {
     if (!result) {
@@ -711,7 +749,7 @@ export const AdminMigration = () => {
               <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
                 <h3 className="font-black text-slate-950 dark:text-white">Workflow artifacts</h3>
                 <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                  <li>Assigned jobs create mirrored `bookingAssignments`.</li>
+                  <li>Assigned jobs create mirrored canonical `assignments` records used by Operations and the interpreter app.</li>
                   <li>Accepted/booked jobs create accepted assignment state.</li>
                   <li>Timesheet/invoice/paid signals create mirrored `timesheets`.</li>
                   <li>Invoice lines point to mirrored timesheets when a booking match exists.</li>
@@ -770,6 +808,7 @@ export const AdminMigration = () => {
                 </select>
               </div>
             </div>
+            {activeTab !== 'interpreters' && activeTab !== 'reconciliation' && (
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={syncStrategy}
@@ -807,7 +846,7 @@ export const AdminMigration = () => {
               )}
               <button
                 onClick={runActiveDryRun}
-                disabled={loading || activeTab === 'interpreters' || activeTab === 'reconciliation'}
+                disabled={loading}
                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -822,6 +861,7 @@ export const AdminMigration = () => {
                 {activeWriteLabel}
               </button>
             </div>
+            )}
           </div>
         </div>
 
@@ -1211,6 +1251,14 @@ export const AdminMigration = () => {
                         Mirror proof
                       </button>
                       <button
+                        onClick={runFinancialAudit}
+                        disabled={financialAuditLoading}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 text-sm font-black text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200 dark:hover:bg-emerald-950/50"
+                      >
+                        {financialAuditLoading ? <Loader2 size={16} className="animate-spin" /> : <Wallet size={16} />}
+                        Financial proof
+                      </button>
+                      <button
                         onClick={exportConflictReport}
                         disabled={!filteredConflicts.length}
                         className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
@@ -1348,6 +1396,101 @@ export const AdminMigration = () => {
                             ))}
                           </div>
                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  {financialAudit && (
+                    <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 dark:border-slate-800">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Financial proof</p>
+                          <h3 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Invoice documents and persisted lines</h3>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">
+                            Amounts, references, linked jobs, status parity and line totals checked {formatDateTime(financialAudit.generatedAt)}.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={exportFinancialAudit}
+                          disabled={!financialAudit.issues.length}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          <Download size={15} /> Export financial issues
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+                        <StatPill label="Documents" value={financialAudit.totalInvoices} />
+                        <StatPill label="Client" value={financialAudit.clientInvoices} />
+                        <StatPill label="Payables" value={financialAudit.interpreterInvoices} />
+                        <StatPill label="Healthy" value={financialAudit.healthyInvoices} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
+                        <StatPill label="Affected" value={financialAudit.affectedInvoices} className={financialAudit.affectedInvoices ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
+                        <StatPill label="Issues" value={financialAudit.issueCount} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(financialAudit.byReason).sort((a, b) => b[1] - a[1]).map(([reason, count]) => (
+                          <span key={reason} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                            {reason.replace(/_/g, ' ')}: {count}
+                          </span>
+                        ))}
+                      </div>
+
+                      {financialAudit.issues.length > 0 ? (
+                        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                          <div className="min-w-[980px]">
+                            <div className="grid grid-cols-[90px_180px_180px_170px_120px_minmax(220px,1fr)] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 dark:border-slate-800 dark:bg-slate-950">
+                              <span>Severity</span>
+                              <span>Document</span>
+                              <span>Party</span>
+                              <span>Issue</span>
+                              <span>Amount</span>
+                              <span>Next action</span>
+                            </div>
+                            <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-900">
+                              {financialAudit.issues.slice(0, 25).map(issue => (
+                                <div key={issue.id} className="grid grid-cols-[90px_180px_180px_170px_120px_minmax(220px,1fr)] gap-3 px-4 py-3 text-sm">
+                                  <span className={`h-fit w-fit rounded-full px-2 py-1 text-[10px] font-black ${issue.severity === 'HIGH' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200'}`}>
+                                    {issue.severity}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <Link
+                                      to={issue.invoiceType === 'CLIENT' ? `/admin/billing/client-invoices/${issue.invoiceId}` : `/admin/billing/interpreter-invoices/${issue.invoiceId}`}
+                                      state={{ returnTo: '/admin/administration/migration', returnLabel: 'Reconciliation' }}
+                                      className="block truncate font-black text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                                    >
+                                      {issue.reference}
+                                    </Link>
+                                    <p className="truncate text-xs text-slate-500">{issue.invoiceType} / {issue.sourceTable || 'Platform'}</p>
+                                  </div>
+                                  <p className="truncate font-semibold text-slate-700 dark:text-slate-200">{issue.partyName}</p>
+                                  <div className="min-w-0">
+                                    <p className="truncate font-black text-slate-800 dark:text-slate-100">{issue.reason.replace(/_/g, ' ')}</p>
+                                    {issue.expectedStatus && issue.expectedStatus !== issue.platformStatus && (
+                                      <p className="truncate text-xs text-slate-500">{issue.platformStatus}{' -> '}{issue.expectedStatus}</p>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="font-black text-slate-900 dark:text-white">GBP {Number(issue.totalAmount || 0).toFixed(2)}</p>
+                                    <p className="text-xs text-slate-500">Lines GBP {Number(issue.lineTotal || 0).toFixed(2)}</p>
+                                  </div>
+                                  <p className="font-semibold leading-5 text-slate-600 dark:text-slate-300">{issue.recommendedAction}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200">
+                          All invoice documents passed the current financial integrity checks.
+                        </div>
+                      )}
+
+                      {(financialAudit.issues.length > 25 || financialAudit.issuesTruncated) && (
+                        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          Showing the first 25 issues. Export CSV contains every issue returned by the audit.
+                        </p>
                       )}
                     </div>
                   )}

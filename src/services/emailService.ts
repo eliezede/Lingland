@@ -528,6 +528,8 @@ export const EmailService = {
                             subject,
                             html: body
                         },
+                        recipientType: template.recipientType,
+                        templateId: template.id,
                         statusTrigger: newStatus,
                         bookingId: booking.id,
                         createdAt: new Date().toISOString()
@@ -588,6 +590,8 @@ export const EmailService = {
                         subject,
                         html: body
                     },
+                    recipientType: template.recipientType,
+                    templateId: template.id,
                     statusTrigger: 'ASSIGNMENT_REMOVED',
                     bookingId: booking.id,
                     createdAt: new Date().toISOString()
@@ -654,6 +658,8 @@ export const EmailService = {
                     await addDoc(collection(db, 'mail'), {
                         to: [recipientEmail],
                         message: { subject, html: body },
+                        recipientType: template.recipientType,
+                        templateId: template.id,
                         statusTrigger: triggerEvent,
                         applicationId: application.id,
                         createdAt: new Date().toISOString()
@@ -709,6 +715,8 @@ export const EmailService = {
                     subject,
                     html: body
                 },
+                recipientType: template.recipientType,
+                templateId: template.id,
                 createdAt: new Date().toISOString(),
                 statusTrigger: 'IMPORTED'
             });
@@ -722,8 +730,8 @@ export const EmailService = {
     sendTestEmail: async (template: EmailTemplate, testRecipient: string) => {
         console.log(`[EmailService] Sending test email for template: ${template.name} to ${testRecipient}`);
 
-        // Mock a booking for variable parsing
-        const mockBooking: Booking = {
+        // Representative values are used only to preview template rendering.
+        const sampleBooking: Booking = {
             id: 'TEST-123',
             bookingRef: 'REF-TEST',
             clientName: 'Test Client',
@@ -746,7 +754,7 @@ export const EmailService = {
             notes: 'Test'
         };
 
-        const mockApplication = {
+        const sampleApplication = {
             id: 'TEST-APP',
             name: 'Jane Doe Applicant',
             shortName: 'Jane',
@@ -764,7 +772,7 @@ export const EmailService = {
             dpsi: false
         } as unknown as InterpreterApplication;
 
-        const entity = template.category === 'APPLICATIONS' ? mockApplication : mockBooking;
+        const entity = template.category === 'APPLICATIONS' ? sampleApplication : sampleBooking;
 
         const subject = EmailService.parseTemplate(template.subject, entity, { interpreterName: 'Test Interpreter' });
         const body = EmailService.parseTemplate(template.body, entity, { interpreterName: 'Test Interpreter' });
@@ -778,6 +786,7 @@ export const EmailService = {
                 },
                 isTest: true,
                 templateId: template.id,
+                recipientType: template.recipientType,
                 createdAt: new Date().toISOString()
             };
 
@@ -793,20 +802,13 @@ export const EmailService = {
                 return true;
             }
 
-            const writePromise = addDoc(collection(db, 'mail'), payload);
-            
-            // Timeout after 3 seconds so the UI does not hang if Firestore is offline
-            await Promise.race([
-                writePromise,
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-            ]);
+            await addDoc(collection(db, 'mail'), payload);
             
             console.log(`[EmailService] ✅ Test email queued for ${testRecipient}`);
             return true;
         } catch (error) {
-            console.warn(`[EmailService] ⚠️ Firestore offline or timeout. Simulating test email locally.`);
-            console.log(`\n\n==== [TEST EMAIL SENT] ============================\nTO: ${testRecipient}\nSUBJECT: [TEST] ${subject}\n\nBODY (HTML):\n${body}\n===================================================\n\n`);
-            return true;
+            console.error('[EmailService] Test email could not be queued', error);
+            throw new Error('Test email could not be queued. No message was sent.');
         }
     }
 };

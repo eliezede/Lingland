@@ -10,6 +10,7 @@ import { TableSkeleton } from '../../../components/ui/Skeleton';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { Button } from '../../../components/ui/Button';
+import { WorkspacePagination } from '../../../components/operations/WorkspacePagination';
 
 const money = (amount: number) => `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -23,6 +24,8 @@ export const AdminClientInvoicesPage = () => {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const { showToast } = useToast();
   const scopedClientId = searchParams.get('clientId') || '';
   const scopedClientName = clients.find(client => client.id === scopedClientId)?.companyName
@@ -32,7 +35,9 @@ export const AdminClientInvoicesPage = () => {
 
   useEffect(() => {
     loadData();
-    ClientService.getAll().then(setClients);
+    ClientService.getAll().then(setClients).catch(() => {
+      showToast('Client directory could not be loaded. Invoice records remain available.', 'info');
+    });
 
     const clientId = searchParams.get('clientId');
     const start = searchParams.get('start');
@@ -47,9 +52,15 @@ export const AdminClientInvoicesPage = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const data = await BillingService.getClientInvoices(scopedClientId || undefined);
-    setInvoices(data);
-    setLoading(false);
+    try {
+      const data = await BillingService.getClientInvoices(scopedClientId || undefined);
+      setInvoices(data);
+    } catch (error) {
+      console.error('Failed to load client invoice registry', error);
+      showToast('Client invoice registry could not be loaded.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredInvoices = useMemo(() => {
@@ -68,6 +79,16 @@ export const AdminClientInvoicesPage = () => {
       ].filter(Boolean).some(value => String(value).toLowerCase().includes(query));
     });
   }, [invoices, searchTerm, statusFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, scopedClientId]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
+  const pageEndIndex = Math.min(pageStartIndex + pageSize, filteredInvoices.length);
+  const paginatedInvoices = filteredInvoices.slice(pageStartIndex, pageEndIndex);
 
   const handleGenerate = async () => {
     try {
@@ -162,7 +183,24 @@ export const AdminClientInvoicesPage = () => {
       ) : filteredInvoices.length === 0 ? (
         <EmptyState title="No Matching Documents" description="No client invoices match the current search or status." />
       ) : (
-        <InvoiceTable invoices={filteredInvoices} type="CLIENT" boardPath={readyQueuePath} />
+        <>
+          <InvoiceTable invoices={paginatedInvoices} type="CLIENT" boardPath={readyQueuePath} />
+          <WorkspacePagination
+            totalCount={filteredInvoices.length}
+            pageStartIndex={pageStartIndex}
+            pageEndIndex={pageEndIndex}
+            currentPage={safeCurrentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            onPreviousPage={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+            onNextPage={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
+            entityLabel="invoice"
+          />
+        </>
       )}
     </div>
   );

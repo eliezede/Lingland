@@ -138,7 +138,8 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     const currentPath = location.pathname;
     const cid = Object.entries(pathMap).find(([path]) => currentPath.startsWith(path))?.[1];
     if (cid) setActiveCategory(cid);
-  }, [location.pathname]);
+    setIsSidebarOpen(false);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     if (!user) return;
@@ -245,17 +246,17 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     <div className="flex h-dvh overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <ChatSystem />
       {isSidebarOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm xl:hidden" onClick={() => setIsSidebarOpen(false)} />
       )}
 
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-50 transform transition-all duration-300 ${
+        className={`fixed inset-y-0 left-0 z-50 transform transition-all duration-300 xl:static ${
           isSidebarOpen
             ? 'flex translate-x-0'
-            : 'hidden -translate-x-full lg:flex lg:translate-x-0'
+            : 'hidden -translate-x-full xl:flex xl:translate-x-0'
         }`}
       >
-        <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 lg:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
+        <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 xl:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
           <div className={`flex items-center ${isPrimaryExpanded ? 'px-4 space-x-3 justify-start' : 'justify-center'} w-full mb-8`}>
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
               <Globe2 size={24} />
@@ -285,12 +286,14 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         </div>
 
         {!isWorkstation && (
-          <div className={`${isSecondarySlim ? 'w-16 lg:w-20' : 'w-64'} flex flex-col overflow-hidden border-r border-slate-200 bg-white transition-all duration-300 dark:border-slate-800 dark:bg-slate-900`}>
+          <div className={`${isSecondarySlim ? 'w-16 xl:w-20' : 'w-64'} flex flex-col overflow-hidden border-r border-slate-200 bg-white transition-all duration-300 dark:border-slate-800 dark:bg-slate-900`}>
             <div className={`h-16 flex items-center ${isSecondarySlim ? 'justify-center' : 'justify-between px-6'} border-b border-slate-100 dark:border-slate-800 shrink-0`}>
               {!isSecondarySlim && <h2 className="text-xs font-black text-slate-500 dark:text-slate-400 tracking-widest uppercase truncate">{visibleCategories.find(c => c.id === activeCategory)?.label}</h2>}
-              <button onClick={() => setIsSecondarySlim(!isSecondarySlim)} className="p-1 text-slate-400 hover:text-slate-600">
-                {isSecondarySlim ? <PanelLeftOpen size={18} /> : <X size={18} className="lg:hidden" />}
-                {!isSecondarySlim && <PanelLeftClose size={18} className="hidden lg:block" />}
+              <button onClick={() => setIsSidebarOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 xl:hidden" aria-label="Close navigation">
+                <X size={18} />
+              </button>
+              <button onClick={() => setIsSecondarySlim(!isSecondarySlim)} className="hidden p-1 text-slate-400 hover:text-slate-600 xl:inline-flex" aria-label={isSecondarySlim ? 'Expand section navigation' : 'Collapse section navigation'}>
+                {isSecondarySlim ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
               </button>
             </div>
             
@@ -377,7 +380,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:h-16 sm:px-6">
-          <button className="rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden" onClick={() => setIsSidebarOpen(true)}>
+          <button className="rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 xl:hidden" onClick={() => setIsSidebarOpen(true)} aria-label="Open navigation">
             <Menu size={24} />
           </button>
           
@@ -426,7 +429,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           </div>
         </header>
 
-        <main className={`flex-1 bg-slate-100 dark:bg-slate-950 ${isWorkBoard ? 'overflow-hidden p-0' : 'overflow-auto p-3 sm:p-5 lg:p-6'}`}>
+        <main data-admin-content-scroll="true" className={`flex-1 bg-slate-100 dark:bg-slate-950 ${isWorkBoard ? 'overflow-hidden p-0' : 'overflow-auto p-3 sm:p-5 lg:p-6'}`}>
           <div className={isWorkBoard ? 'h-full max-w-none' : 'mx-auto max-w-[1600px]'}>
             {children}
           </div>

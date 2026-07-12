@@ -59,7 +59,7 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
   const acceptOffer = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const assignments = await BookingService.getAssignmentsByBookingId(id, interpreterId);
         const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === interpreterId && assignment.status === AssignmentStatus.OFFERED);
         if (directAssignment?.id) {
           await BookingService.acceptOffer(directAssignment.id);
@@ -81,7 +81,7 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
   const declineOffer = async (id: string, isDirect?: boolean, assignmentId?: string) => {
     try {
       if (isDirect) {
-        const assignments = await BookingService.getAssignmentsByBookingId(id);
+        const assignments = await BookingService.getAssignmentsByBookingId(id, interpreterId);
         const directAssignment = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === interpreterId && assignment.status === AssignmentStatus.OFFERED);
         const targetAssignment = directAssignment || await BookingService.ensureInterpreterAssignment(id, interpreterId!);
         await BookingService.declineOffer(targetAssignment.id);

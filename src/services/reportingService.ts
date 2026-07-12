@@ -172,7 +172,13 @@ export const getReportDate = (job: Booking, basis: DateBasis) => {
 };
 
 export const getClientCharge = (job: Booking) => Number(job.totalAmount || (job as any).clientCharge || (job as any).finalQuote || 0);
-export const getProfessionalCost = (job: Booking) => Number((job as any).interpreterAmountCalculated || (job as any).professionalCost || (job as any).interpreterCost || 0);
+export const getProfessionalCost = (job: Booking) => Number(
+  job.interpreterInvoiceTotal
+  || job.interpreterAmountCalculated
+  || job.professionalCost
+  || (job as any).interpreterCost
+  || 0
+);
 export const getMargin = (job: Booking) => getClientCharge(job) - getProfessionalCost(job);
 export const isTranslationJob = (job: Booking) => job.serviceCategory === ServiceCategory.TRANSLATION || String(job.serviceType || '').toLowerCase().includes('translation');
 export const getJobRef = (job: Booking) => job.displayRef || job.jobNumber || job.bookingRef || job.legacyAirtableRef || job.id;

@@ -33,9 +33,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendAccountActivationInvite = exports.resendStaffInvite = exports.onUserCreated = void 0;
+exports.completeStaffOnboarding = exports.completeAccountActivation = exports.sendAccountActivationInvite = exports.resendStaffInvite = exports.onUserCreated = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const accountActivationPolicy_1 = require("./accountActivationPolicy");
 const STAFF_ROLES = ['SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'STAFF'];
 const ACTIVATION_ROLES = ['INTERPRETER', 'CLIENT'];
 exports.onUserCreated = functions.runWith({
@@ -91,7 +92,7 @@ exports.resendStaffInvite = functions.runWith({ secrets: ['BREVO_API_KEY'] }).ht
     if (!context.auth)
         throw new functions.https.HttpsError('unauthenticated', 'User must be logged in');
     const callerRef = await admin.firestore().collection('users').doc(context.auth.uid).get();
-    if (!callerRef.exists || callerRef.data()?.role !== 'SUPER_ADMIN') {
+    if (!callerRef.exists || callerRef.data()?.role !== 'SUPER_ADMIN' || callerRef.data()?.status !== 'ACTIVE') {
         throw new functions.https.HttpsError('permission-denied', 'Only SUPER_ADMIN can resend invites');
     }
     const userId = String(data?.userId || '');
@@ -106,7 +107,14 @@ exports.resendStaffInvite = functions.runWith({ secrets: ['BREVO_API_KEY'] }).ht
     await sendInvitationEmail(userRef.id, userData.email, userData.displayName, userData.role);
     return { success: true };
 });
-exports.sendAccountActivationInvite = functions.https.onCall(async (data) => {
+exports.sendAccountActivationInvite = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Administrator authentication is required');
+    }
+    const caller = await admin.firestore().collection('users').doc(context.auth.uid).get();
+    if (!caller.exists || caller.data()?.status !== 'ACTIVE' || !['ADMIN', 'SUPER_ADMIN'].includes(String(caller.data()?.role || ''))) {
+        throw new functions.https.HttpsError('permission-denied', 'Only administrators can send activation invites');
+    }
     const email = String(data?.email || '').trim().toLowerCase();
     const requestedDisplayName = String(data?.displayName || '').trim();
     if (!email)
@@ -151,6 +159,108 @@ exports.sendAccountActivationInvite = functions.https.onCall(async (data) => {
         <p>{{activationLink}}</p>
     `);
     return { success: true, userId: authUser.uid };
+});
+exports.completeAccountActivation = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication is required');
+    }
+    const uid = context.auth.uid;
+    const authenticatedEmail = String(context.auth.token.email || '').trim().toLowerCase();
+    const expectedFlow = String(data?.flow || '').toUpperCase();
+    const userRef = admin.firestore().collection('users').doc(uid);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'The platform account is not linked to this sign-in');
+    }
+    const userData = userSnap.data() || {};
+    const accountEmail = String(userData.email || '').trim().toLowerCase();
+    const role = String(userData.role || '').toUpperCase();
+    const status = String(userData.status || '').toUpperCase();
+    const isStaff = STAFF_ROLES.includes(role);
+    const isPortalUser = ACTIVATION_ROLES.includes(role);
+    if (!authenticatedEmail || authenticatedEmail !== accountEmail) {
+        throw new functions.https.HttpsError('permission-denied', 'The activation email does not match this account');
+    }
+    if (!isStaff && !isPortalUser) {
+        throw new functions.https.HttpsError('failed-precondition', 'This account role cannot use the activation flow');
+    }
+    if (expectedFlow === 'STAFF' && !isStaff) {
+        throw new functions.https.HttpsError('failed-precondition', 'This invitation is not a staff account');
+    }
+    if (expectedFlow === 'PORTAL' && !isPortalUser) {
+        throw new functions.https.HttpsError('failed-precondition', 'This invitation is not a client or interpreter account');
+    }
+    if (!['PENDING', 'IMPORTED', 'ACTIVE'].includes(status)) {
+        throw new functions.https.HttpsError('failed-precondition', `Account status ${status || 'UNKNOWN'} cannot be activated`);
+    }
+    const now = new Date().toISOString();
+    const profileId = String(userData.profileId || '');
+    const interpreterProfile = role === 'INTERPRETER' && profileId
+        ? await admin.firestore().collection('interpreters').doc(profileId).get()
+        : null;
+    const batch = admin.firestore().batch();
+    batch.set(userRef, {
+        authUid: uid,
+        passwordSetupAt: now,
+        ...(isPortalUser ? { status: 'ACTIVE', activatedAt: now } : {}),
+        updatedAt: now,
+    }, { merge: true });
+    if (role === 'INTERPRETER' && profileId) {
+        batch.set(admin.firestore().collection('interpreters').doc(profileId), (0, accountActivationPolicy_1.buildInterpreterActivationPatch)(interpreterProfile?.data(), now), { merge: true });
+    }
+    if (role === 'CLIENT' && profileId) {
+        batch.set(admin.firestore().collection('clients').doc(profileId), {
+            status: 'ACTIVE',
+            updatedAt: now,
+        }, { merge: true });
+    }
+    await batch.commit();
+    return { success: true, role, status: isPortalUser ? 'ACTIVE' : status };
+});
+exports.completeStaffOnboarding = functions.https.onCall(async (_data, context) => {
+    if (!context.auth)
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication is required');
+    const userRef = admin.firestore().collection('users').doc(context.auth.uid);
+    const user = await userRef.get();
+    const userData = user.data() || {};
+    if (!user.exists || !STAFF_ROLES.includes(String(userData.role || ''))) {
+        throw new functions.https.HttpsError('permission-denied', 'A staff account is required');
+    }
+    let profile = null;
+    if (userData.staffProfileId) {
+        const direct = await admin.firestore().collection('staff_profiles').doc(String(userData.staffProfileId)).get();
+        if (direct.exists)
+            profile = direct;
+    }
+    if (!profile) {
+        const match = await admin.firestore().collection('staff_profiles').where('userId', '==', context.auth.uid).limit(1).get();
+        if (!match.empty)
+            profile = match.docs[0];
+    }
+    const profileData = profile?.data() || {};
+    if (!profile || profileData.onboardingCompleted !== true) {
+        throw new functions.https.HttpsError('failed-precondition', 'Complete the staff profile before activating access');
+    }
+    const requiredValues = [
+        profileData.phone,
+        profileData.dob,
+        profileData.niNumber,
+        profileData.address?.street,
+        profileData.address?.postcode,
+        profileData.emergencyContact?.name,
+        profileData.emergencyContact?.phone,
+    ];
+    if (requiredValues.some(value => !String(value || '').trim())) {
+        throw new functions.https.HttpsError('failed-precondition', 'The staff onboarding profile is incomplete');
+    }
+    const now = new Date().toISOString();
+    await userRef.set({
+        status: 'ACTIVE',
+        staffProfileId: profile.id,
+        onboardingCompletedAt: now,
+        updatedAt: now,
+    }, { merge: true });
+    return { success: true, status: 'ACTIVE' };
 });
 async function sendInvitationEmail(authUid, email, displayName, role) {
     const portalUrl = await getPortalUrl();
@@ -263,6 +373,8 @@ async function queueTemplateEmail(templateId, email, variables, metadata, fallba
     await admin.firestore().collection('mail').add({
         to: [email],
         message: { subject, html },
+        recipientType: String(template?.recipientType || (templateId === 'STAFF_INVITATION' ? 'STAFF' : 'INTERPRETER')),
+        templateId,
         ...metadata,
         createdAt: new Date().toISOString(),
     });

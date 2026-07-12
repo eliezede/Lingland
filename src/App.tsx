@@ -13,78 +13,78 @@ import { ScrollToTop } from './components/routing/ScrollToTop';
 import { CommandPalette } from './components/ui/CommandPalette';
 import { UserRole } from './types.ts';
 
-// Layouts
-import { AdminLayout } from './layouts/AdminLayout';
-import { InterpreterLayout } from './layouts/InterpreterLayout';
-import { ClientLayout } from './layouts/ClientLayout';
+const lazyNamed = (importer: () => Promise<any>, exportName: string) =>
+  React.lazy(async () => {
+    const module = await importer();
+    return { default: module[exportName] as React.ComponentType<any> };
+  });
 
-// Shared Pages
-import { NotFound } from './pages/NotFound';
-import { Dashboard } from './pages/Dashboard';
-import { LoginPage } from './pages/LoginPage';
-import { LandingPage } from './pages/public/LandingPage';
-import { GuestBookingRequest } from './pages/public/GuestBookingRequest';
-import { InterpreterApplicationPage } from './pages/public/InterpreterApplication';
-import { ServicesPage } from './pages/public/ServicesPage';
-import WhyUsPage from './pages/public/WhyUsPage';
-import InterpretersPage from './pages/public/InterpretersPage';
-import { TermsPage } from './pages/public/TermsPage';
-import { StaffSetup } from './pages/public/StaffSetup';
-import { ActivateAccount } from './pages/public/ActivateAccount';
+const AdminLayout = lazyNamed(() => import('./layouts/AdminLayout'), 'AdminLayout');
+const InterpreterLayout = lazyNamed(() => import('./layouts/InterpreterLayout'), 'InterpreterLayout');
+const ClientLayout = lazyNamed(() => import('./layouts/ClientLayout'), 'ClientLayout');
 
-// Admin Pages
-import { JobsBoard } from './pages/admin/operations/JobsBoard';
-import { AssignmentCenter } from './pages/admin/operations/AssignmentCenter';
-import { TimesheetQueue } from './pages/admin/operations/TimesheetQueue';
-import AdminBookingDetails from './pages/admin/bookings/AdminBookingDetails';
-import { DocumentCenter } from './pages/admin/finance/DocumentCenter';
-import { Statements } from './pages/admin/finance/Statements';
-import { Payroll } from './pages/admin/finance/Payroll';
-import { DataCenter } from './pages/admin/administration/DataCenter';
-import { AdminStaff } from './pages/admin/administration/AdminStaff';
-import { AdminOrgChart } from './pages/admin/administration/AdminOrgChart';
-import { AdminProfile } from './pages/admin/AdminProfile';
-import { AuditLog } from './pages/admin/system/AuditLog';
-import { AdminBillingDashboard } from './pages/admin/billing/AdminBillingDashboard';
-import { AdminReports } from './pages/admin/billing/AdminReports';
-import { AdminClientInvoicesPage } from './pages/admin/billing/AdminClientInvoicesPage';
-import { AdminClientInvoiceDetailsPage } from './pages/admin/billing/AdminClientInvoiceDetailsPage';
-import { AdminInterpreterInvoicesPage } from './pages/admin/billing/AdminInterpreterInvoicesPage';
-import { AdminInterpreterInvoiceDetailsPage } from './pages/admin/billing/AdminInterpreterInvoiceDetailsPage';
-import { AdminClients } from './pages/admin/AdminClients';
-import { AdminClientDetails } from './pages/admin/clients/AdminClientDetails';
-import { AdminInterpreters } from './pages/admin/AdminInterpreters';
-import { AdminInterpreterDetails } from './pages/admin/interpreters/AdminInterpreterDetails';
-import { AdminNewBooking } from './pages/admin/bookings/AdminNewBooking';
-import { AdminUsers } from './pages/admin/AdminUsers';
-import { AdminSettings } from './pages/admin/AdminSettings';
-import { AdminEmailTemplates } from './pages/admin/settings/AdminEmailTemplates';
-import { AdminApplications } from './pages/admin/AdminApplications';
-import { AdminMessages } from './pages/admin/AdminMessages';
-import { StaffOnboarding } from './pages/admin/StaffOnboarding';
-import { AdminMigration } from './pages/admin/AdminMigration';
+const NotFound = lazyNamed(() => import('./pages/NotFound'), 'NotFound');
+const Dashboard = lazyNamed(() => import('./pages/Dashboard'), 'Dashboard');
+const LoginPage = lazyNamed(() => import('./pages/LoginPage'), 'LoginPage');
+const LandingPage = lazyNamed(() => import('./pages/public/LandingPage'), 'LandingPage');
+const GuestBookingRequest = lazyNamed(() => import('./pages/public/GuestBookingRequest'), 'GuestBookingRequest');
+const InterpreterApplicationPage = lazyNamed(() => import('./pages/public/InterpreterApplication'), 'InterpreterApplicationPage');
+const ServicesPage = lazyNamed(() => import('./pages/public/ServicesPage'), 'ServicesPage');
+const WhyUsPage = React.lazy(() => import('./pages/public/WhyUsPage'));
+const InterpretersPage = React.lazy(() => import('./pages/public/InterpretersPage'));
+const TermsPage = lazyNamed(() => import('./pages/public/TermsPage'), 'TermsPage');
+const StaffSetup = lazyNamed(() => import('./pages/public/StaffSetup'), 'StaffSetup');
+const ActivateAccount = lazyNamed(() => import('./pages/public/ActivateAccount'), 'ActivateAccount');
 
-// Interpreter Pages
-import { InterpreterDashboard } from './pages/interpreter/InterpreterDashboard';
-import { InterpreterJobs } from './pages/interpreter/InterpreterJobs';
-import { InterpreterJobDetails } from './pages/interpreter/InterpreterJobDetails';
-import { InterpreterTimesheets } from './pages/interpreter/InterpreterTimesheets';
-import { InterpreterTimesheetForm } from './pages/interpreter/InterpreterTimesheetForm';
-import { InterpreterPayments } from './pages/interpreter/InterpreterPayments';
-import { InterpreterProfile } from './pages/interpreter/InterpreterProfile';
-import { InterpreterMessages } from './pages/interpreter/InterpreterMessages';
-import { InterpreterOnboarding } from './pages/interpreter/InterpreterOnboarding';
-import { InterpreterOffers } from './pages/interpreter/InterpreterOffers';
+const JobsBoard = lazyNamed(() => import('./pages/admin/operations/JobsBoard'), 'JobsBoard');
+const AssignmentCenter = lazyNamed(() => import('./pages/admin/operations/AssignmentCenter'), 'AssignmentCenter');
+const TimesheetQueue = lazyNamed(() => import('./pages/admin/operations/TimesheetQueue'), 'TimesheetQueue');
+const AdminBookingDetails = React.lazy(() => import('./pages/admin/bookings/AdminBookingDetails'));
+const DataCenter = lazyNamed(() => import('./pages/admin/administration/DataCenter'), 'DataCenter');
+const AdminStaff = lazyNamed(() => import('./pages/admin/administration/AdminStaff'), 'AdminStaff');
+const AdminOrgChart = lazyNamed(() => import('./pages/admin/administration/AdminOrgChart'), 'AdminOrgChart');
+const AdminProfile = lazyNamed(() => import('./pages/admin/AdminProfile'), 'AdminProfile');
+const AuditLog = lazyNamed(() => import('./pages/admin/system/AuditLog'), 'AuditLog');
+const AdminBillingDashboard = lazyNamed(() => import('./pages/admin/billing/AdminBillingDashboard'), 'AdminBillingDashboard');
+const AdminReports = lazyNamed(() => import('./pages/admin/billing/AdminReports'), 'AdminReports');
+const AdminClientInvoicesPage = lazyNamed(() => import('./pages/admin/billing/AdminClientInvoicesPage'), 'AdminClientInvoicesPage');
+const AdminClientInvoiceDetailsPage = lazyNamed(() => import('./pages/admin/billing/AdminClientInvoiceDetailsPage'), 'AdminClientInvoiceDetailsPage');
+const AdminInterpreterInvoicesPage = lazyNamed(() => import('./pages/admin/billing/AdminInterpreterInvoicesPage'), 'AdminInterpreterInvoicesPage');
+const AdminInterpreterInvoiceDetailsPage = lazyNamed(() => import('./pages/admin/billing/AdminInterpreterInvoiceDetailsPage'), 'AdminInterpreterInvoiceDetailsPage');
+const AdminClients = lazyNamed(() => import('./pages/admin/AdminClients'), 'AdminClients');
+const AdminClientDetails = lazyNamed(() => import('./pages/admin/clients/AdminClientDetails'), 'AdminClientDetails');
+const AdminInterpreters = lazyNamed(() => import('./pages/admin/AdminInterpreters'), 'AdminInterpreters');
+const AdminInterpreterDetails = lazyNamed(() => import('./pages/admin/interpreters/AdminInterpreterDetails'), 'AdminInterpreterDetails');
+const AdminNewBooking = lazyNamed(() => import('./pages/admin/bookings/AdminNewBooking'), 'AdminNewBooking');
+const AdminUsers = lazyNamed(() => import('./pages/admin/AdminUsers'), 'AdminUsers');
+const AdminSettings = lazyNamed(() => import('./pages/admin/AdminSettings'), 'AdminSettings');
+const AdminEmailTemplates = lazyNamed(() => import('./pages/admin/settings/AdminEmailTemplates'), 'AdminEmailTemplates');
+const AdminApplications = lazyNamed(() => import('./pages/admin/AdminApplications'), 'AdminApplications');
+const AdminMessages = lazyNamed(() => import('./pages/admin/AdminMessages'), 'AdminMessages');
+const StaffOnboarding = lazyNamed(() => import('./pages/admin/StaffOnboarding'), 'StaffOnboarding');
+const AdminMigration = lazyNamed(() => import('./pages/admin/AdminMigration'), 'AdminMigration');
 
-// Client Pages
-import { ClientDashboard } from './pages/client/ClientDashboard';
-import { ClientBookingsList } from './pages/client/bookings/ClientBookingsList';
-import { ClientNewBooking } from './pages/client/bookings/ClientNewBooking';
-import { ClientBookingDetails } from './pages/client/bookings/ClientBookingDetails';
-import { ClientInvoicesList } from './pages/client/invoices/ClientInvoicesList';
-import { ClientInvoiceDetails } from './pages/client/invoices/ClientInvoiceDetails';
-import { ClientProfile } from './pages/client/ClientProfile';
-import { ClientMessages } from './pages/client/ClientMessages';
+const InterpreterDashboard = lazyNamed(() => import('./pages/interpreter/InterpreterDashboard'), 'InterpreterDashboard');
+const InterpreterJobs = lazyNamed(() => import('./pages/interpreter/InterpreterJobs'), 'InterpreterJobs');
+const InterpreterJobDetails = lazyNamed(() => import('./pages/interpreter/InterpreterJobDetails'), 'InterpreterJobDetails');
+const InterpreterTimesheets = lazyNamed(() => import('./pages/interpreter/InterpreterTimesheets'), 'InterpreterTimesheets');
+const InterpreterTimesheetForm = lazyNamed(() => import('./pages/interpreter/InterpreterTimesheetForm'), 'InterpreterTimesheetForm');
+const InterpreterPayments = lazyNamed(() => import('./pages/interpreter/InterpreterPayments'), 'InterpreterPayments');
+const InterpreterProfile = lazyNamed(() => import('./pages/interpreter/InterpreterProfile'), 'InterpreterProfile');
+const InterpreterMessages = lazyNamed(() => import('./pages/interpreter/InterpreterMessages'), 'InterpreterMessages');
+const InterpreterOnboarding = lazyNamed(() => import('./pages/interpreter/InterpreterOnboarding'), 'InterpreterOnboarding');
+const InterpreterOffers = lazyNamed(() => import('./pages/interpreter/InterpreterOffers'), 'InterpreterOffers');
+
+const ClientDashboard = lazyNamed(() => import('./pages/client/ClientDashboard'), 'ClientDashboard');
+const ClientBookingsList = lazyNamed(() => import('./pages/client/bookings/ClientBookingsList'), 'ClientBookingsList');
+const ClientNewBooking = lazyNamed(() => import('./pages/client/bookings/ClientNewBooking'), 'ClientNewBooking');
+const ClientBookingDetails = lazyNamed(() => import('./pages/client/bookings/ClientBookingDetails'), 'ClientBookingDetails');
+const ClientInvoicesList = lazyNamed(() => import('./pages/client/invoices/ClientInvoicesList'), 'ClientInvoicesList');
+const ClientInvoiceDetails = lazyNamed(() => import('./pages/client/invoices/ClientInvoiceDetails'), 'ClientInvoiceDetails');
+const ClientProfile = lazyNamed(() => import('./pages/client/ClientProfile'), 'ClientProfile');
+const ClientMessages = lazyNamed(() => import('./pages/client/ClientMessages'), 'ClientMessages');
+
+const RouteFallback = () => <div className="min-h-screen bg-slate-50 dark:bg-slate-950" aria-busy="true" />;
 
 const RootRoute = () => {
   const { user, isLoading } = useAuth();
@@ -114,7 +114,8 @@ const App = () => {
                     <HashRouter>
                       <ScrollToTop />
                       <CommandPalette />
-                      <Routes>
+                      <React.Suspense fallback={<RouteFallback />}>
+                        <Routes>
                         <Route path="/" element={<RootRoute />} />
                       <Route path="/login" element={<LoginPage />} />
 
@@ -194,9 +195,9 @@ const App = () => {
                               <Route path="users" element={<AdminUsers />} />
                               <Route path="settings" element={<AdminSettings />} />
                               <Route path="settings/email-templates" element={<AdminEmailTemplates />} />
-                              <Route path="finance/documents" element={<DocumentCenter />} />
-                              <Route path="finance/statements" element={<Statements />} />
-                              <Route path="finance/payroll" element={<Payroll />} />
+                              <Route path="finance/documents" element={<Navigate to="/admin/billing/client-invoices" replace />} />
+                              <Route path="finance/statements" element={<Navigate to="/admin/reports?report=FINANCE_OVERVIEW" replace />} />
+                              <Route path="finance/payroll" element={<Navigate to="/admin/billing/interpreter-invoices" replace />} />
                               <Route path="finance/reports" element={<AdminReports />} />
                               <Route path="reports" element={<AdminReports />} />
                               <Route path="administration/data" element={<DataCenter />} />
@@ -220,7 +221,8 @@ const App = () => {
                         </ProtectedRoute>
                       } />
                       <Route path="*" element={<NotFound />} />
-                    </Routes>
+                        </Routes>
+                      </React.Suspense>
                   </HashRouter>
                   </ClientProvider>
                 </ChatProvider>

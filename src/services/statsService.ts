@@ -1,38 +1,58 @@
 
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getCountFromServer, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import { BookingStatus } from '../types';
-import { MOCK_BOOKINGS, MOCK_INTERPRETERS } from './mockData';
 import { safeFetch } from './utils';
 
 export const StatsService = {
   getAdminStats: async () => {
     return safeFetch(async () => {
-      const allBookingsSnap = await getDocs(collection(db, 'bookings'));
-      const bookingsSnap = await getDocs(query(collection(db, 'bookings'), where('status', '==', BookingStatus.INCOMING)));
-      const interpretersSnap = await getDocs(query(collection(db, 'interpreters'), where('status', '==', 'ACTIVE')));
-      const invoicesSnap = await getDocs(query(collection(db, 'clientInvoices'), where('status', '==', 'SENT')));
-      
-      const onboardingStats = await StatsService.getOnboardingStats();
-
-      // Calculate revenue from confirmed/completed/paid bookings this month
       const now = new Date();
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      const paidBookingsSnapshot = await getDocs(query(
-        collection(db, 'bookings'),
-        where('status', 'in', [BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID])
-      ));
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const [
+        allBookingsCount,
+        pendingRequestsCount,
+        activePoolCount,
+        unpaidInvoicesCount,
+        claimsReviewSnapshot,
+        paidInvoicesSnapshot,
+        onboardingStats,
+      ] = await Promise.all([
+        getCountFromServer(collection(db, 'bookings')),
+        getCountFromServer(query(collection(db, 'bookings'), where('status', '==', BookingStatus.INCOMING))),
+        getCountFromServer(query(collection(db, 'interpreters'), where('status', 'in', ['ACTIVE', 'IMPORTED']))),
+        getCountFromServer(query(collection(db, 'clientInvoices'), where('status', '==', 'SENT'))),
+        getDocs(query(collection(db, 'timesheets'), where('status', '==', 'SUBMITTED'))),
+        getDocs(query(collection(db, 'clientInvoices'), where('status', '==', 'PAID'))),
+        StatsService.getOnboardingStats(),
+      ]);
 
-      const revenue = paidBookingsSnapshot.docs
-        .map(d => d.data())
-        .filter(d => d.date >= firstDay.split('T')[0])
-        .reduce((acc, d) => acc + (d.totalAmount || 0), 0);
+      const toDate = (value: any): Date | null => {
+        if (!value) return null;
+        const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      };
+      const revenue = paidInvoicesSnapshot.docs.reduce((total, invoiceDoc) => {
+        const invoice = invoiceDoc.data();
+        const paidAt = toDate(invoice.paidAt || invoice.paymentDate || invoice.updatedAt || invoice.issueDate);
+        if (!paidAt || paidAt < monthStart || paidAt >= nextMonthStart) return total;
+        return total + Number(invoice.totalAmount || invoice.total || 0);
+      }, 0);
 
       return {
-        totalBookings: allBookingsSnap.size,
-        pendingRequests: bookingsSnap.size,
-        activeInterpreters: interpretersSnap.size,
-        unpaidInvoices: invoicesSnap.size,
+        totalBookings: allBookingsCount.data().count,
+        pendingRequests: pendingRequestsCount.data().count,
+        activeInterpreters: activePoolCount.data().count,
+        unpaidInvoices: unpaidInvoicesCount.data().count,
+        claimsReviewCount: claimsReviewSnapshot.docs.filter(timesheetDoc => {
+          const timesheet = timesheetDoc.data();
+          return !timesheet.adminApproved && !timesheet.clientInvoiceId;
+        }).length,
+        claimsReviewBookingIds: claimsReviewSnapshot.docs.filter(timesheetDoc => {
+          const timesheet = timesheetDoc.data();
+          return !timesheet.adminApproved && !timesheet.clientInvoiceId;
+        }).map(timesheetDoc => String(timesheetDoc.data().bookingId || '')).filter(Boolean),
         revenueMonth: revenue || 0,
         ...onboardingStats
       };
@@ -41,6 +61,8 @@ export const StatsService = {
       pendingRequests: 0,
       activeInterpreters: 0,
       unpaidInvoices: 0,
+      claimsReviewCount: 0,
+      claimsReviewBookingIds: [],
       revenueMonth: 0,
       pendingApplications: 0,
       pendingOnboardingDocs: 0,
@@ -93,7 +115,15 @@ export const StatsService = {
       return {
         totalBookings: snap.size,
         upcomingBookings: bookings.filter(b => b.status === BookingStatus.BOOKED).length,
-        completedBookings: bookings.filter(b => [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).length,
+        completedBookings: bookings.filter(b => [
+          BookingStatus.SESSION_COMPLETED,
+          BookingStatus.TIMESHEET_SUBMITTED,
+          BookingStatus.TIMESHEET_VERIFIED,
+          BookingStatus.READY_FOR_INVOICE,
+          BookingStatus.INVOICING,
+          BookingStatus.INVOICED,
+          BookingStatus.PAID,
+        ].includes(b.status)).length,
         unpaidInvoices: invoicesSnap.size
       };
     }, {
@@ -119,7 +149,15 @@ export const StatsService = {
       return {
         totalBookings: snap.size,
         upcomingBookings: bookings.filter(b => b.status === BookingStatus.BOOKED).length,
-        completedBookings: bookings.filter(b => [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).length,
+        completedBookings: bookings.filter(b => [
+          BookingStatus.SESSION_COMPLETED,
+          BookingStatus.TIMESHEET_SUBMITTED,
+          BookingStatus.TIMESHEET_VERIFIED,
+          BookingStatus.READY_FOR_INVOICE,
+          BookingStatus.INVOICING,
+          BookingStatus.INVOICED,
+          BookingStatus.PAID,
+        ].includes(b.status)).length,
         liveOffers: offersSnap.size
       };
     }, {

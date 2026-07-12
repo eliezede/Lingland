@@ -17,7 +17,17 @@ export const ensureInterpreterOnboarding = (interpreter: Partial<Interpreter>) =
   rightToWork: { ...createDefaultOnboarding().rightToWork, ...(interpreter.onboarding?.rightToWork || {}) },
 });
 
-export const isInterpreterActiveForWork = (status?: string | null) => status === 'ACTIVE';
+export const isInterpreterActiveForWork = (status?: string | null) => (
+  status === 'ACTIVE' || status === 'ONLY_TRANSL'
+);
+
+export const isInterpreterAvailableForStaffAssignment = (
+  status?: string | null,
+  isTranslation = false
+) => {
+  if (status === 'ACTIVE' || status === 'IMPORTED') return true;
+  return isTranslation && status === 'ONLY_TRANSL';
+};
 
 export const isInterpreterLocked = (status?: string | null) => status === 'SUSPENDED' || status === 'BLOCKED';
 

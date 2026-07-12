@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { getTimesheetInterpreterAmount } from '../../utils/interpreterFlow';
+import { formatLanguagePair } from '../../utils/languageDisplay';
+import { getInterpreterBookingAmount, isTranslationBooking } from '../../utils/interpreterJobLifecycle';
 
 const money = (amount: number) =>
   `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -13,7 +15,7 @@ const money = (amount: number) =>
 export const InterpreterTimesheets = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { pendingSubmission, submittedHistory, loading } = useInterpreterTimesheets(user?.profileId);
+  const { pendingSubmission, jobHistory, loading } = useInterpreterTimesheets(user?.profileId);
 
   return (
     <div className="flex h-full min-h-[calc(100vh-4rem)] flex-1 flex-col bg-slate-50 animate-in fade-in duration-700 dark:bg-slate-950">
@@ -77,17 +79,19 @@ export const InterpreterTimesheets = () => {
             </div>
           </div>
 
-          {/* Submitted History Grid */}
+          {/* Unified work and timesheet history */}
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-              <h3 className="shrink-0 text-[10px] font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">Historical Logs</h3>
+              <h3 className="shrink-0 text-[10px] font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">Work & Timesheet History</h3>
+              <span className="text-[10px] font-bold text-slate-400">{jobHistory.length} records</span>
             </div>
             <div className="custom-scrollbar overflow-x-auto">
-              <table className="w-full min-w-[680px] border-collapse text-left">
+              <table className="w-full min-w-[820px] border-collapse text-left">
                 <thead className="border-b border-slate-100 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-950">
                   <tr>
+                    <th className="px-4 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Job</th>
                     <th className="px-4 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Date</th>
-                    <th className="px-4 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Duration</th>
+                    <th className="px-4 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Service</th>
                     <th className="px-4 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Status</th>
                     <th className="px-4 py-2 text-right text-[10px] font-black uppercase tracking-wide text-slate-400">Settlement</th>
                     <th className="px-4 py-2 text-center text-[10px] font-black uppercase tracking-wide text-slate-400">Evidence</th>
@@ -95,35 +99,56 @@ export const InterpreterTimesheets = () => {
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {loading ? (
-                    <tr><td colSpan={5} className="px-6 py-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Loading Logs...</td></tr>
-                  ) : submittedHistory.length === 0 ? (
-                    <tr><td colSpan={5} className="px-6 py-12 text-center text-xs font-bold text-slate-400 uppercase tracking-widest">No historical logs found.</td></tr>
-                  ) : submittedHistory.map(ts => (
-                    <tr key={ts.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/60">
+                    <tr><td colSpan={6} className="px-6 py-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Loading history...</td></tr>
+                  ) : jobHistory.length === 0 ? (
+                    <tr><td colSpan={6} className="px-6 py-12 text-center text-xs font-bold text-slate-400 uppercase tracking-widest">No work history found.</td></tr>
+                  ) : jobHistory.map(record => {
+                    const booking = record.booking;
+                    const timesheet = record.timesheet;
+                    const dateValue = booking?.date || timesheet?.actualStart;
+                    const amount = timesheet ? getTimesheetInterpreterAmount(timesheet) : getInterpreterBookingAmount(booking);
+                    return (
+                    <tr
+                      key={record.id}
+                      onClick={() => booking && navigate(`/interpreter/jobs/${booking.id}`, {
+                        state: { returnTo: '/interpreter/timesheets', returnLabel: 'Timesheets' }
+                      })}
+                      className={`transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/60 ${booking ? 'cursor-pointer' : ''}`}
+                    >
+                      <td className="px-4 py-3">
+                        <p className="text-xs font-black text-slate-900 dark:text-white">
+                          {booking?.displayRef || booking?.jobNumber || booking?.bookingRef || timesheet?.bookingId || 'Historical record'}
+                        </p>
+                        {booking?.sourceSystem === 'AIRTABLE' && <span className="text-[9px] font-bold uppercase text-blue-600">Imported history</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <CalendarDays size={14} className="text-slate-400" />
-                          <span className="text-xs font-bold text-slate-900 dark:text-white">{new Date(ts.actualStart).toLocaleDateString()}</span>
+                          <span className="text-xs font-bold text-slate-900 dark:text-white">
+                            {dateValue ? new Date(String(dateValue).includes('T') ? String(dateValue) : `${dateValue}T12:00:00`).toLocaleDateString('en-GB') : 'Unknown'}
+                          </span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-xs font-medium text-slate-600 dark:text-slate-300">
-                        {new Date(ts.actualStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(ts.actualEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {booking ? formatLanguagePair(booking.languageFrom, booking.languageTo) : 'Historical service'}
+                        {booking && <span className="block text-[9px] font-bold uppercase text-slate-400">{isTranslationBooking(booking) ? 'Translation' : 'Interpreting'}</span>}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider
-                          ${ts.adminApproved ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
-                          {ts.status}
+                          ${timesheet?.adminApproved ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
+                          {booking?.status || timesheet?.status || 'HISTORICAL'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-xs font-black text-slate-900 dark:text-white">
-                        {getTimesheetInterpreterAmount(ts) > 0 ? money(getTimesheetInterpreterAmount(ts)) : <span className="text-slate-400 text-[10px] uppercase">Processing</span>}
+                        {amount > 0 ? money(amount) : <span className="text-slate-400 text-[10px] uppercase">Pending review</span>}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {ts.supportingDocumentUrl ? (
+                        {timesheet?.supportingDocumentUrl ? (
                           <a
-                            href={ts.supportingDocumentUrl}
+                            href={timesheet.supportingDocumentUrl}
                             target="_blank"
                             rel="noreferrer"
+                            onClick={event => event.stopPropagation()}
                             className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-blue-600 hover:text-blue-800"
                           >
                             <FileText size={12} />
@@ -134,7 +159,7 @@ export const InterpreterTimesheets = () => {
                         )}
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

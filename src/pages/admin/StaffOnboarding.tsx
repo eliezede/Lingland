@@ -14,6 +14,8 @@ import { ImageCropper } from '../../components/ui/ImageCropper';
 import { UserService } from '../../services/userService';
 import { PostcodeLookup } from '../../components/ui/PostcodeLookup';
 import { UkAddress } from '../../services/addressService';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../../services/firebaseConfig';
 
 export const StaffOnboarding = () => {
   const { user, refreshUser } = useAuth();
@@ -36,7 +38,8 @@ export const StaffOnboarding = () => {
         if (p) {
           if (p.onboardingCompleted) {
             if (user.status === 'PENDING') {
-              await UserService.update(user.id, { status: 'ACTIVE' });
+              const completeOnboarding = httpsCallable(functions, 'completeStaffOnboarding');
+              await completeOnboarding({});
               await refreshUser();
             }
             navigate('/admin/dashboard');
@@ -179,7 +182,8 @@ export const StaffOnboarding = () => {
         });
       }
       if (user?.id) {
-        await UserService.update(user.id, { status: 'ACTIVE' });
+        const completeOnboarding = httpsCallable(functions, 'completeStaffOnboarding');
+        await completeOnboarding({});
         await refreshUser();
       }
       

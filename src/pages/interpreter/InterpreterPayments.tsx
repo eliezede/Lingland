@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useInterpreterInvoices } from '../../hooks/useInterpreterInvoices';
@@ -31,7 +30,7 @@ export const InterpreterPayments = () => {
 
     setUploading(true);
     try {
-      const path = `invoices/${user.profileId}/${Date.now()}_${file.name}`;
+      const path = `invoices/interpreters/${user.id}/${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
       setUploadedUrl(url);
       showToast('Invoice uploaded successfully', 'success');
@@ -201,9 +200,18 @@ export const InterpreterPayments = () => {
                   </div>
                   <div className="flex justify-between items-end border-t border-slate-50 pt-3">
                     <span className="text-xs font-black text-slate-900">£{inv.totalAmount.toFixed(2)}</span>
-                    <Link to={`/interpreter/billing/invoice/${inv.id}`} className="text-[10px] font-black text-blue-600 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 hover:underline">
-                      Details <ExternalLink size={10} />
-                    </Link>
+                    {inv.uploadedPdfUrl ? (
+                      <a
+                        href={inv.uploadedPdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-600 hover:underline"
+                      >
+                        Invoice PDF <ExternalLink size={10} />
+                      </a>
+                    ) : (
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{inv.lineCount || 0} sessions</span>
+                    )}
                   </div>
                 </div>
               ))}

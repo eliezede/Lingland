@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowUpRight, CheckCircle, ChevronLeft, Download, FileText, Receipt, Send } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, CheckCircle, ChevronLeft, Download, FileText, Receipt, Send } from 'lucide-react';
 import { BillingService, PdfService } from '../../../services/api';
 import { ClientInvoice, InvoiceStatus } from '../../../types';
 import { InvoiceStatusBadge } from '../../../components/billing/InvoiceStatusBadge';
@@ -61,6 +61,10 @@ export const AdminClientInvoiceDetailsPage = () => {
 
   const handleStatusUpdate = async (status: InvoiceStatus) => {
     if (!invoice) return;
+    if (!canPerformFinancialActions) {
+      showToast('Resolve the financial integrity issues before changing this invoice status.', 'error');
+      return;
+    }
     setIsUpdating(true);
     try {
       await BillingService.updateClientInvoiceStatus(invoice.id, status);
@@ -75,6 +79,10 @@ export const AdminClientInvoiceDetailsPage = () => {
 
   const handleDownloadPdf = () => {
     if (!invoice) return;
+    if (!canPerformFinancialActions) {
+      showToast('Resolve the financial integrity issues before generating a PDF.', 'error');
+      return;
+    }
     PdfService.generateClientInvoice(invoice);
     showToast('Downloading PDF...', 'info');
   };
@@ -85,6 +93,24 @@ export const AdminClientInvoiceDetailsPage = () => {
 
   const total = invoice.totalAmount || summary.subtotal;
   const currency = invoice.currency || 'GBP';
+  const rawReference = invoice.reference || invoice.invoiceNumber || invoice.id;
+  const referenceMissing = invoice.referenceIntegrityStatus === 'MISSING'
+    || invoice.reference === 'Reference missing'
+    || /^rec[a-z0-9]+$/i.test(String(rawReference || ''));
+  const displayReference = referenceMissing ? 'Reference missing' : rawReference;
+  const integrityIssues = [
+    Math.abs(Number(total || 0)) < 0.005 || invoice.financialIntegrityStatus === 'AMOUNT_MISSING'
+      ? 'The invoice amount is missing or zero.'
+      : '',
+    lines.length === 0 ? 'No persisted invoice lines were found.' : '',
+    invoice.financialIntegrityStatus === 'LINK_MISSING' || (invoice.sourceSystem === 'AIRTABLE' && summary.jobs === 0)
+      ? 'The Airtable document is not linked to a mirrored job.'
+      : '',
+    referenceMissing
+      ? 'The external invoice reference is missing.'
+      : '',
+  ].filter(Boolean);
+  const canPerformFinancialActions = integrityIssues.length === 0;
   const currentPath = `${location.pathname}${location.search}`;
   const financeBoardPath = `/admin/billing?view=fin-awaiting-payment&lane=clientBilling${invoice.clientId ? `&clientId=${encodeURIComponent(invoice.clientId)}` : ''}`;
 
@@ -102,7 +128,7 @@ export const AdminClientInvoiceDetailsPage = () => {
           </button>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{invoice.reference || invoice.invoiceNumber || invoice.id}</h1>
+              <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{displayReference}</h1>
               <InvoiceStatusBadge status={invoice.status} />
             </div>
             <p className="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
@@ -121,14 +147,16 @@ export const AdminClientInvoiceDetailsPage = () => {
           </Link>
           <button
             onClick={handleDownloadPdf}
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+            disabled={!canPerformFinancialActions}
+            title={!canPerformFinancialActions ? 'Resolve integrity issues before generating a PDF' : 'Download PDF'}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Download size={15} /> PDF
           </button>
           {invoice.status === InvoiceStatus.DRAFT && (
             <button
               onClick={() => handleStatusUpdate(InvoiceStatus.SENT)}
-              disabled={isUpdating}
+              disabled={isUpdating || !canPerformFinancialActions}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60"
             >
               <Send size={15} /> Mark sent
@@ -137,7 +165,7 @@ export const AdminClientInvoiceDetailsPage = () => {
           {invoice.status === InvoiceStatus.SENT && (
             <button
               onClick={() => handleStatusUpdate(InvoiceStatus.PAID)}
-              disabled={isUpdating}
+              disabled={isUpdating || !canPerformFinancialActions}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
             >
               <CheckCircle size={15} /> Mark paid
@@ -145,6 +173,26 @@ export const AdminClientInvoiceDetailsPage = () => {
           )}
         </div>
       </div>
+
+      {!canPerformFinancialActions && (
+        <section className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/30 dark:bg-rose-500/10">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={19} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-300" />
+            <div>
+              <h2 className="text-sm font-black text-rose-950 dark:text-rose-100">Financial review required</h2>
+              <p className="mt-1 text-xs font-semibold text-rose-800 dark:text-rose-200">
+                This document remains visible for audit, but PDF generation and status progression are blocked.
+              </p>
+              <ul className="mt-2 space-y-1 text-xs font-semibold text-rose-800 dark:text-rose-200">
+                {integrityIssues.map(issue => <li key={issue}>- {issue}</li>)}
+              </ul>
+              {invoice.amountSourceField && (
+                <p className="mt-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">Amount source: {invoice.amountSourceField}</p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
         <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr] lg:items-center">
@@ -157,7 +205,7 @@ export const AdminClientInvoiceDetailsPage = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             {[
-              ['Total', money(total, currency)],
+              ['Total', Math.abs(Number(total || 0)) < 0.005 ? 'Amount missing' : money(total, currency)],
               ['Due', formatDate(invoice.dueDate)],
               ['Lines', summary.lines],
               ['Jobs', summary.jobs],
@@ -183,7 +231,9 @@ export const AdminClientInvoiceDetailsPage = () => {
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Every billable line should trace back to a job or timesheet.</p>
             </div>
           </div>
-          <p className="text-sm font-black text-slate-950 dark:text-white">{money(summary.subtotal || total, currency)}</p>
+          <p className="text-sm font-black text-slate-950 dark:text-white">
+            {Math.abs(Number(summary.subtotal || total || 0)) < 0.005 ? 'Amount missing' : money(summary.subtotal || total, currency)}
+          </p>
         </div>
 
         <div className="overflow-x-auto">
@@ -225,8 +275,8 @@ export const AdminClientInvoiceDetailsPage = () => {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right text-sm font-semibold text-slate-600 dark:text-slate-300">{Number(item.units || 0).toLocaleString('en-GB')}</td>
-                  <td className="px-4 py-3 text-right text-sm font-semibold text-slate-600 dark:text-slate-300">{money(item.rate, currency)}</td>
-                  <td className="px-4 py-3 text-right text-sm font-black text-slate-950 dark:text-white">{money(item.total, currency)}</td>
+                  <td className="px-4 py-3 text-right text-sm font-semibold text-slate-600 dark:text-slate-300">{Math.abs(Number(item.rate || 0)) < 0.005 ? '-' : money(item.rate, currency)}</td>
+                  <td className="px-4 py-3 text-right text-sm font-black text-slate-950 dark:text-white">{Math.abs(Number(item.total || 0)) < 0.005 ? 'Amount missing' : money(item.total, currency)}</td>
                 </tr>
               ))}
               {lines.length === 0 && (
@@ -247,7 +297,7 @@ export const AdminClientInvoiceDetailsPage = () => {
           </div>
           <div className="text-left sm:text-right">
             <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Total due</p>
-            <p className="text-2xl font-black text-slate-950 dark:text-white">{money(total, currency)}</p>
+            <p className="text-2xl font-black text-slate-950 dark:text-white">{Math.abs(Number(total || 0)) < 0.005 ? 'Amount missing' : money(total, currency)}</p>
           </div>
         </div>
       </section>

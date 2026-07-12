@@ -1,12 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { BookingService, ChatService } from '../../services/api';
-import { AssignmentStatus, Booking, BookingAssignment, BookingStatus, ServiceCategory } from '../../types';
+import { AssignmentStatus, Booking, BookingAssignment, BookingStatus } from '../../types';
 import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare, CheckCircle2, XCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useChat } from '../../context/ChatContext';
 import { formatLanguagePair } from '../../utils/languageDisplay';
+import {
+  getInterpreterBookingAmount,
+  isPendingInterpreterTimesheet,
+  isTranslationBooking,
+} from '../../utils/interpreterJobLifecycle';
 
 export const InterpreterJobDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -40,7 +45,7 @@ export const InterpreterJobDetails = () => {
         setIsDirectOffer(!!res?.interpreterId && res.interpreterId === user.profileId && [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(res.status));
         let matchingOffer = offers.find(o => o.bookingId === id);
         if (!matchingOffer && res?.interpreterId === user.profileId) {
-          const assignments = await BookingService.getAssignmentsByBookingId(id);
+          const assignments = await BookingService.getAssignmentsByBookingId(id, user.profileId);
           matchingOffer = assignments.find((assignment: BookingAssignment) => assignment.interpreterId === user.profileId && assignment.status === AssignmentStatus.OFFERED);
         }
         setAssignmentId(matchingOffer?.id || null);
@@ -54,19 +59,7 @@ export const InterpreterJobDetails = () => {
     if (!user || !job) return;
 
     try {
-      const adminUser = await ChatService.getAdminSupportUser();
-      if (!adminUser) {
-        showToast('No operations user is available for chat', 'error');
-        return;
-      }
-
-      const threadId = await ChatService.getOrCreateBookingThread(
-        job.id,
-        user,
-        adminUser,
-        { name: job.bookingRef || job.id }
-      );
-
+      const threadId = await ChatService.getOrCreateSupportThread(job.id);
       openThread(threadId);
     } catch {
       showToast('Failed to open job chat', 'error');
@@ -119,12 +112,11 @@ export const InterpreterJobDetails = () => {
   if (!job) return <div className="p-8 text-center text-red-500">Job not found.</div>;
 
   const isOnline = job.locationType === 'ONLINE';
+  const isTranslation = isTranslationBooking(job);
+  const professionalAmount = getInterpreterBookingAmount(job);
   const canRespondToOffer = isDirectOffer || !!assignmentId || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status);
-  const scheduledEnd = new Date(`${job.date}T${job.endTime || job.expectedEndTime || job.startTime || '23:59'}`);
-  const isCompletedForTimesheet = job.serviceCategory === ServiceCategory.TRANSLATION
-    ? new Date(`${job.date}T23:59:00`) <= new Date()
-    : scheduledEnd <= new Date();
-  const canSubmitTimesheet = job.status === BookingStatus.BOOKED && isCompletedForTimesheet;
+  const canSubmitTimesheet = isPendingInterpreterTimesheet(job, new Set());
+  const scheduledDate = isTranslation ? job.translationDeadline || job.date : job.date;
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
@@ -147,7 +139,7 @@ export const InterpreterJobDetails = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Details */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={`${isTranslation ? 'lg:col-span-3' : 'lg:col-span-2'} space-y-6`}>
           {/* Summary Card */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden">
             <div className="flex justify-between items-start mb-6 relative z-10">
@@ -155,8 +147,10 @@ export const InterpreterJobDetails = () => {
                 {job.status === 'PENDING_ASSIGNMENT' as any ? 'Direct Assignment' : job.status}
               </span>
               <div className="text-right">
-                <p className="text-[9px] font-black uppercase text-slate-400 tracking-wider mb-0.5">Est. Pay</p>
-                <p className="text-xl font-black text-emerald-600 leading-none">£45.00</p>
+                <p className="text-[9px] font-black uppercase text-slate-400 tracking-wider mb-0.5">Pay estimate</p>
+                <p className="text-xl font-black text-emerald-600 leading-none">
+                  {professionalAmount > 0 ? `GBP ${professionalAmount.toFixed(2)}` : 'Pending review'}
+                </p>
               </div>
             </div>
 
@@ -164,45 +158,37 @@ export const InterpreterJobDetails = () => {
               <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-6">
                 {formatLanguagePair(job.languageFrom, job.languageTo)}
               </h2>
-              <div className="grid grid-cols-2 lg:grid-cols-4 border border-slate-100 rounded-lg overflow-hidden">
-                <div className="border-r border-b lg:border-b-0 border-slate-100 p-4 bg-white hidden sm:block">
+              <div className={`grid border border-slate-100 rounded-lg overflow-hidden ${isTranslation ? 'sm:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+                <div className="border-b border-slate-100 p-4 bg-white sm:border-b-0 sm:border-r">
                   <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Service Type</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.serviceType}</p>
+                  <p className="font-semibold text-sm text-slate-900">{isTranslation ? 'Translation' : job.serviceType}</p>
                 </div>
-                <div className="border-b lg:border-b-0 lg:border-r border-slate-100 p-4 bg-white sm:hidden">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Service Type</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.serviceType}</p>
-                </div>
-
-                <div className="border-b lg:border-b-0 lg:border-r border-slate-100 p-4 bg-white hidden sm:block">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Case Type</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.caseType || 'General'}</p>
-                </div>
-                <div className="border-b lg:border-b-0 lg:border-r border-slate-100 p-4 bg-white sm:hidden border-l">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Case Type</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.caseType || 'General'}</p>
-                </div>
-
-                <div className="border-r border-slate-100 p-4 bg-white hidden sm:block">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Gender</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.genderPreference || 'Any'}</p>
-                </div>
-                <div className="border-b lg:border-b-0 border-slate-100 p-4 bg-white sm:hidden">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Gender</p>
-                  <p className="font-semibold text-sm text-slate-900">{job.genderPreference || 'Any'}</p>
-                </div>
-
-                <div className="p-4 bg-white hidden sm:block">
-                  <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Client</p>
-                  <p className="font-semibold text-sm text-slate-900 truncate" title={job.clientName}>{job.clientName || 'Confidential'}</p>
-                </div>
-                <div className="p-4 bg-white sm:hidden border-l">
+                {isTranslation ? (
+                  <div className="border-b border-slate-100 p-4 bg-white sm:border-b-0 sm:border-r">
+                    <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Delivery units</p>
+                    <p className="font-semibold text-sm text-slate-900">
+                      {job.wordCount ? `${job.wordCount.toLocaleString('en-GB')} words` : `${job.numberOfDocs || 0} documents`}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="border-b border-slate-100 p-4 bg-white sm:border-b-0 sm:border-r">
+                      <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Case Type</p>
+                      <p className="font-semibold text-sm text-slate-900">{job.caseType || 'General'}</p>
+                    </div>
+                    <div className="border-b border-slate-100 p-4 bg-white lg:border-b-0 lg:border-r">
+                      <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Gender</p>
+                      <p className="font-semibold text-sm text-slate-900">{job.genderPreference || 'Any'}</p>
+                    </div>
+                  </>
+                )}
+                <div className="p-4 bg-white">
                   <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-1">Client</p>
                   <p className="font-semibold text-sm text-slate-900 truncate" title={job.clientName}>{job.clientName || 'Confidential'}</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6 pt-6 border-t border-slate-100">
+              {!isTranslation && <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6 pt-6 border-t border-slate-100">
                 <div>
                   <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Patient / Client Name</p>
                   <p className="font-bold text-slate-700">{job.patientName || 'N/A'}</p>
@@ -211,9 +197,26 @@ export const InterpreterJobDetails = () => {
                   <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Professional Name</p>
                   <p className="font-bold text-slate-700">{job.professionalName || 'N/A'}</p>
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
+
+          {isTranslation && (
+            <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:grid-cols-3">
+              <div>
+                <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Deadline</p>
+                <p className="text-sm font-semibold text-slate-900">{new Date(`${scheduledDate}T12:00:00`).toLocaleDateString('en-GB')}</p>
+              </div>
+              <div>
+                <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Format</p>
+                <p className="text-sm font-semibold text-slate-900">{job.translationFormatOther || job.translationFormat || 'Not specified'}</p>
+              </div>
+              <div>
+                <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Source files</p>
+                <p className="text-sm font-semibold text-slate-900">{job.sourceFiles?.length || job.numberOfDocs || 0}</p>
+              </div>
+            </div>
+          )}
 
           {/* Notes Card */}
           {job.notes && (
@@ -225,7 +228,7 @@ export const InterpreterJobDetails = () => {
         </div>
 
         {/* Sidebar */}
-        <div className="lg:col-span-1 space-y-6">
+        {!isTranslation && <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
             <h3 className="text-xs font-black text-slate-900 mb-4">Schedule</h3>
             <div className="space-y-4">
@@ -235,10 +238,10 @@ export const InterpreterJobDetails = () => {
                 </div>
                 <div>
                   <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-0.5">
-                    {job.serviceType === 'TRANSLATION' ? 'Deadline Date' : 'Scheduled Date'}
+                    {isTranslation ? 'Deadline Date' : 'Scheduled Date'}
                   </p>
                   <p className="font-semibold text-sm text-slate-900">
-                    {new Date(job.date).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
+                    {new Date(`${scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
                   </p>
                 </div>
               </div>
@@ -248,9 +251,11 @@ export const InterpreterJobDetails = () => {
                 </div>
                 <div>
                   <p className="text-[9px] font-bold uppercase text-slate-400 tracking-wider mb-0.5">
-                    {job.serviceType === 'TRANSLATION' ? 'Delivery Time' : 'Time & Duration'}
+                    {isTranslation ? 'Delivery target' : 'Time & Duration'}
                   </p>
-                  <p className="font-semibold text-sm text-slate-900">{job.startTime}{job.serviceType !== 'TRANSLATION' && ` (${job.durationMinutes} mins)`}</p>
+                  <p className="font-semibold text-sm text-slate-900">
+                    {isTranslation ? 'By 23:59' : `${job.startTime} (${job.durationMinutes} mins)`}
+                  </p>
                 </div>
               </div>
             </div>
@@ -286,7 +291,7 @@ export const InterpreterJobDetails = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Action Bar */}
@@ -316,7 +321,7 @@ export const InterpreterJobDetails = () => {
               })}
               className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex items-center justify-center text-sm tracking-tight"
             >
-              <FileText className="mr-2" size={16} /> {job.serviceType === 'TRANSLATION' ? 'Submit Work / Delivery' : 'Submit Timesheet'}
+              <FileText className="mr-2" size={16} /> {isTranslation ? 'Submit Work / Delivery' : 'Submit Timesheet'}
             </button>
           ) : (
             null

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { BookingService, ClientService, InterpreterService, StorageService, UserService } from '../../services/api';
-import { ServiceType, Booking, Client, UserRole } from '../../types';
+import { BookingService, InterpreterService, StorageService } from '../../services/api';
+import { ServiceType, Booking } from '../../types';
 import {
   Globe2, CheckCircle2, ArrowRight, FileText, ShieldCheck,
   BadgeCheck, Clock, CreditCard, MapPin, Video, Calendar, User,
@@ -11,6 +11,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { InfoCard } from '../../components/ui/InfoCard';
 import { Modal } from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
+import { PublicSessionService } from '../../services/publicSessionService';
 
 const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => (
   <div className="mb-5">
@@ -32,7 +33,6 @@ export const GuestBookingRequest = () => {
   const [step, setStep] = useState<'FORM' | 'SUCCESS'>('FORM');
   const [loading, setLoading] = useState(false);
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
-  const [createdClient, setCreatedClient] = useState<Client | null>(null);
 
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [loadingLangs, setLoadingLangs] = useState(true);
@@ -50,7 +50,8 @@ export const GuestBookingRequest = () => {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const path = `bookings/guests/temp/${Date.now()}_${file.name}`;
+        const uid = await PublicSessionService.ensure();
+        const path = `bookings/guests/${uid}/${crypto.randomUUID()}_${file.name}`;
         const url = await StorageService.uploadFile(file, path);
         newUploadedFiles.push({ name: file.name, url });
       } catch (error) {
@@ -205,58 +206,6 @@ export const GuestBookingRequest = () => {
     }
   };
 
-  const handleCreateClient = async () => {
-    if (!createdBooking?.guestContact) return;
-    setLoading(true);
-    try {
-      const cleanEmail = createdBooking.guestContact.email.trim().toLowerCase();
-      const linkedClient = createdBooking.clientId ? await ClientService.getById(createdBooking.clientId) : undefined;
-      const client = linkedClient || await ClientService.createClientFromGuest({
-        ...createdBooking.guestContact,
-        email: cleanEmail
-      });
-
-      await BookingService.linkClientToBooking(createdBooking.id, client.id);
-
-      const existingUser = await UserService.getByEmail(cleanEmail);
-      if (existingUser) {
-        if (existingUser.status === 'SUSPENDED') {
-          throw new Error('This email is linked to a suspended account.');
-        }
-
-        if (!existingUser.profileId || existingUser.profileId !== client.id) {
-          await UserService.update(existingUser.id, { profileId: client.id });
-        }
-
-        if (existingUser.status !== 'ACTIVE') {
-          await UserService.sendActivationInvite(cleanEmail, existingUser.displayName || client.contactPerson);
-          showToast('Account linked. Activation email sent.', 'success');
-        } else {
-          showToast('Booking linked to your existing account.', 'success');
-        }
-      } else {
-        await UserService.create({
-          displayName: client.contactPerson || createdBooking.guestContact.name,
-          email: cleanEmail,
-          role: UserRole.CLIENT,
-          status: 'IMPORTED',
-          profileId: client.id,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-        await UserService.sendActivationInvite(cleanEmail, client.contactPerson || createdBooking.guestContact.name);
-        showToast('Account created. Activation email sent.', 'success');
-      }
-
-      setCreatedClient(client);
-    } catch (e) {
-      console.error(e);
-      showToast('Failed to create profile', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (step === 'SUCCESS' && createdBooking) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -277,30 +226,13 @@ export const GuestBookingRequest = () => {
               Our team will review your request shortly.
             </p>
 
-            {!createdClient ? (
-              <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl p-6 text-white shadow-lg relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
-                <h3 className="font-bold text-lg mb-1 relative z-10">Use Lingland often?</h3>
-                <p className="text-blue-100 text-sm mb-4 relative z-10">
-                  Create a secure account instantly to manage bookings, view invoices, and track spending.
-                </p>
-                <button
-                  onClick={handleCreateClient}
-                  disabled={loading}
-                  className="w-full bg-white text-blue-600 font-bold py-3 rounded-lg shadow-sm hover:bg-blue-50 transition-colors relative z-10 flex items-center justify-center"
-                >
-                  {loading ? 'Creating...' : 'Create Account from Booking'} <ArrowRight size={16} className="ml-2" />
-                </button>
-              </div>
-            ) : (
-              <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center animate-fade-in">
-                <BadgeCheck size={32} className="text-emerald-600 mx-auto mb-2" />
-                <h3 className="font-bold text-emerald-900">Account Created!</h3>
-                <p className="text-sm text-emerald-700 mt-1">
-                  We sent an activation email to <strong>{createdClient.email}</strong>
-                </p>
-              </div>
-            )}
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-5 text-center">
+              <BadgeCheck size={28} className="mx-auto mb-2 text-blue-600" />
+              <h3 className="font-bold text-blue-950">Request safely recorded</h3>
+              <p className="mt-1 text-sm text-blue-800">
+                Portal access is activated by Lingland staff after the organisation and booking contact are verified.
+              </p>
+            </div>
 
             <div className="mt-8 text-center">
               <Link to="/" className="text-slate-400 hover:text-slate-600 text-sm font-bold flex items-center justify-center transition-colors">

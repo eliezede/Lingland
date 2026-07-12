@@ -37,9 +37,10 @@ exports.onEmailCreated = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const brevoService_1 = require("../services/brevoService");
+const deliveryPolicy_1 = require("../communications/deliveryPolicy");
 const getCommunicationMode = async () => {
     const settings = await admin.firestore().collection('system').doc('settings').get();
-    return settings.data()?.platformMode?.communicationMode || 'SUPPRESSED';
+    return (0, deliveryPolicy_1.normalizeCommunicationMode)(settings.data()?.platformMode?.communicationMode);
 };
 exports.onEmailCreated = functions.runWith({
     secrets: ['BREVO_API_KEY'],
@@ -59,16 +60,19 @@ exports.onEmailCreated = functions.runWith({
     const { subject, html } = message;
     try {
         const communicationMode = await getCommunicationMode();
-        if (communicationMode !== 'LIVE') {
+        const recipientType = String(data.recipientType || '').toUpperCase();
+        const canSend = (0, deliveryPolicy_1.canDeliverCommunication)(communicationMode, recipientType);
+        if (!canSend) {
             console.log(`[onEmailCreated] Suppressed email ${context.params.mailId} because communication mode is ${communicationMode}.`);
-            await admin.firestore().collection('emailAudit').add({
+            await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
                 ...data,
                 mailId: context.params.mailId,
                 status: 'SUPPRESSED',
+                recipientType: recipientType || 'UNKNOWN',
                 communicationMode,
                 suppressedReason: `Communication mode ${communicationMode} suppressed outbound delivery`,
                 createdAt: new Date().toISOString()
-            });
+            }, { merge: true });
             return snap.ref.update({
                 delivery: {
                     state: 'SUPPRESSED',
@@ -79,15 +83,32 @@ exports.onEmailCreated = functions.runWith({
         }
         console.log(`[onEmailCreated] Sending email via Brevo for: ${context.params.mailId}`);
         await brevoService_1.brevoService.sendEmail(Array.isArray(to) ? to : [to], subject, html);
+        await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
+            ...data,
+            mailId: context.params.mailId,
+            status: 'SENT',
+            communicationMode,
+            sentAt: new Date().toISOString(),
+            createdAt: data.createdAt || new Date().toISOString()
+        }, { merge: true });
         // Update the status in the Firestore document
         return snap.ref.update({
             delivery: {
                 state: 'SUCCESS',
+                communicationMode,
                 sentAt: new Date().toISOString()
             }
         });
     }
     catch (error) {
+        await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
+            ...data,
+            mailId: context.params.mailId,
+            status: 'ERROR',
+            error: String(error?.message || 'Unknown email delivery error'),
+            errorAt: new Date().toISOString(),
+            createdAt: data.createdAt || new Date().toISOString()
+        }, { merge: true }).catch(() => undefined);
         console.error(`[onEmailCreated] ❌ Error sending email:`, error);
         return snap.ref.update({
             delivery: {

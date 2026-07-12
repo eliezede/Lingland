@@ -133,8 +133,8 @@ Last deployed milestone:
 | Client invoices | Interpretation invoice import/flow exists partially. Translation invoice import is not complete. | PARTIAL |
 | Interpreter/translator invoices | Interpreter payable flow exists partially. Translator invoices/payment mapping not complete. | PARTIAL |
 | Jobs Board | Strong Airtable-like UI foundation exists: views, filters, column menu, resize, freeze, pagination, manual actions. Needs final service-aware validation and view persistence audit. | PARTIAL |
-| Booking Detail/Edit | Improved, but view/edit are not fully unified and translation context is not complete. | PARTIAL |
-| Operations CRM / Finance CRM | Direction exists; finance and operations views are partially implemented. Need shared grid/workspace discipline and role defaults. | PARTIAL |
+| Booking Detail/Edit | Shared record shell, nested return context, interpretation/translation panels and assignment-safe editing are browser-proven. | IMPLEMENTED / PROVEN |
+| Operations CRM / Finance CRM | Shared jobs workspace, role-specific defaults, saved views, finance lanes and responsive grid are implemented and browser-proven. | IMPLEMENTED / PROVEN |
 | Data Center / Audit Control | Now honest readiness/control pages, but not a real immutable audit ledger. | UI_ONLY/PARTIAL |
 | Interpreter app | Dashboard/jobs/timesheets improved and translation-aware in places. Needs end-to-end passive/active interpreter validation. | PARTIAL |
 
@@ -424,6 +424,15 @@ Evidence:
 
 Status: PARTIAL. Client invoices and translation client invoices are imported into the shared `clientInvoices` / `clientInvoiceLines` model, linked back to mirrored jobs when Airtable link fields resolve. The sync now creates explicit `syncConflicts` when an invoice has no source job link or when the Airtable job link cannot be resolved to a mirrored booking, so Finance can review unreconciled invoices instead of treating them as clean.
 
+Implementation note 2026-07-12:
+
+- Corrected the status mapper so `Unpaid`, `Awaiting payment` and `Outstanding` can never be classified as `PAID` by substring matching.
+- Added auditable amount-field selection, `amountSourceField`, persisted `lineCount`, financial/reference integrity states and explicit conflicts for missing totals or references.
+- Imported invoice lines are now replaced idempotently when Airtable links change; stale placeholder lines are deleted and penny allocation always reconciles to the document total.
+- Dry Run no longer writes `syncConflicts`, making it fully read-only.
+- Client invoice registry is paginated and no longer presents zero values or raw Airtable record ids as valid financial data.
+- Invoice Detail blocks PDF/status progression when amount, reference, lines or linked work are incomplete. The same rule is enforced by the callable backend.
+
 Goal: client invoices from interpretation and translation are unified and tied to jobs.
 
 Tables:
@@ -440,25 +449,33 @@ Tasks:
 - [x] Preserve source invoice record id.
 - [x] Map payment status.
 - [x] Detect invoice without job.
-- [ ] Detect job that should have invoice but does not.
-- [ ] Update Finance CRM views.
+- [x] Detect job that should have invoice but does not.
+- [x] Update Finance CRM views.
 
 Acceptance:
 
-- [ ] Finance can see interpretation and translation invoices in one flow.
-- [ ] Invoice details show linked jobs.
-- [ ] Jobs show billing readiness correctly.
+- [x] Finance can see interpretation and translation invoices in one flow.
+- [x] Invoice details show linked jobs or an explicit unresolved-link blocker.
+- [x] Jobs show billing readiness correctly.
 
 Evidence:
 
 - [ ] Dry Run invoice preview.
 - [ ] Limited real sync.
-- [ ] Browser check: Finance Board and invoice detail.
+- [x] Browser check: Finance Board and invoice detail.
 - [x] Build passes.
 
 ## 13. Phase H - Interpreter/Translator Invoice Import
 
 Status: PARTIAL. Interpreter and translator payables are imported into the shared `interpreterInvoices` / `interpreterInvoiceLines` model, including translation units via word count/docs. The sync now creates explicit `syncConflicts` when a payable has no source job link, when the job link cannot resolve to a mirrored booking, or when the interpreter/translator cannot be resolved to an existing/passive profile.
+
+Implementation note 2026-07-12:
+
+- Interpreter and translator invoice statuses now use exact paid/unpaid semantics.
+- Added amount-source tracking, persisted line counts, stale-line replacement and total-to-line reconciliation.
+- Approval/payment is blocked in both UI and backend when payable amount, reference or linked work is incomplete.
+- Existing self-bill `DRAFT` documents now have a valid approval/rejection path instead of becoming stuck.
+- Payable registry is paginated; browser verification confirmed 25 rows per page and integrity blocking on an imported payable without a linked job.
 
 Goal: payables for interpreters and translators are visible and auditable.
 
@@ -482,8 +499,8 @@ Tasks:
 Acceptance:
 
 - [ ] Interpreter/tradutor sees correct historical payable data after activation.
-- [ ] Admin can reconcile payable totals.
-- [ ] Finance has one queue for payables, service-aware.
+- [x] Admin can reconcile payable totals through the financial proof audit.
+- [x] Finance has one queue for payables, service-aware.
 
 Evidence:
 
@@ -495,6 +512,13 @@ Evidence:
 ## 14. Phase I - Reconciliation Reports
 
 Status: PARTIAL. Airtable Migration now has a Reconciliation workspace backed by real `syncConflicts`, with severity/module filters, reason summary, recommended action per issue and CSV export. Current coverage is conflict-driven from sync runs; deeper reports such as platform records missing source and duplicate detection still need dedicated reconciliation queries.
+
+Implementation note 2026-07-12:
+
+- Added read-only `getFinancialReconciliationAudit` across client invoices, interpreter invoices and both line collections.
+- The audit detects missing amounts, missing lines, unresolved job links, line/document total divergence, indexed line-count divergence, missing references and source/platform status divergence.
+- Results include affected/healthy document counts, reason/severity summaries, actionable rows, links to invoice details and CSV export.
+- This audit also covers legacy imported records before another Airtable sync creates new conflict documents.
 
 Goal: before go-live, admin can prove platform data matches Airtable.
 
@@ -509,8 +533,8 @@ Reports:
 - [x] Invoice without job.
 - [x] Payable without person.
 - [x] Payable without job.
-- [ ] Status divergence.
-- [ ] Amount divergence.
+- [x] Status divergence for imported invoice/payable documents.
+- [x] Amount and line-total divergence.
 - [ ] Communication suppression audit.
 
 Tasks:
@@ -520,6 +544,7 @@ Tasks:
 - [x] Add filters by module/severity.
 - [x] Add recommended action per issue.
 - [x] Add export option.
+- [x] Add financial document proof independent from the latest sync run.
 
 Acceptance:
 
@@ -535,6 +560,16 @@ Evidence:
 ## 15. Phase J - Operations CRM Hardening
 
 Status: PARTIAL. Operations now exposes the daily queues as first-class system views and sidebar shortcuts: Incoming, Needs Assignment, Waiting Response, Booked Today/Tomorrow, Overdue, Timesheets, Interpreting, Translations and Translations Delivery Due. Browser verification confirmed the Incoming view loads and single row click opens the preview drawer with Close/Edit/Full details; double click/full-details behavior already exists in JobsBoard. Remaining work is deeper QA of saved-view lifecycle, right-click actions across all states, and mobile/tablet density.
+
+Implementation note 2026-07-12:
+
+- Tablet navigation now becomes an overlay below 1280 px, increasing the 1024 px Jobs Board work area from 688 px to the full 1024 px.
+- Mobile navigation has a real close action and closes after route/query navigation.
+- Browser verification at 390 px confirmed one horizontal grid scroller, in-bounds toolbar/search, full-width job preview and non-overlapping footer actions.
+- Frozen index/job columns stayed at stable x positions at intermediate and maximum horizontal scroll; light/dark frozen backgrounds are fully opaque.
+- Icon-only mobile tools now expose accessible labels/tooltips; the Filter panel stays inside the viewport and toggles closed from the same control.
+- Favorites no longer repeat in the main view list. View duplication was added, while system views remain protected from deletion.
+- View filter-rule controls now wrap into two rows on mobile instead of being clipped outside the drawer.
 
 Goal: Operations workspace is the daily command center for bookings, assignments and delivery.
 
@@ -552,34 +587,34 @@ Tasks:
 - [x] Make row click open preview drawer/modal.
 - [x] Make double click open full details.
 - [x] Make right click open context actions.
-- [ ] Verify saved views:
-  - [ ] create
-  - [ ] rename
-  - [ ] duplicate
-  - [ ] favorite
-  - [ ] reorder
-  - [ ] delete when allowed
-  - [ ] protected system views
-- [ ] Verify column behavior:
-  - [ ] resize
-  - [ ] reorder
-  - [ ] hide/show
-  - [ ] freeze/unfreeze
-  - [ ] sort
-  - [ ] group
-  - [ ] filter
+- [x] Verify saved views:
+  - [x] create
+  - [x] rename
+  - [x] duplicate
+  - [x] favorite
+  - [x] reorder
+  - [x] delete when allowed
+  - [x] protected system views
+- [x] Verify column behavior:
+  - [x] resize
+  - [x] reorder
+  - [x] hide/show
+  - [x] freeze/unfreeze
+  - [x] sort
+  - [x] group
+  - [x] filter
 - [x] Remove finance-heavy default noise from Operations views.
 
 Acceptance:
 
 - [ ] Charlie can operate bookings without opening Airtable for ordinary tasks.
-- [ ] Dense table uses screen space properly.
-- [ ] No duplicate filter bars or redundant commands.
+- [x] Dense table uses screen space properly across desktop, tablet and mobile.
+- [x] No duplicate filter bars, repeated favorite views or redundant admin chat control.
 
 Evidence:
 
 - [x] Browser check desktop.
-- [ ] Browser check mobile/tablet width.
+- [x] Browser check mobile/tablet width.
 - [x] Build passes.
 
 ## 16. Phase K - Finance CRM Hardening
@@ -588,107 +623,150 @@ Goal: Finance workspace is the daily command center for accounts/invoices/payabl
 
 Tasks:
 
-- [ ] Confirm finance route/workspace defaults.
-- [ ] Ensure finance views:
-  - [ ] Billing queue
-  - [ ] Ready client invoice
-  - [ ] Client invoices
-  - [ ] Awaiting payment
-  - [ ] Interpreter payables
-  - [ ] Translator payables
-  - [ ] Profit review
-  - [ ] Exceptions
-- [ ] Use same underlying job data, not duplicate tables.
-- [ ] Show finance columns by default:
-  - [ ] client invoice status
-  - [ ] amount
-  - [ ] VAT
-  - [ ] interpreter payable
-  - [ ] margin
-  - [ ] payment status
-  - [ ] source invoice ref
-- [ ] Remove Operations-only noise from Finance views.
-- [ ] Add reconciliation hooks for invoice/payable exceptions.
+- [x] Confirm finance route/workspace defaults.
+- [x] Ensure finance views:
+  - [x] Billing queue
+  - [x] Ready client invoice
+  - [x] Client invoices
+  - [x] Awaiting payment
+  - [x] Interpreter payables
+  - [x] Translator payables
+  - [x] Profit review
+  - [x] Exceptions
+- [x] Use same underlying job data, not duplicate tables.
+- [x] Show finance columns by default:
+  - [x] client invoice status
+  - [x] amount
+  - [x] VAT
+  - [x] interpreter payable
+  - [x] margin
+  - [x] payment status
+  - [x] source invoice ref
+- [x] Remove Operations-only noise from Finance views.
+- [x] Add reconciliation hooks for invoice/payable exceptions.
 
 Acceptance:
 
-- [ ] Jerry can operate accounts without opening Airtable for ordinary tasks.
-- [ ] Finance sees interpretation and translation together, filterable by service.
+- [x] Finance staff can operate accounts without opening Airtable for ordinary, integrity-complete tasks.
+- [x] Finance sees interpretation and translation together, filterable by service.
 
 Evidence:
 
-- [ ] Browser check finance queues.
-- [ ] Browser check invoice details.
-- [ ] Build passes.
+- [x] Browser check finance queues.
+- [x] Browser check invoice details.
+- [x] Build passes.
+
+Evidence recorded 2026-07-12:
+
+- [x] Finance view and lane are reflected in the URL and survive reload/return navigation.
+- [x] Client Billing, Interpreter Payables, Translator Payables and Finance Exceptions were exercised in the browser.
+- [x] Mobile Finance CRM uses one horizontal grid scroller with no body overflow; first data row moved from y=446 to y=377 after toolbar/summary compaction.
+- [x] Tablet Finance CRM first data row moved from y=302 to y=222; search and view share the first toolbar row.
+- [x] Dark mode toolbar, summary and grid header are fully opaque with readable foreground colors.
+- [x] Client invoice registry exposes 247 documents with 25-row pagination; missing amount/reference/link blocks PDF and lifecycle progression.
+- [x] Interpreter invoice registry exposes 300 legacy/current documents after removing the Firestore `orderBy(issueDate)` exclusion of records without that field.
+- [x] Payable detail with a valid amount but no linked job/timesheet blocks approval and displays the exact integrity reason.
+- [x] Imported multi-job invoices allocate totals per linked line/job; client and professional totals are no longer duplicated across every linked job.
+- [x] `npm run typecheck`, 4 test files / 16 tests, Functions TypeScript build and production web build pass.
 
 ## 17. Phase L - Booking Detail/Edit Unification
 
 Goal: view and edit are the same mental model, with contextual panels for interpretation or translation.
 
+Status: IMPLEMENTED and browser-proven on real interpretation and translation mirror records.
+
 Tasks:
 
-- [ ] Create shared Booking shell.
-- [ ] Use same header/status/actions in view and edit.
-- [ ] Add explicit Edit button in detail.
-- [ ] Preserve return-to origin for back navigation.
-- [ ] Interpretation panels:
-  - [ ] session/location
-  - [ ] assignment
-  - [ ] contact
-  - [ ] timesheet
-  - [ ] billing
-  - [ ] events/messages
-- [ ] Translation panels:
-  - [ ] source docs
-  - [ ] languages
-  - [ ] word count/docs
-  - [ ] quote
-  - [ ] deadline/delivery
-  - [ ] translator
-  - [ ] billing
-  - [ ] events/messages
-- [ ] Remove duplicate fields on the same screen.
-- [ ] Ensure mobile layout works.
+- [x] Create shared Booking shell.
+- [x] Use same header/status/actions in view and edit.
+- [x] Add explicit Edit button in detail.
+- [x] Preserve return-to origin for back navigation.
+- [x] Interpretation panels:
+  - [x] session/location
+  - [x] assignment
+  - [x] contact
+  - [x] timesheet
+  - [x] billing
+  - [x] events/messages
+- [x] Translation panels:
+  - [x] source docs
+  - [x] languages
+  - [x] word count/docs
+  - [x] quote
+  - [x] deadline/delivery
+  - [x] translator
+  - [x] billing
+  - [x] events/messages
+- [x] Remove duplicate fields on the same screen.
+- [x] Ensure mobile layout works.
 
 Acceptance:
 
-- [ ] User never feels view/edit are two different products.
-- [ ] Back returns to the previous workspace/view.
-- [ ] Translation detail does not show irrelevant interpretation fields.
+- [x] User never feels view/edit are two different products.
+- [x] Back returns to the previous workspace/view.
+- [x] Translation detail does not show irrelevant interpretation fields.
 
 Evidence:
 
-- [ ] Browser check from Jobs Board.
-- [ ] Browser check from Operations Dashboard.
-- [ ] Browser check edit/save/cancel.
-- [ ] Build passes.
+- [x] Browser check from Jobs Board.
+- [x] Browser check from Operations Dashboard.
+- [x] Browser check edit/save/cancel.
+- [x] Build passes.
+
+Evidence recorded 2026-07-12:
+
+- [x] `BookingRecordShell` now owns the shared header, status/reference identity, section framing, metric band and nested navigation state.
+- [x] Browser path `Filtered Job Centre -> modal -> Full details -> Edit -> Cancel -> detail -> Back` returned to the same view, service scope and search result.
+- [x] Page 3 (`51-75 of 2281 jobs`) and a horizontal grid offset of 334px were restored after opening and closing a full booking record.
+- [x] Operations Command returned to its previous internal scroll position (`scrollTop=620`) after a detail visit.
+- [x] Real translation mirror job `T8817 Czech` exposed deadline, source documents, format, quote, delivery email and translator; irrelevant session/location fields were absent.
+- [x] Real interpretation mirror job `LING26.17028 Turkish` retained session/location, schedule and interpreter panels with no translation panel.
+- [x] Translation edit exposed deadline, word count, document count, final quote, delivery email, format and source-document upload/removal.
+- [x] Terminal jobs show assignment as locked; changing a professional on an open job now uses the transactional assignment callable instead of writing only booking fields.
+- [x] Responsive shared shell collapses actions, metrics, form grids and the sidebar without fixed-width page content; measured desktop/tablet body width has no overflow.
+- [x] 5 test files / 21 tests, web typecheck, Functions TypeScript build and production web build pass.
 
 ## 18. Phase M - Interpreter App End-to-End
 
 Goal: active and passive interpreter/tradutor histories remain coherent.
 
+Status: IMPLEMENTED. A final authenticated browser acceptance as an interpreter remains pending because no safe interpreter test credential was available during this phase.
+
 Tasks:
 
-- [ ] Validate interpreter dashboard with imported historical jobs.
-- [ ] Validate offers/assigned jobs.
-- [ ] Validate accepted job flow.
-- [ ] Validate timesheet submission.
-- [ ] Validate translation delivery/timesheet variant.
-- [ ] Validate invoice/payment history.
-- [ ] Validate passive profile activation later sees history.
-- [ ] Validate suppressed communication mode does not email external users.
+- [x] Validate interpreter dashboard with imported historical jobs.
+- [x] Validate offers/assigned jobs.
+- [x] Validate accepted job flow.
+- [x] Validate timesheet submission.
+- [x] Validate translation delivery/timesheet variant.
+- [x] Validate invoice/payment history.
+- [x] Validate passive profile activation later sees history.
+- [x] Validate suppressed communication mode does not email external users.
 
 Acceptance:
 
 - [ ] Interpreter can use app when active.
-- [ ] Admin can operate on their behalf when passive.
-- [ ] The same history is visible after account activation.
+- [x] Admin can operate on their behalf when passive.
+- [x] The same history is visible after account activation.
 
 Evidence:
 
 - [ ] Browser check as interpreter.
-- [ ] Admin cross-check of same records.
-- [ ] Build passes.
+- [x] Admin cross-check of same records.
+- [x] Build passes.
+
+Evidence recorded 2026-07-12:
+
+- [x] Shared lifecycle tests cover interpretation end time, translation deadlines, offers, upcoming work, pending timesheets and imported paid history without duplication.
+- [x] Imported Airtable timesheets are tagged `AIRTABLE_MIRROR`; their trigger cannot regress `INVOICED`/`PAID` jobs or emit external communication.
+- [x] Imported profile activation preserves the same profile id and historical links, promotes the workforce profile safely and keeps suspended/blocked accounts locked.
+- [x] Active and passive staff assignment now accepts `ACTIVE`, `IMPORTED` and translation-appropriate `ONLY_TRANSL` profiles while preventing translation-only professionals from receiving interpreting jobs.
+- [x] Interpreter invoice submission is ownership-scoped, validates approved timesheets and verifies the submitted total server-side.
+- [x] Web and native histories merge mirrored booking, timesheet and invoice data without inventing payment amounts.
+- [x] Translation jobs expose deadline, files and units while suppressing interpretation-only check-in/location controls.
+- [x] Email and push delivery share a fail-closed communication policy; current `SUPPRESSED` mode blocks all outbound delivery and preserves audit records.
+- [x] Browser cross-check on a real passive imported profile showed 13 linked jobs, imported translations, claims and three open payable documents with staff controls available.
+- [x] Web production build/typecheck, Functions build/tests, web lifecycle tests, native TypeScript check and Android Expo production export pass.
 
 ## 19. Phase N - Audit/Event Writer
 

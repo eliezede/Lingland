@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -153,21 +153,24 @@ export const Dashboard = () => {
   const [isJobPreviewOpen, setIsJobPreviewOpen] = useState(false);
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const restoredScrollRef = useRef(false);
+  const restoreScrollTop = Number((location.state as { restoreScrollTop?: number } | null)?.restoreScrollTop || 0);
 
   const isAdmin = user?.role === UserRole.ADMIN || user?.role === UserRole.SUPER_ADMIN;
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const roleStats = isAdmin
-        ? await StatsService.getAdminStats()
+      const roleStatsPromise = isAdmin
+        ? StatsService.getAdminStats()
         : user?.role === UserRole.CLIENT
-          ? await StatsService.getClientStats(user.profileId || user.id)
+          ? StatsService.getClientStats(user.profileId || user.id)
           : user?.role === UserRole.INTERPRETER
-            ? await StatsService.getInterpreterStats(user.profileId || user.id)
-            : null;
+            ? StatsService.getInterpreterStats(user.profileId || user.id)
+            : Promise.resolve(null);
 
-      const [allBookings, photoMap] = await Promise.all([
+      const [roleStats, allBookings, photoMap] = await Promise.all([
+        roleStatsPromise,
         isAdmin ? BookingService.getAll() : BookingService.getRecentBookings(12),
         InterpreterService.getPhotoMap(),
       ]);
@@ -188,6 +191,15 @@ export const Dashboard = () => {
     loadData();
   }, [user?.id]);
 
+  useEffect(() => {
+    if (loading || restoredScrollRef.current || restoreScrollTop <= 0) return;
+    window.requestAnimationFrame(() => {
+      const content = document.querySelector<HTMLElement>('[data-admin-content-scroll="true"]');
+      if (content) content.scrollTop = restoreScrollTop;
+      restoredScrollRef.current = true;
+    });
+  }, [loading, restoreScrollTop]);
+
   const model = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -199,14 +211,20 @@ export const Dashboard = () => {
     const opened = jobs.filter(job => job.status === BookingStatus.OPENED || String(job.status) === 'PENDING_ASSIGNMENT');
     const booked = jobs.filter(job => job.status === BookingStatus.BOOKED);
     const submitted = jobs.filter(job => job.status === BookingStatus.TIMESHEET_SUBMITTED);
-    const readyInvoice = jobs.filter(job => job.status === BookingStatus.READY_FOR_INVOICE);
+    const readyInvoice = jobs.filter(job => [
+      BookingStatus.TIMESHEET_VERIFIED,
+      BookingStatus.READY_FOR_INVOICE,
+      BookingStatus.INVOICING,
+    ].includes(job.status));
     const dueToday = active.filter(job => {
       const start = getJobStart(job);
       return start >= today && start < tomorrow;
     });
     const overdue = active.filter(job => getJobStart(job) < today && ![
       BookingStatus.TIMESHEET_SUBMITTED,
+      BookingStatus.TIMESHEET_VERIFIED,
       BookingStatus.READY_FOR_INVOICE,
+      BookingStatus.INVOICING,
       BookingStatus.INVOICED,
       BookingStatus.PAID,
     ].includes(job.status));
@@ -249,8 +267,13 @@ export const Dashboard = () => {
   };
 
   const openJobDetails = (job: Booking) => {
+    const content = document.querySelector<HTMLElement>('[data-admin-content-scroll="true"]');
     navigate(`/admin/bookings/${job.id}`, {
-      state: { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Operations Command' },
+      state: {
+        returnTo: `${location.pathname}${location.search}`,
+        returnLabel: 'Operations Command',
+        returnState: { restoreScrollTop: content?.scrollTop || 0 },
+      },
     });
   };
 
@@ -267,8 +290,19 @@ export const Dashboard = () => {
     );
   }
 
-  const healthTone = model.riskCount > 0 ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300';
-  const healthLabel = model.riskCount > 0 ? `${model.riskCount} items need attention` : 'Operationally clear';
+  const claimsReviewBookingIds = new Set<string>(Array.isArray(stats?.claimsReviewBookingIds) ? stats.claimsReviewBookingIds : []);
+  const claimsReviewCount = claimsReviewBookingIds.size > 0
+    ? jobs.filter(job => {
+        if (!claimsReviewBookingIds.has(job.id)) return false;
+        return ![BookingStatus.INVOICED, BookingStatus.PAID, BookingStatus.CANCELLED].includes(job.status)
+          && !['INVOICED', 'PAID'].includes(String(job.paymentStatus || ''))
+          && !job.clientInvoiceId;
+      }).length
+    : Number(stats?.claimsReviewCount ?? model.submitted.length);
+  const claimsReadyCount = model.readyInvoice.length;
+  const actionableRiskCount = model.incoming.length + model.overdue.length + claimsReviewCount;
+  const healthTone = actionableRiskCount > 0 ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300';
+  const healthLabel = actionableRiskCount > 0 ? `${actionableRiskCount} items need attention` : 'Operationally clear';
 
   return (
     <div className="space-y-5">
@@ -293,7 +327,7 @@ export const Dashboard = () => {
                 <Metric label="Today" value={model.dueToday.length} detail="Scheduled" tone="blue" loading={loading} />
                 <Metric label="Unassigned" value={model.incoming.length} detail="Need action" tone={model.incoming.length ? 'red' : 'slate'} loading={loading} />
                 <Metric label="Overdue" value={model.overdue.length} detail="Past date" tone={model.overdue.length ? 'red' : 'slate'} loading={loading} />
-                <Metric label="Billing" value={model.readyInvoice.length + model.submitted.length} detail="Claims queue" tone="violet" loading={loading} />
+                <Metric label="Billing" value={claimsReadyCount + claimsReviewCount} detail="Claims queue" tone="violet" loading={loading} />
               </div>
             </div>
           </div>
@@ -313,7 +347,7 @@ export const Dashboard = () => {
             <div className="p-5">
               <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
                 <Users size={16} />
-                <span className="text-[10px] font-black uppercase tracking-widest">Active pool</span>
+                <span className="text-[10px] font-black uppercase tracking-widest">Assignable pool</span>
               </div>
               <div className="mt-3 text-3xl font-black text-slate-950 dark:text-white">{stats?.activeInterpreters || 0}</div>
               <button onClick={() => navigate('/admin/interpreters')} className="mt-3 text-xs font-black uppercase tracking-wider text-blue-600 hover:text-blue-700">
@@ -349,7 +383,7 @@ export const Dashboard = () => {
           <QueueButton
             icon={FileText}
             label="Timesheet review"
-            count={model.submitted.length}
+            count={claimsReviewCount}
             helper="Claims awaiting verification"
             tone="bg-violet-100 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300"
             onClick={() => navigate('/admin/operations/timesheets')}
@@ -357,7 +391,7 @@ export const Dashboard = () => {
           <QueueButton
             icon={PoundSterling}
             label="Ready to invoice"
-            count={model.readyInvoice.length}
+            count={claimsReadyCount}
             helper="Verified claims ready for billing"
             tone="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
             onClick={() => navigate('/admin/billing/client-invoices')}
@@ -373,8 +407,8 @@ export const Dashboard = () => {
                 ['Incoming', model.incoming.length, 'bg-rose-500'],
                 ['Opened', model.opened.length, 'bg-amber-500'],
                 ['Booked', model.booked.length, 'bg-blue-500'],
-                ['Submitted', model.submitted.length, 'bg-violet-500'],
-                ['Ready invoice', model.readyInvoice.length, 'bg-emerald-500'],
+                ['Submitted', claimsReviewCount, 'bg-violet-500'],
+                ['Ready invoice', claimsReadyCount, 'bg-emerald-500'],
               ].map(([label, count, color]) => {
                 const width = model.active.length ? Math.max(8, (Number(count) / model.active.length) * 100) : 0;
                 return (

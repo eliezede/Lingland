@@ -11,6 +11,7 @@ interface WorkspacePaginationProps {
     onPreviousPage: () => void;
     onNextPage: () => void;
     onPageSizeChange: (pageSize: number) => void;
+    entityLabel?: string;
 }
 
 export const WorkspacePagination: React.FC<WorkspacePaginationProps> = ({
@@ -23,12 +24,15 @@ export const WorkspacePagination: React.FC<WorkspacePaginationProps> = ({
     onPreviousPage,
     onNextPage,
     onPageSizeChange,
+    entityLabel = 'job',
 }) => {
     return (
         <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="font-semibold">
-                    {totalCount === 0 ? '0 jobs' : `${pageStartIndex + 1}-${pageEndIndex} of ${totalCount} jobs`}
+                    {totalCount === 0
+                        ? `0 ${entityLabel}s`
+                        : `${pageStartIndex + 1}-${pageEndIndex} of ${totalCount} ${entityLabel}${totalCount === 1 ? '' : 's'}`}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     <button

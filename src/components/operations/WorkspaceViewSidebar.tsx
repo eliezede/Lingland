@@ -48,8 +48,8 @@ export const WorkspaceViewSidebar: React.FC<WorkspaceViewSidebarProps> = ({
     const [draggedViewId, setDraggedViewId] = useState<string | null>(null);
     const filteredViews = views.filter(view => view.name.toLowerCase().includes(viewSearchQuery.toLowerCase()));
     const favoriteViews = filteredViews.filter(view => view.isFavorite);
-    const personalViews = filteredViews.filter(view => !view.isSystem && (view.viewScope || 'PERSONAL') === 'PERSONAL');
-    const workspaceViews = filteredViews.filter(view => view.isSystem || view.viewScope === 'TEAM');
+    const personalViews = filteredViews.filter(view => !view.isFavorite && !view.isSystem && (view.viewScope || 'PERSONAL') === 'PERSONAL');
+    const workspaceViews = filteredViews.filter(view => !view.isFavorite && (view.isSystem || view.viewScope === 'TEAM'));
 
     const renderViewButton = (view: BookingView, options: { keyPrefix: string; showCount?: boolean; draggable?: boolean }) => {
         const isActive = activeView.id === view.id;

@@ -267,7 +267,7 @@ export const AdminEmailTemplates: React.FC = () => {
                                         Message Body <span className="text-red-500">*</span>
                                     </label>
 
-                                    {/* Variable Inserter Dropdown - Simplified for mock */}
+                                    {/* Variable inserter for template previews. */}
                                     <div className="relative group">
                                         <button type="button" className="flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-xs normal-case tracking-normal text-blue-600 dark:bg-blue-900/20 dark:text-blue-400">
                                             <Plus size={14} /> Insert Variable

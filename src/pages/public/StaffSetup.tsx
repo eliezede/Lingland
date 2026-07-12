@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCode } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../services/firebaseConfig';
+import { httpsCallable } from 'firebase/functions';
+import { auth, functions } from '../../services/firebaseConfig';
 import {
   Globe2, Lock, ShieldCheck, ArrowRight,
   Loader2, CheckCircle2, AlertCircle, Eye, EyeOff
@@ -83,32 +83,7 @@ export const StaffSetup = () => {
           return;
         }
 
-        // 3. Document Check: Look up user by Auth UID (token) or Email
-        let userDocSnap = await getDoc(doc(db, 'users', cleanToken));
-        let userData: any = null;
-
-        if (userDocSnap.exists()) {
-          userData = { id: userDocSnap.id, ...userDocSnap.data() };
-        } else {
-          // Fallback: search by email if UID doesn't match (e.g. if ID alignment just happened)
-          console.log('[StaffSetup] UID lookup failed, searching by verified email:', verifiedEmail);
-          const q = query(collection(db, 'users'), where('email', '==', verifiedEmail));
-          const querySnap = await getDocs(q);
-          if (!querySnap.empty) {
-            const doc = querySnap.docs[0];
-            userData = { id: doc.id, ...doc.data() };
-          }
-        }
-
-        if (userData) {
-          if (userData.status !== 'PENDING') {
-            setError('This account has already been activated. Please try logging in with your password.');
-          } else {
-            setInvitedUser(userData);
-          }
-        } else {
-          setError('We couldn\'t find your invitation record. It may have been administrative removed.');
-        }
+        setInvitedUser({ id: cleanToken, email: verifiedEmail });
       } catch (err: any) {
         console.error('[StaffSetup] Verification Error:', err);
         setError('An unexpected error occurred while verifying your invitation. Please try again later.');
@@ -148,8 +123,16 @@ export const StaffSetup = () => {
       console.log('[StaffSetup] Password set successfully for', invitedUser.email);
 
       // 2. Immediately sign in with the new credentials
-      await signInWithEmailAndPassword(auth, invitedUser.email, password);
+      const credential = await signInWithEmailAndPassword(auth, invitedUser.email, password);
       console.log('[StaffSetup] Signed in successfully');
+
+      if (credential.user.uid !== invitedUser.id) {
+        await auth.signOut();
+        throw new Error('This setup link does not belong to the authenticated account.');
+      }
+
+      const completeActivation = httpsCallable(functions, 'completeAccountActivation');
+      await completeActivation({ flow: 'STAFF' });
 
       showToast('Account activated! Welcome to the team.', 'success');
       
@@ -258,7 +241,7 @@ export const StaffSetup = () => {
           {/* Welcome Header */}
           <div className="mb-10">
             <h2 className="text-3xl font-black tracking-tight mb-2 text-slate-900 dark:text-white">
-              Welcome, {invitedUser?.displayName}
+              Welcome to Lingland
             </h2>
             <p className="text-slate-500 dark:text-slate-400">
               Set a secure password for your account <strong className="text-slate-700 dark:text-slate-300">{invitedUser?.email}</strong> to get started.

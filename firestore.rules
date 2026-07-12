@@ -2,151 +2,325 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Function to check if user is logged in
-    function isAuthenticated() {
+    function signedIn() {
       return request.auth != null;
     }
 
-    // Function to check if user is an Admin
-    function isAdmin() {
-      return isAuthenticated() && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'SUPER_ADMIN']
-      );
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    // Default deny for all collections
+    function role() {
+      return signedIn() && userDoc().data.role != null ? userDoc().data.role : '';
+    }
+
+    function isAdmin() {
+      return role() in ['ADMIN', 'SUPER_ADMIN'] && userDoc().data.status == 'ACTIVE';
+    }
+
+    function isClient() {
+      return role() == 'CLIENT' && userDoc().data.status == 'ACTIVE';
+    }
+
+    function isInterpreter() {
+      return role() == 'INTERPRETER' && userDoc().data.status == 'ACTIVE';
+    }
+
+    function profileId() {
+      return signedIn() && userDoc().data.profileId != null ? userDoc().data.profileId : '';
+    }
+
+    function ownsClient(clientId) {
+      return isClient() && profileId() == clientId;
+    }
+
+    function ownsInterpreter(interpreterId) {
+      return isInterpreter() && profileId() == interpreterId;
+    }
+
+    function canReadBooking(data) {
+      return isAdmin()
+        || (isClient() && data.clientId == profileId())
+        || (isInterpreter() && (
+          data.interpreterId == profileId()
+          || (data.offeredInterpreterIds is list && profileId() in data.offeredInterpreterIds)
+        ));
+    }
+
+    function isThreadParticipant(data) {
+      return signedIn() && data.participants is list && request.auth.uid in data.participants;
+    }
+
+    function validOwnUserUpdate() {
+      return request.resource.data.role == resource.data.role
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.profileId == resource.data.profileId
+        && request.resource.data.staffProfileId == resource.data.staffProfileId
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'photoUrl', 'authUid', 'id',
+          'expoPushToken', 'pushTokenUpdatedAt', 'updatedAt'
+        ]);
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
 
     match /users/{userId} {
-      // Users can read/write their own profile OR Admins can do anything
-      // Added public read for 'IMPORTED' status to allow account activation flow
-      allow read: if isAdmin() || 
-                   (isAuthenticated() && request.auth.uid == userId) || 
-                   (resource.data.status == 'IMPORTED');
-      
-      // Allow write if Admin, if ID matches, OR if the authenticated user's email matches the document email
-      // (Essential for migrating imported users who don't yet have their UID as document ID)
-      allow write: if isAdmin() || 
-                    (isAuthenticated() && request.auth.uid == userId) ||
-                    (isAuthenticated() && request.auth.token.email == resource.data.email);
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == userId && validOwnUserUpdate());
     }
 
     match /interpreters/{interpreterId} {
-      // Admins read/write anything. Interpreters only read/write their own profile
-      // Added read access for IMPORTED/ONBOARDING status to allow activation profile lookups
-      allow read: if isAdmin() || 
-                   (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId) ||
-                   (resource.data.status in ['IMPORTED', 'ONBOARDING']);
-      allow write: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId == interpreterId);
-    }
-
-    match /bookings/{bookingId} {
-      // Admins full access. 
-      // Interpreters can read if they are assigned to it or if it's OPENED.
-      allow read, write: if isAdmin() || isAuthenticated();
-    }
-
-    match /assignments/{assignmentId} {
-      allow read, write: if isAdmin() || isAuthenticated();
-    }
-
-    match /bookingAssignments/{assignmentId} {
-      allow read, write: if isAdmin() || isAuthenticated();
-    }
-
-    match /applications/{appId} {
-      allow read, write: if isAdmin() || isAuthenticated();
+      allow read: if isAdmin() || ownsInterpreter(interpreterId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        ownsInterpreter(interpreterId)
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.rates == resource.data.rates
+        && request.resource.data.sourceSystem == resource.data.sourceSystem
+        && (
+          request.resource.data.status == resource.data.status
+          || (resource.data.status == 'IMPORTED' && request.resource.data.status == 'ONBOARDING')
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'shortName', 'photoUrl', 'phone', 'homePhone', 'address', 'hasCar',
+          'skypeId', 'onboarding', 'documentUrls', 'qualifications', 'regions',
+          'isAvailable', 'unavailableDates', 'acceptsDirectAssignment', 'bankDetails',
+          'dbs', 'nrpsi', 'badge', 'status', 'expoPushToken', 'pushTokenUpdatedAt', 'updatedAt'
+        ])
+      );
     }
 
     match /clients/{clientId} {
-      allow read, write: if isAdmin() || isAuthenticated();
+      allow read: if isAdmin() || ownsClient(clientId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        ownsClient(clientId)
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.sourceSystem == resource.data.sourceSystem
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'contactPerson', 'email', 'phone', 'photoUrl', 'billingAddress',
+          'bookingContactName', 'bookingEmail', 'bookingPhone', 'invoiceContact',
+          'invoiceEmail', 'invoicePhone', 'updatedAt'
+        ])
+      );
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if canReadBooking(resource.data);
+      allow create: if isAdmin() || (
+        isClient()
+        && request.resource.data.clientId == profileId()
+        && request.resource.data.status == 'INCOMING'
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAdmin() || ownsInterpreter(resource.data.interpreterId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        ownsInterpreter(resource.data.interpreterId)
+        && resource.data.status == 'OFFERED'
+        && request.resource.data.status in ['ACCEPTED', 'DECLINED']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
+      );
+    }
+
+    match /bookingAssignments/{assignmentId} {
+      allow read: if isAdmin() || ownsInterpreter(resource.data.interpreterId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        ownsInterpreter(resource.data.interpreterId)
+        && resource.data.status == 'OFFERED'
+        && request.resource.data.status in ['ACCEPTED', 'DECLINED']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt'])
+      );
+    }
+
+    match /applications/{applicationId} {
+      allow read, write: if isAdmin();
     }
 
     match /jobEvents/{eventId} {
-      allow read, write: if isAdmin() || isAuthenticated();
+      allow read, write: if isAdmin();
+    }
+
+    match /timesheets/{timesheetId} {
+      allow read: if isAdmin() || ownsInterpreter(resource.data.interpreterId);
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
     }
 
     match /clientInvoices/{invoiceId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || (
+        ownsClient(resource.data.clientId)
+        && resource.data.status in ['SENT', 'APPROVED', 'PAID']
+      );
+      allow write: if isAdmin();
     }
 
     match /clientInvoiceLines/{lineId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || (
+        resource.data.invoiceId is string
+        && ownsClient(get(/databases/$(database)/documents/clientInvoices/$(resource.data.invoiceId)).data.clientId)
+        && get(/databases/$(database)/documents/clientInvoices/$(resource.data.invoiceId)).data.status in ['SENT', 'APPROVED', 'PAID']
+      );
+      allow write: if isAdmin();
     }
 
     match /interpreterInvoices/{invoiceId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.interpreterId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId);
+      allow read: if isAdmin() || ownsInterpreter(resource.data.interpreterId);
       allow write: if isAdmin();
     }
 
     match /interpreterInvoiceLines/{lineId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.interpreterId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.profileId);
+      allow read: if isAdmin()
+        || ownsInterpreter(resource.data.interpreterId)
+        || (
+          resource.data.interpreterInvoiceId is string
+          && ownsInterpreter(get(/databases/$(database)/documents/interpreterInvoices/$(resource.data.interpreterInvoiceId)).data.interpreterId)
+        );
       allow write: if isAdmin();
     }
 
-    match /timesheets/{timesheetId} {
-      allow read, write: if isAdmin() || isAuthenticated();
+    match /notifications/{notificationId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update: if isAdmin() || (
+        signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+      );
+      allow delete: if isAdmin();
     }
 
-    match /systemSettings/{document=**} {
+    match /chatThreads/{threadId} {
+      allow read: if isAdmin() || isThreadParticipant(resource.data);
+      allow create: if signedIn() && isThreadParticipant(request.resource.data);
+      allow update: if isAdmin() || (
+        isThreadParticipant(resource.data)
+        && request.resource.data.participants == resource.data.participants
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAdmin() || (
+        resource.data.threadId is string
+        && isThreadParticipant(get(/databases/$(database)/documents/chatThreads/$(resource.data.threadId)).data)
+      );
+      allow create: if signedIn()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.threadId is string
+        && isThreadParticipant(get(/databases/$(database)/documents/chatThreads/$(request.resource.data.threadId)).data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /system/settings {
       allow read: if true;
       allow write: if isAdmin();
     }
 
     match /system/{document=**} {
-      allow read: if true;
+      allow read, write: if isAdmin();
+    }
+
+    match /systemSettings/{document=**} {
+      allow read: if signedIn();
       allow write: if isAdmin();
+    }
+
+    match /systemCounters/{counterId} {
+      allow read, write: if isAdmin();
     }
 
     match /emailTemplates/{templateId} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     match /mail/{mailId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /emailAudit/{auditId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /syncRuns/{runId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /syncConflicts/{conflictId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /auditEvents/{eventId} {
       allow read: if isAdmin();
-      allow write: if isAdmin(); // Generally triggered via cloud functions anyway
+      allow write: if false;
     }
 
-    match /notifications/{notificationId} {
-      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid || isAdmin();
+    match /bookingViewPreferences/{preferenceId} {
+      allow read, write: if isAdmin() && (
+        resource == null || resource.data.userId == request.auth.uid
+      ) && (
+        request.resource == null || request.resource.data.userId == request.auth.uid
+      );
     }
 
-    match /messages/{messageId} {
-      allow read, write: if isAuthenticated();
+    match /reportPreferences/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin() && resource.data.userId == request.auth.uid;
     }
 
-    match /chatThreads/{threadId} {
-      allow read, write: if isAuthenticated();
+    match /reportExportLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /reportApprovalRequests/{requestId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /reportSchedules/{scheduleId} {
+      allow read, write: if isAdmin();
     }
 
     match /app_logs/{logId} {
-      allow create: if isAuthenticated();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
     match /staff_profiles/{profileId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
-      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (signedIn() && request.resource.data.userId == request.auth.uid);
+      allow update: if isAdmin() || (
+        signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+      );
       allow delete: if isAdmin();
     }
 
-    match /departments/{deptId} {
-      allow read: if isAuthenticated();
+    match /departments/{departmentId} {
+      allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    match /jobTitles/{jobId} {
-      allow read: if isAuthenticated();
+    match /jobTitles/{jobTitleId} {
+      allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    match /level_permissions/{permId} {
-      allow read: if isAuthenticated();
+    match /level_permissions/{permissionId} {
+      allow read: if signedIn();
       allow write: if isAdmin();
     }
   }

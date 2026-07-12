@@ -4,7 +4,6 @@ import { JobRepository, AssignmentRepository } from '../../../domains/jobs/repos
 import { Job, JobAssignment } from '../../../domains/jobs/types';
 import { JobStatus } from '../../../domains/jobs/status';
 import { AssignmentStatus } from '../../../shared/types/common';
-import { MOCK_BOOKINGS, MOCK_ASSIGNMENTS, saveMockData } from '../../../services/mockData';
 import { validateWorkflowTransition } from '../../../domains/jobs/workflow';
 
 export const createJobFirestoreRepository = (tenantId: string): JobRepository => ({
@@ -17,9 +16,9 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
                  if (data.organizationId && data.organizationId !== tenantId && tenantId !== 'lingland-main') return null; 
                  return { ...data, id: snap.id };
             }
-        } catch { /* fallback to mock */ }
-        const mock = MOCK_BOOKINGS.find(b => b.id === id) as any;
-        if (mock && (!mock.organizationId || mock.organizationId === tenantId)) return mock;
+        } catch (error) {
+            throw error;
+        }
         return null;
     },
 
@@ -28,11 +27,8 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
         try {
             const ref = await addDoc(collection(db, 'bookings'), jobWithTenant);
             return { id: ref.id, ...(jobWithTenant as any) };
-        } catch {
-            const mockJob = { id: `job_${Date.now()}`, ...jobWithTenant } as any;
-            MOCK_BOOKINGS.push(mockJob);
-            saveMockData();
-            return mockJob;
+        } catch (error) {
+            throw error;
         }
     },
 
@@ -42,10 +38,8 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
 
         try {
             await updateDoc(doc(db, 'bookings', id), { ...data, updatedAt: serverTimestamp() });
-        } catch {
-            const b = MOCK_BOOKINGS.find(b => b.id === id);
-            if (b) Object.assign(b, data);
-            saveMockData();
+        } catch (error) {
+            throw error;
         }
     },
 
@@ -74,14 +68,8 @@ export const createJobFirestoreRepository = (tenantId: string): JobRepository =>
                 snap.docs.forEach(d => batch.update(d.ref, { status: AssignmentStatus.DECLINED, respondedAt: new Date().toISOString() }));
                 await batch.commit();
                 return;
-            } catch {
-                MOCK_ASSIGNMENTS.forEach(a => {
-                    if (a.bookingId === id && a.status === AssignmentStatus.OFFERED) a.status = AssignmentStatus.DECLINED;
-                });
-                const b = MOCK_BOOKINGS.find(b => b.id === id);
-                if (b) b.status = newStatus as any;
-                saveMockData();
-                return;
+            } catch (error) {
+                throw error;
             }
         }
 
@@ -99,8 +87,8 @@ export const createAssignmentFirestoreRepository = (tenantId: string): Assignmen
                 where('status', '==', status));
             const snap = await getDocs(q);
             return snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-        } catch {
-            return MOCK_ASSIGNMENTS.filter((a: any) => a.bookingId === jobId && a.status === status) as any;
+        } catch (error) {
+            throw error;
         }
     },
 
@@ -119,17 +107,8 @@ export const createAssignmentFirestoreRepository = (tenantId: string): Assignmen
                 }
             });
             await batch.commit();
-        } catch {
-            MOCK_ASSIGNMENTS.forEach(a => {
-                if (a.bookingId === jobId && a.status === AssignmentStatus.OFFERED) {
-                    if (a.interpreterId !== acceptedInterpreterId) {
-                        a.status = AssignmentStatus.DECLINED;
-                    } else {
-                        a.status = AssignmentStatus.ACCEPTED;
-                    }
-                }
-            });
-            saveMockData();
+        } catch (error) {
+            throw error;
         }
     }
 });

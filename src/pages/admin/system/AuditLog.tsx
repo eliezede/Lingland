@@ -1,206 +1,148 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ClipboardList, Database, FileSearch, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore';
+import { Download, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { db } from '../../../services/firebaseConfig';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Table } from '../../../components/ui/Table';
+import { useToast } from '../../../context/ToastContext';
 
-type AuditReadinessRow = {
+type AuditEvent = {
   id: string;
-  area: string;
-  status: 'WIRED' | 'NEEDS_BACKEND' | 'POLICY';
-  owner: string;
-  detail: string;
+  entityType: string;
+  entityId: string;
+  action: 'CREATED' | 'UPDATED' | 'DELETED';
+  actorId: string;
+  source: string;
+  changedFields: string[];
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  createdAt: string;
 };
 
-type EventModelRow = {
-  id: string;
-  event: string;
-  actor: string;
-  trigger: string;
-  requiredData: string;
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-GB');
 };
 
-const statusVariant = (status: AuditReadinessRow['status']) => {
-  if (status === 'WIRED') return 'success';
-  if (status === 'POLICY') return 'info';
-  return 'warning';
+const stateLabel = (event: AuditEvent) => {
+  const before = String(event.before?.status || event.before?.paymentStatus || '');
+  const after = String(event.after?.status || event.after?.paymentStatus || '');
+  if (before || after) return before && after && before !== after ? `${before} to ${after}` : (after || before);
+  return event.changedFields.slice(0, 3).join(', ') || 'Metadata change';
 };
 
 export const AuditLog = () => {
-  const navigate = useNavigate();
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [entityType, setEntityType] = useState('ALL');
+  const { showToast } = useToast();
 
-  const readinessRows: AuditReadinessRow[] = [
-    {
-      id: 'import-runs',
-      area: 'Airtable import runs',
-      status: 'WIRED',
-      owner: 'Administration',
-      detail: 'Migration screen records dry-run/import outcomes and exposes imported counts.'
-    },
-    {
-      id: 'assignment-actions',
-      area: 'Assignment and offer actions',
-      status: 'NEEDS_BACKEND',
-      owner: 'Operations',
-      detail: 'Manual assign, offer sent, offer accepted, replacement and cancellation events need durable audit writes.'
-    },
-    {
-      id: 'billing-events',
-      area: 'Timesheet and invoice cycle',
-      status: 'NEEDS_BACKEND',
-      owner: 'Finance',
-      detail: 'Timesheet submitted, invoice ready, invoice issued, paid and dispute events need immutable snapshots.'
-    },
-    {
-      id: 'communications',
-      area: 'Communication suppression',
-      status: 'POLICY',
-      owner: 'Super Admin',
-      detail: 'Hybrid mode must record when email/SMS was suppressed, internal-only, or actually sent.'
+  const loadEvents = async () => {
+    setLoading(true);
+    try {
+      const snapshot = await getDocs(query(collection(db, 'auditEvents'), orderBy('createdAt', 'desc'), limit(250)));
+      setEvents(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as AuditEvent)));
+    } catch (error) {
+      console.error('Failed to load audit ledger', error);
+      showToast('Could not load the audit ledger', 'error');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
 
-  const eventModelRows: EventModelRow[] = [
-    {
-      id: 'job-status',
-      event: 'JOB_STATUS_CHANGED',
-      actor: 'Staff or sync',
-      trigger: 'Status changed from Airtable or admin action',
-      requiredData: 'job id, old status, new status, source, timestamp'
-    },
-    {
-      id: 'assignment',
-      event: 'INTERPRETER_ASSIGNED',
-      actor: 'Operations',
-      trigger: 'Direct assign or offer accepted manually/by app',
-      requiredData: 'job id, interpreter id, method, communication mode'
-    },
-    {
-      id: 'timesheet',
-      event: 'TIMESHEET_REVIEWED',
-      actor: 'Interpreter or Finance',
-      trigger: 'Timesheet submitted, approved, rejected or manually entered',
-      requiredData: 'job id, duration, attachments, reviewer, decision'
-    },
-    {
-      id: 'invoice',
-      event: 'INVOICE_STATE_CHANGED',
-      actor: 'Finance',
-      trigger: 'Client/interpreter invoice generated, sent, paid or reconciled',
-      requiredData: 'invoice id, linked jobs, totals, previous state, next state'
-    }
-  ];
+  useEffect(() => { void loadEvents(); }, []);
 
-  const readinessColumns = [
+  const entityTypes = useMemo(() => Array.from(new Set(events.map(event => event.entityType))).sort(), [events]);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return events.filter(event => {
+      if (entityType !== 'ALL' && event.entityType !== entityType) return false;
+      if (!term) return true;
+      return [event.entityType, event.entityId, event.action, event.actorId, event.source, ...event.changedFields]
+        .some(value => String(value || '').toLowerCase().includes(term));
+    });
+  }, [entityType, events, search]);
+
+  const exportCsv = () => {
+    const header = ['Timestamp', 'Entity', 'Entity ID', 'Action', 'State', 'Actor', 'Source', 'Changed fields'];
+    const rows = filtered.map(event => [
+      event.createdAt,
+      event.entityType,
+      event.entityId,
+      event.action,
+      stateLabel(event),
+      event.actorId,
+      event.source,
+      event.changedFields.join('|'),
+    ]);
+    const csv = [header, ...rows]
+      .map(row => row.map(value => `"${String(value || '').replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `lingland-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const columns = [
     {
-      header: 'Area',
-      accessor: (row: AuditReadinessRow) => (
-        <div>
-          <p className="text-sm font-black text-slate-950 dark:text-white">{row.area}</p>
-          <p className="mt-0.5 max-w-[620px] truncate text-xs font-medium text-slate-500 dark:text-slate-400">{row.detail}</p>
+      header: 'Event',
+      accessor: (event: AuditEvent) => (
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black text-slate-950 dark:text-white">{event.entityType} / {event.entityId}</p>
+          <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{formatDateTime(event.createdAt)}</p>
         </div>
       )
     },
-    { header: 'Owner', accessor: (row: AuditReadinessRow) => <span className="text-xs font-bold text-slate-600 dark:text-slate-300">{row.owner}</span> },
     {
-      header: 'State',
-      accessor: (row: AuditReadinessRow) => <Badge variant={statusVariant(row.status)}>{row.status.replace('_', ' ')}</Badge>
-    }
-  ];
-
-  const eventColumns = [
-    {
-      header: 'Event model',
-      accessor: (row: EventModelRow) => (
-        <div>
-          <p className="text-sm font-black text-slate-950 dark:text-white">{row.event}</p>
-          <p className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{row.trigger}</p>
-        </div>
+      header: 'Action',
+      accessor: (event: AuditEvent) => (
+        <Badge variant={event.action === 'CREATED' ? 'success' : event.action === 'DELETED' ? 'danger' : 'info'}>{event.action}</Badge>
       )
     },
-    { header: 'Actor', accessor: (row: EventModelRow) => <span className="text-xs font-bold text-slate-600 dark:text-slate-300">{row.actor}</span> },
-    { header: 'Required snapshot', accessor: (row: EventModelRow) => <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{row.requiredData}</span> }
+    { header: 'State / fields', accessor: (event: AuditEvent) => <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{stateLabel(event)}</span> },
+    { header: 'Actor', accessor: (event: AuditEvent) => <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{event.actorId}</span> },
+    { header: 'Source', accessor: (event: AuditEvent) => <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{event.source}</span> },
   ];
 
   return (
     <div className="space-y-4 pb-10">
-      <PageHeader title="Audit & Event Control" subtitle="Readiness map for the operational audit trail">
-        <Button variant="outline" size="sm" icon={Database} onClick={() => navigate('/admin/administration/migration')}>
-          Import control
-        </Button>
-        <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={() => navigate('/admin/settings')}>
-          Platform guard
-        </Button>
+      <PageHeader title="Audit Ledger" subtitle="Immutable event history for critical platform records">
+        <Button variant="outline" size="sm" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>Export CSV</Button>
+        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={loadEvents} isLoading={loading}>Refresh</Button>
       </PageHeader>
 
-      <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-          <div>
-            <p className="text-sm font-black text-amber-950 dark:text-amber-100">Operational warning</p>
-            <p className="mt-1 text-sm leading-6 text-amber-800 dark:text-amber-200">
-              This screen is not yet a legal audit ledger. It documents the event model and what is already connected, so staff know which flows are safe to rely on and which still need backend event capture.
-            </p>
-          </div>
+      <div className="flex flex-col gap-2 border-y border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <input
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search entity, actor, source or changed field"
+            className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950"
+          />
         </div>
-      </section>
+        <select
+          value={entityType}
+          onChange={event => setEntityType(event.target.value)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+        >
+          <option value="ALL">All entities</option>
+          {entityTypes.map(type => <option key={type} value={type}>{type}</option>)}
+        </select>
+        <div className="inline-flex h-10 items-center gap-2 px-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+          <ShieldCheck size={16} className="text-emerald-600" /> {filtered.length} events
+        </div>
+      </div>
 
-      <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <ClipboardList className="h-5 w-5 text-blue-600" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Current purpose</p>
-              <p className="text-sm font-black text-slate-950 dark:text-white">Readiness and schema control</p>
-            </div>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Use this page to decide what must be logged before activating autonomous flows, outbound communication and invoice automation.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <FileSearch className="h-5 w-5 text-blue-600" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Missing layer</p>
-              <p className="text-sm font-black text-slate-950 dark:text-white">Durable event writer</p>
-            </div>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Each admin/user/sync mutation should write a compact event with old value, new value, actor, source and linked records.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <ShieldCheck className="h-5 w-5 text-blue-600" />
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Go-live rule</p>
-              <p className="text-sm font-black text-slate-950 dark:text-white">No automation without trace</p>
-            </div>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Assignment, communication and billing automation should stay review-first until their audit events are complete.
-          </p>
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-          <h3 className="text-xs font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">Audit readiness</h3>
-        </div>
-        <Table data={readinessRows} columns={readinessColumns as any} emptyMessage="No audit readiness items configured." />
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-          <h3 className="text-xs font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">Required event model</h3>
-        </div>
-        <Table data={eventModelRows} columns={eventColumns as any} emptyMessage="No event models defined." />
-      </section>
+      <div className="overflow-hidden border-y border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <Table data={filtered} columns={columns as any} emptyMessage={loading ? 'Loading audit events...' : 'No audit events match this view.'} />
+      </div>
     </div>
   );
 };

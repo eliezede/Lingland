@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BookingService } from '../services/api';
-import { Booking, BookingStatus } from '../types';
+import { Booking } from '../types';
+import { isUpcomingInterpreterBooking } from '../utils/interpreterJobLifecycle';
 
 export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) => {
   const [jobs, setJobs] = useState<Booking[]>([]);
@@ -17,12 +18,9 @@ export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) =>
     setLoading(true);
     try {
       const data = await BookingService.getInterpreterSchedule(interpreterId);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const confirmedStatuses = [BookingStatus.BOOKED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID];
       const upcoming = data
-        .filter(job => confirmedStatuses.includes(job.status) && new Date(job.date) >= today)
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        .filter(job => isUpcomingInterpreterBooking(job))
+        .sort((a, b) => `${a.date}T${a.startTime || ''}`.localeCompare(`${b.date}T${b.startTime || ''}`));
       setJobs(upcoming);
     } catch (err) {
       console.error(err);

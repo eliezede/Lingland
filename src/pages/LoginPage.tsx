@@ -4,11 +4,9 @@ import { auth } from '../services/firebaseConfig';
 import { SystemService } from '../services/systemService';
 import { useNavigate, Link } from 'react-router-dom';
 import {
-  Lock, Globe2, Activity, Database, CheckCircle, XCircle, AlertTriangle,
+  Lock, Globe2, Activity, CheckCircle, AlertTriangle,
   ArrowRight, Mail, ShieldCheck, Eye, EyeOff
 } from 'lucide-react';
-import { useToast } from '../context/ToastContext';
-import { useConfirm } from '../context/ConfirmContext';
 
 export const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -19,12 +17,8 @@ export const LoginPage = () => {
 
   // Diagnostics
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
-  const [seeding, setSeeding] = useState(false);
-  const [seedSuccess, setSeedSuccess] = useState(false);
 
   const navigate = useNavigate();
-  const { showToast } = useToast();
-  const { confirm } = useConfirm();
 
   useEffect(() => {
     // Check connection on mount
@@ -50,28 +44,6 @@ export const LoginPage = () => {
       }
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSeed = async () => {
-    const ok = await confirm({
-      title: 'Seed Test Data',
-      message: 'Warning: This will add test data to your Firestore database. Continue?',
-      confirmLabel: 'Seed Data',
-      variant: 'warning'
-    });
-    if (!ok) return;
-
-    setSeeding(true);
-    try {
-      await SystemService.seedDatabase();
-      setSeedSuccess(true);
-      showToast('Database seeded successfully! You can now log in with demo credentials.', 'success');
-    } catch (e) {
-      console.error(e);
-      showToast('Failed to seed. Please check console for details.', 'error');
-    } finally {
-      setSeeding(false);
     }
   };
 
@@ -229,36 +201,19 @@ export const LoginPage = () => {
 
             {/* Developer Tools / Diagnostics */}
             <div className="mt-12 pt-6 border-t border-slate-100">
-              <div className="flex items-center justify-between mb-4 cursor-pointer group" onClick={() => { }}>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide group-hover:text-slate-600 transition-colors">System Status</h4>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide">System Status</h4>
                 <div className="flex items-center">
                   {dbStatus === 'checking' && <span className="text-xs text-slate-500">Checking connection...</span>}
                   {dbStatus === 'connected' && <span className="text-xs text-green-600 flex items-center font-bold"><CheckCircle size={12} className="mr-1" /> Online</span>}
-                  {dbStatus === 'error' && <span className="text-xs text-orange-600 flex items-center font-bold"><AlertTriangle size={12} className="mr-1" /> Mock Mode</span>}
+                  {dbStatus === 'error' && <span className="text-xs text-red-600 flex items-center font-bold"><AlertTriangle size={12} className="mr-1" /> Unavailable</span>}
                 </div>
               </div>
 
               {dbStatus === 'error' && (
-                <div className="bg-orange-50 p-3 rounded-lg text-xs text-orange-800 mb-4 border border-orange-100">
-                  <p className="font-bold mb-1">Database connection failed.</p>
-                  <p>Running in <strong>Mock Mode</strong>. Real-time data will not be saved.</p>
-                </div>
-              )}
-
-              {dbStatus === 'connected' && !seedSuccess && (
-                <button
-                  onClick={handleSeed}
-                  disabled={seeding}
-                  className="w-full flex items-center justify-center px-4 py-2 border border-slate-200 shadow-sm text-xs font-bold rounded-lg text-slate-600 bg-white hover:bg-slate-50 transition-colors"
-                >
-                  {seeding ? 'Populating...' : 'Developer: Seed Test Data'}
-                  {!seeding && <Database size={12} className="ml-2" />}
-                </button>
-              )}
-
-              {seedSuccess && (
-                <div className="text-xs text-green-600 text-center bg-green-50 p-2 rounded-lg font-bold border border-green-100">
-                  Database populated!
+                <div className="bg-red-50 p-3 rounded-lg text-xs text-red-800 mb-4 border border-red-100">
+                  <p className="font-bold mb-1">Platform services are temporarily unavailable.</p>
+                  <p>No account or operational data will be simulated. Please try again shortly.</p>
                 </div>
               )}
             </div>

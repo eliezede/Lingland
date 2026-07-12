@@ -1,5 +1,28 @@
 import { Booking, BookingView, BookingStatus } from '../types';
 
+const hasFinanceException = (booking: Booking) => {
+    const clientCharge = Number(booking.clientInvoiceTotal ?? booking.totalAmount ?? booking.finalQuote ?? 0);
+    const professionalCost = Number(
+        booking.interpreterInvoiceTotal
+        ?? booking.interpreterAmountCalculated
+        ?? booking.professionalCost
+        ?? 0
+    );
+    const clientReference = booking.clientInvoiceNumber || booking.clientInvoiceReference;
+    const professionalReference = booking.interpreterInvoiceNumber || booking.interpreterInvoiceReference;
+    const clientInvoiceIssued = [BookingStatus.INVOICED, BookingStatus.PAID].includes(booking.status)
+        || Boolean(booking.clientInvoiceId);
+    const professionalInvoiceRecorded = Boolean(booking.interpreterInvoiceId || professionalReference);
+
+    return Boolean(
+        booking.billingIssueFlag
+        || !booking.costCode
+        || Math.abs(clientCharge) < 0.005
+        || (clientInvoiceIssued && !clientReference)
+        || (professionalInvoiceRecorded && Math.abs(professionalCost) < 0.005)
+    );
+};
+
 /**
  * Filter and sort bookings based on a BookingView configuration.
  */
@@ -61,7 +84,9 @@ export const filterBookings = (bookings: Booking[], view: BookingView): Booking[
     if (view.filterRules && view.filterRules.length > 0) {
         view.filterRules.forEach(rule => {
             result = result.filter(b => {
-                const rawValue = (b as any)[rule.field];
+                const rawValue = rule.field === 'financeException'
+                    ? hasFinanceException(b)
+                    : (b as any)[rule.field];
 
                 // Normalization for comparison
                 const value = String(rawValue || '').toLowerCase();

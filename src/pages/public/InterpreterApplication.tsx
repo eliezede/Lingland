@@ -4,6 +4,7 @@ import { ApplicationService } from '../../services/applicationService';
 import { StorageService } from '../../services/storageService';
 import { useSettings } from '../../context/SettingsContext';
 import { useToast } from '../../context/ToastContext';
+import { PublicSessionService } from '../../services/publicSessionService';
 import { Button } from '../../components/ui/Button';
 import { 
   Globe2, ChevronLeft, ChevronRight, CheckCircle2, User,
@@ -631,7 +632,8 @@ export const InterpreterApplicationPage = () => {
                           if (file) {
                             setIsUploadingCV(true);
                             try {
-                              const path = `applications/${Date.now()}_${file.name}`;
+                              const uid = await PublicSessionService.ensure();
+                              const path = `applications/${uid}/${crypto.randomUUID()}_${file.name}`;
                               const url = await StorageService.uploadFile(file, path);
                               handleUpdate('cvUrl', url);
                               showToast("CV uploaded successfully", "success");

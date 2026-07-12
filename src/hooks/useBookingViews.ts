@@ -159,7 +159,11 @@ export const OPERATIONS_SYSTEM_VIEWS: BookingView[] = [
     }
 ];
 
-export const FINANCE_SYSTEM_VIEWS: BookingView[] = [
+const FINANCE_VIEW_VERSION = 2;
+const FINANCE_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'translationDeadline', 'translationVolume', 'translationFormat', 'deliveryState'];
+const FINANCE_TRANSLATION_HIDDEN_COLUMNS = ['language', 'location', 'contact', 'duration', 'translationFormat'];
+
+const FINANCE_SYSTEM_VIEW_DEFINITIONS: BookingView[] = [
     {
         id: 'fin-billing-queue',
         name: 'Billing Queue',
@@ -208,13 +212,14 @@ export const FINANCE_SYSTEM_VIEWS: BookingView[] = [
     },
     {
         id: 'fin-interpreter-invoices',
-        name: 'Interpreter Invoice Queue',
+        name: 'Interpreter Payables',
         icon: 'users',
         isSystem: true,
         isFavorite: true,
         workspace: 'finance',
         filters: {
-            statuses: [BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING]
+            serviceCategory: ServiceCategory.INTERPRETATION,
+            statuses: [BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING, BookingStatus.INVOICED, BookingStatus.PAID]
         },
         sortBy: 'dateAsc',
         groupBy: 'interpreter'
@@ -234,14 +239,24 @@ export const FINANCE_SYSTEM_VIEWS: BookingView[] = [
     },
     {
         id: 'fin-missing-billing-data',
-        name: 'Missing Billing Data',
+        name: 'Finance Exceptions',
         icon: 'alert',
         isSystem: true,
         isFavorite: true,
         workspace: 'finance',
-        filters: {},
+        filters: {
+            statuses: [
+                BookingStatus.SESSION_COMPLETED,
+                BookingStatus.TIMESHEET_SUBMITTED,
+                BookingStatus.TIMESHEET_VERIFIED,
+                BookingStatus.READY_FOR_INVOICE,
+                BookingStatus.INVOICING,
+                BookingStatus.INVOICED,
+                BookingStatus.PAID,
+            ]
+        },
         filterRules: [
-            { id: 'missing-cost-code', field: 'costCode', operator: 'is', value: '' }
+            { id: 'finance-exception', field: 'financeException', operator: 'is', value: true }
         ],
         sortBy: 'dateAsc',
         groupBy: 'client'
@@ -284,7 +299,23 @@ export const FINANCE_SYSTEM_VIEWS: BookingView[] = [
             statuses: [BookingStatus.SESSION_COMPLETED, BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING, BookingStatus.INVOICED]
         },
         sortBy: 'dateAsc',
-        groupBy: 'status'
+        groupBy: 'status',
+        hiddenColumns: FINANCE_TRANSLATION_HIDDEN_COLUMNS,
+    },
+    {
+        id: 'fin-translator-payables',
+        name: 'Translator Payables',
+        icon: 'languages',
+        isSystem: true,
+        isFavorite: true,
+        workspace: 'finance',
+        filters: {
+            serviceCategory: ServiceCategory.TRANSLATION,
+            statuses: [BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING, BookingStatus.INVOICED, BookingStatus.PAID]
+        },
+        sortBy: 'dateAsc',
+        groupBy: 'interpreter',
+        hiddenColumns: FINANCE_TRANSLATION_HIDDEN_COLUMNS,
     },
     {
         id: 'fin-interpreting-invoices',
@@ -301,6 +332,12 @@ export const FINANCE_SYSTEM_VIEWS: BookingView[] = [
         groupBy: 'status'
     }
 ];
+
+export const FINANCE_SYSTEM_VIEWS: BookingView[] = FINANCE_SYSTEM_VIEW_DEFINITIONS.map(view => ({
+    ...view,
+    definitionVersion: FINANCE_VIEW_VERSION,
+    hiddenColumns: view.hiddenColumns || FINANCE_HIDDEN_COLUMNS,
+}));
 
 export const SYSTEM_VIEWS = OPERATIONS_SYSTEM_VIEWS;
 
@@ -323,6 +360,20 @@ const normalizeViews = (
             seen.add(view.id);
 
             if (systemView) {
+                const storedVersion = Number(view.definitionVersion || 0);
+                const systemVersion = Number(systemView.definitionVersion || 0);
+                if (systemVersion > storedVersion) {
+                    return {
+                        ...systemView,
+                        isFavorite: view.isFavorite ?? systemView.isFavorite,
+                        columnWidths: view.columnWidths,
+                        columnOrder: view.columnOrder,
+                        pinnedColumns: view.pinnedColumns,
+                        isSystem: true,
+                        viewScope: 'SYSTEM' as const,
+                        workspace,
+                    };
+                }
                 return {
                     ...systemView,
                     ...view,

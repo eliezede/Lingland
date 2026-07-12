@@ -47,6 +47,14 @@ import { InterpreterAllocationDrawer } from '../../../components/operations/Inte
 import { InterpreterPreviewDrawer } from '../../../components/operations/InterpreterPreviewDrawer';
 import { LocationMap } from '../../../components/ui/LocationMap';
 import { formatLanguagePair } from '../../../utils/languageDisplay';
+import {
+  BookingMetricCell as MetricCell,
+  BookingMetricsBand,
+  BookingNavigationState,
+  BookingRecordHeader,
+  BookingSection as Section,
+  createBookingDetailNavigationState,
+} from '../../../components/bookings/BookingRecordShell';
 
 const formatDate = (value: any, options?: Intl.DateTimeFormatOptions): string => {
   if (!value) return 'N/A';
@@ -100,9 +108,10 @@ const getSyncBadgeClass = (status?: string) => ({
 }[getSyncTone(status)]);
 
 const getNextAction = (booking: Booking) => {
-  if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) return 'Assign interpreter';
-  if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) return 'Assign interpreter';
-  if (booking.status === BookingStatus.ASSIGNMENT_PENDING) return 'Await interpreter response';
+  const professional = booking.serviceCategory === ServiceCategory.TRANSLATION ? 'translator' : 'interpreter';
+  if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) return `Assign ${professional}`;
+  if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) return `Assign ${professional}`;
+  if (booking.status === BookingStatus.ASSIGNMENT_PENDING) return `Await ${professional} response`;
   if (booking.status === BookingStatus.BOOKED) return 'Monitor delivery';
   if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
   if (booking.status === BookingStatus.READY_FOR_INVOICE) return 'Send to invoicing';
@@ -121,39 +130,6 @@ const InfoItem = ({ label, value, icon: Icon }: { label: string; value: React.Re
     <div className="text-sm font-semibold leading-6 text-slate-950 dark:text-white">{value}</div>
   </div>
 );
-
-const Section = ({ title, icon: Icon, children, action }: { title: string; icon: React.ElementType; children: React.ReactNode; action?: React.ReactNode }) => (
-  <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-    <div className="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-          <Icon size={15} />
-        </div>
-        <h2 className="truncate text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
-      </div>
-      {action}
-    </div>
-    <div className="p-3">{children}</div>
-  </section>
-);
-
-const MetricCell = ({ icon: Icon, label, value, tone = 'default' }: { icon: React.ElementType; label: string; value: string; tone?: 'default' | 'warning' | 'success' }) => {
-  const toneClass = tone === 'warning'
-    ? 'text-amber-700 dark:text-amber-300'
-    : tone === 'success'
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : 'text-slate-950 dark:text-white';
-
-  return (
-    <div className="min-w-0 border-b border-slate-200 p-3 dark:border-slate-800 sm:border-b-0 sm:border-r last:sm:border-r-0">
-      <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-        <Icon size={13} />
-        <span>{label}</span>
-      </div>
-      <p className={`mt-1 truncate text-sm font-semibold ${toneClass}`}>{value || '-'}</p>
-    </div>
-  );
-};
 
 export const AdminBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -176,12 +152,15 @@ export const AdminBookingDetails = () => {
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [timesheet, setTimesheet] = useState<Timesheet | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+  const routeState = location.state as BookingNavigationState | null;
   const returnLabel = routeState?.returnLabel || 'Previous page';
-  const bookingContextState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Booking record' };
+  const bookingContextState = createBookingDetailNavigationState(
+    `${location.pathname}${location.search}`,
+    routeState,
+  );
   const goBackToContext = () => {
     if (routeState?.returnTo) {
-      navigate(routeState.returnTo);
+      navigate(routeState.returnTo, { state: routeState.returnState });
       return;
     }
     if (window.history.length > 1) {
@@ -443,7 +422,7 @@ export const AdminBookingDetails = () => {
 
   const handleOpenChat = async () => {
     if (!booking?.interpreterId || !user) {
-      showToast('No interpreter assigned to chat with', 'info');
+      showToast('No professional assigned to chat with', 'info');
       return;
     }
 
@@ -491,26 +470,32 @@ export const AdminBookingDetails = () => {
   const contactName = booking.guestContact?.name || (booking as any).contactName || 'No contact';
   const contactEmail = booking.guestContact?.email || (booking as any).contactEmail;
   const contactPhone = booking.guestContact?.phone || (booking as any).contactPhone;
+  const isTranslationJob = booking.serviceCategory === ServiceCategory.TRANSLATION || booking.serviceType?.toLowerCase().includes('translation');
+  const professionalRole = isTranslationJob ? 'Translator' : 'Interpreter';
+  const professionalRoleLower = professionalRole.toLowerCase();
   const isOnline = booking.locationType === 'ONLINE';
-  const addressLine = isOnline
+  const addressLine = isTranslationJob
+    ? 'Document delivery'
+    : isOnline
     ? (booking.onlineLink || 'No online link provided')
     : [booking.address || booking.location, booking.postcode].filter(Boolean).join(', ') || 'No address provided';
-  const invoiceEstimate = booking.totalAmount || 0;
-  const sessionLabel = booking.date
-    ? `${booking.date}${booking.startTime ? `, ${booking.startTime}` : ''}`
+  const invoiceEstimate = booking.clientInvoiceTotal || booking.finalQuote || booking.totalAmount || 0;
+  const vatEstimate = booking.clientInvoiceVatAmount || booking.vatAmount || 0;
+  const sessionDate = isTranslationJob ? (booking.translationDeadline || booking.date) : booking.date;
+  const sessionLabel = sessionDate
+    ? `${sessionDate}${!isTranslationJob && booking.startTime ? `, ${booking.startTime}` : ''}`
     : 'No date';
   const languageLabel = formatLanguagePair(booking.languageFrom || 'English', booking.languageTo || 'N/A');
-  const assignmentLabel = booking.interpreterName || (booking.interpreterId ? 'Interpreter assigned' : 'No interpreter');
   const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
-  const isTranslationJob = booking.serviceCategory === ServiceCategory.TRANSLATION || booking.serviceType?.toLowerCase().includes('translation');
+  const assignmentLabel = booking.interpreterName || (booking.interpreterId ? `${professionalRole} assigned` : `No ${professionalRoleLower}`);
   const sourceFileCount = Array.isArray(booking.sourceFiles) ? booking.sourceFiles.length : 0;
   const claimSourceLabel = timesheet ? formatSource(timesheet.source, timesheet.recordedByStaff) : 'No claim';
-  const clientAmount = timesheet?.clientAmountCalculated || booking.totalAmount || 0;
-  const interpreterAmount = timesheet?.interpreterAmountCalculated || timesheet?.totalToPay || 0;
+  const clientAmount = timesheet?.clientAmountCalculated || booking.clientInvoiceTotal || booking.finalQuote || booking.totalAmount || 0;
+  const interpreterAmount = timesheet?.interpreterAmountCalculated || timesheet?.totalToPay || booking.interpreterInvoiceTotal || booking.professionalCost || 0;
   const workflowSteps = [
     {
-      label: 'Delivered',
-      done: [
+      label: isTranslationJob ? 'Translation complete' : 'Delivered',
+      done: Boolean(isTranslationJob && (booking.translationCompletedAt || booking.translationDeliveredAt)) || [
         BookingStatus.SESSION_COMPLETED,
         BookingStatus.TIMESHEET_SUBMITTED,
         BookingStatus.READY_FOR_INVOICE,
@@ -526,14 +511,16 @@ export const AdminBookingDetails = () => {
   ];
   const operationalChecks = [
     {
-      label: 'Interpreter assigned',
+      label: `${professionalRole} assigned`,
       ok: Boolean(booking.interpreterId),
-      detail: booking.interpreterName || 'No interpreter assigned',
+      detail: booking.interpreterName || `No ${professionalRoleLower} assigned`,
       action: () => setIsAllocationDrawerOpen(true),
     },
     {
       label: 'Schedule confirmed',
-      ok: Boolean(booking.date && booking.startTime),
+      ok: isTranslationJob
+        ? Boolean(booking.translationDeadline || booking.date)
+        : Boolean(booking.date && booking.startTime),
       detail: sessionLabel,
     },
     {
@@ -564,10 +551,10 @@ export const AdminBookingDetails = () => {
 
   const primaryAction = () => {
     if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) {
-      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
+      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign {professionalRoleLower}</Button>;
     }
     if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) {
-      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign interpreter</Button>;
+      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign {professionalRoleLower}</Button>;
     }
     if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && booking.interpreterId) {
       return <Button variant="secondary" onClick={() => handleRecordInterpreterResponse(true)} isLoading={isActionLoading} icon={CheckCircle2}>Record accepted</Button>;
@@ -592,35 +579,18 @@ export const AdminBookingDetails = () => {
 
   return (
     <div className="-m-3 min-h-full bg-slate-100 pb-10 dark:bg-slate-950 sm:-m-5 lg:-m-6">
-      <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-5 lg:px-6">
-        <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <button
-              onClick={goBackToContext}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
-              aria-label={`Back to ${returnLabel}`}
-              title={`Back to ${returnLabel}`}
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">Booking record</h1>
-                <StatusBadge status={booking.status} />
-                <span className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
-                  {reference}
-                </span>
-              </div>
-              <p className="truncate text-xs text-slate-500">{companyName}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+      <BookingRecordHeader
+        title="Booking record"
+        reference={reference}
+        subtitle={companyName}
+        status={booking.status}
+        backLabel={returnLabel}
+        onBack={goBackToContext}
+        actions={
+          <>
             <Button
               onClick={() => navigate(`/admin/bookings/edit/${id}`, {
-                state: routeState?.returnTo
-                  ? routeState
-                  : { returnTo: `/admin/bookings/${id}`, returnLabel: 'Booking record' },
+                state: bookingContextState,
               })}
               icon={Edit2}
             >
@@ -705,20 +675,18 @@ export const AdminBookingDetails = () => {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <main className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid sm:grid-cols-2 lg:grid-cols-5">
-            <MetricCell icon={Building2} label="Requester" value={companyName} />
-            <MetricCell icon={Globe2} label="Language" value={languageLabel} />
-            <MetricCell icon={CalendarDays} label="Schedule" value={sessionLabel} tone={booking.date && booking.startTime ? 'default' : 'warning'} />
-            <MetricCell icon={MapPin} label="Location" value={addressLine} tone={addressLine ? 'default' : 'warning'} />
-            <MetricCell icon={UserCheck} label="Assignment" value={assignmentLabel} tone={booking.interpreterId ? 'success' : 'warning'} />
-          </div>
-        </div>
+        <BookingMetricsBand>
+          <MetricCell icon={Building2} label="Requester" value={companyName} />
+          <MetricCell icon={Globe2} label="Language" value={languageLabel} />
+          <MetricCell icon={CalendarDays} label={isTranslationJob ? 'Deadline' : 'Schedule'} value={sessionLabel} tone={(isTranslationJob ? Boolean(sessionDate) : Boolean(booking.date && booking.startTime)) ? 'default' : 'warning'} />
+          <MetricCell icon={MapPin} label="Location" value={addressLine} tone={addressLine ? 'default' : 'warning'} />
+          <MetricCell icon={UserCheck} label="Assignment" value={assignmentLabel} tone={booking.interpreterId ? 'success' : 'warning'} />
+        </BookingMetricsBand>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
           <div className="space-y-4">
@@ -734,21 +702,25 @@ export const AdminBookingDetails = () => {
               </div>
             </Section>
 
-            <Section title="Service and schedule" icon={Globe2}>
+            <Section title={isTranslationJob ? 'Service' : 'Service and schedule'} icon={Globe2}>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <InfoItem icon={Globe2} label="Service" value={booking.serviceType || booking.serviceCategory || 'N/A'} />
                 <InfoItem icon={Globe2} label="Languages" value={languageLabel} />
-                <InfoItem icon={CalendarDays} label="Date" value={formatDate(booking.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} />
-                <InfoItem icon={Clock} label="Time and duration" value={<>{booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}<br /><span className="text-slate-500">{durationLabel}</span></>} />
+                {!isTranslationJob && (
+                  <>
+                    <InfoItem icon={CalendarDays} label="Date" value={formatDate(booking.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} />
+                    <InfoItem icon={Clock} label="Time and duration" value={<>{booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}<br /><span className="text-slate-500">{durationLabel}</span></>} />
+                  </>
+                )}
               </div>
             </Section>
 
             {isTranslationJob && (
               <Section title="Translation delivery" icon={FileText}>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <InfoItem icon={CalendarDays} label="Deadline" value={booking.translationDeadline ? formatDate(booking.translationDeadline, { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
+                  <InfoItem icon={CalendarDays} label="Deadline" value={sessionDate ? formatDate(sessionDate, { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
                   <InfoItem icon={FileText} label="Volume" value={<>{booking.wordCount ? `${booking.wordCount.toLocaleString()} words` : 'No word count'}<br /><span className="text-slate-500">{booking.numberOfDocs ? `${booking.numberOfDocs} documents` : `${sourceFileCount} source files`}</span></>} />
-                  <InfoItem icon={Globe2} label="Format" value={booking.translationFormat || booking.translationFormatOther || 'N/A'} />
+                  <InfoItem icon={Globe2} label="Format" value={booking.translationFormat === 'Other' ? (booking.translationFormatOther || 'Other') : (booking.translationFormat || booking.translationFormatOther || 'N/A')} />
                   <InfoItem icon={Mail} label="Delivery email" value={booking.deliveryEmail || contactEmail || 'N/A'} />
                   <InfoItem icon={CheckCircle2} label="Delivery state" value={booking.statusMappingState?.deliveryState || (booking.translationDeliveredAt ? 'DELIVERED' : booking.translationCompletedAt ? 'COMPLETED' : 'N/A')} />
                   <InfoItem icon={CalendarDays} label="Completed" value={booking.translationCompletedAt ? formatDateTime(booking.translationCompletedAt) : 'N/A'} />
@@ -787,30 +759,38 @@ export const AdminBookingDetails = () => {
               </Section>
             )}
 
-            <Section title="Session and location" icon={isOnline ? Video : MapPin}>
-              <div className="grid gap-3 lg:grid-cols-2">
-                <InfoItem icon={isOnline ? Video : MapPin} label={isOnline ? 'Connection' : 'Venue'} value={addressLine} />
-                <InfoItem icon={ShieldCheck} label="Operational flags" value={<>{booking.priority || 'Normal'} priority<br /><span className="text-slate-500">{booking.isOOH ? 'Out of hours' : 'Standard hours'}</span></>} />
-              </div>
-
-              {!isOnline && booking.lat && booking.lng && (
-                <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
-                  <LocationMap
-                    center={{ lat: booking.lat, lng: booking.lng }}
-                    zoom={12}
-                    height="260px"
-                    markers={[{ lat: booking.lat, lng: booking.lng, label: 'Job Location', color: '#ef4444' }]}
-                  />
+            {!isTranslationJob && (
+              <Section title="Session and location" icon={isOnline ? Video : MapPin}>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <InfoItem icon={isOnline ? Video : MapPin} label={isOnline ? 'Connection' : 'Venue'} value={addressLine} />
+                  <InfoItem icon={ShieldCheck} label="Operational flags" value={<>{booking.priority || 'Normal'} priority<br /><span className="text-slate-500">{booking.isOOH ? 'Out of hours' : 'Standard hours'}</span></>} />
                 </div>
-              )}
 
-              {(booking.notes || booking.adminNotes) && (
-                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/30">
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Notes</p>
-                  <p className="text-sm leading-6 text-blue-950 dark:text-blue-100">{booking.adminNotes || booking.notes}</p>
-                </div>
-              )}
-            </Section>
+                {!isOnline && booking.lat && booking.lng && (
+                  <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+                    <LocationMap
+                      center={{ lat: booking.lat, lng: booking.lng }}
+                      zoom={12}
+                      height="260px"
+                      markers={[{ lat: booking.lat, lng: booking.lng, label: 'Job Location', color: '#ef4444' }]}
+                    />
+                  </div>
+                )}
+
+                {(booking.notes || booking.adminNotes) && (
+                  <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/30">
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Notes</p>
+                    <p className="text-sm leading-6 text-blue-950 dark:text-blue-100">{booking.adminNotes || booking.notes}</p>
+                  </div>
+                )}
+              </Section>
+            )}
+
+            {isTranslationJob && (booking.notes || booking.adminNotes) && (
+              <Section title="Translation notes" icon={MessageSquare}>
+                <p className="text-sm leading-6 text-slate-700 dark:text-slate-200">{booking.adminNotes || booking.notes}</p>
+              </Section>
+            )}
 
             <Section
               title="Delivery, claim and billing handoff"
@@ -989,11 +969,11 @@ export const AdminBookingDetails = () => {
               </div>
             </Section>
 
-            <Section title="Interpreter assignment" icon={User}>
+            <Section title={`${professionalRole} assignment`} icon={User}>
               <div className="space-y-3">
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Interpreter</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{professionalRole}</p>
                     {!booking.interpreterId && (
                       <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setIsAllocationDrawerOpen(true)}>Assign</Button>
                     )}
@@ -1001,9 +981,9 @@ export const AdminBookingDetails = () => {
                   {booking.interpreterId ? (
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <UserAvatar name={booking.interpreterName || 'Interpreter'} src={booking.interpreterPhotoUrl} size="md" />
+                        <UserAvatar name={booking.interpreterName || professionalRole} src={booking.interpreterPhotoUrl} size="md" />
                         <div>
-                          <p className="font-semibold text-slate-950 dark:text-white">{booking.interpreterName || 'Interpreter'}</p>
+                          <p className="font-semibold text-slate-950 dark:text-white">{booking.interpreterName || professionalRole}</p>
                           <p className="text-xs text-slate-500">INT-{booking.interpreterId.slice(0, 8)}</p>
                         </div>
                       </div>
@@ -1032,11 +1012,11 @@ export const AdminBookingDetails = () => {
             <Section title="Billing readiness" icon={Receipt} action={<StatusBadge status={(booking as any).paymentStatus || 'UNPAID'} />}>
               <div className="space-y-3">
                 <div className="rounded-md bg-slate-950 p-4 text-white dark:bg-slate-950">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Client charge estimate</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Client charge</p>
                   <p className="mt-2 text-2xl font-semibold">{formatMoney(invoiceEstimate)}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <InfoItem label="VAT estimate" value={formatMoney(invoiceEstimate * 0.2)} />
+                  <InfoItem label="VAT" value={formatMoney(vatEstimate)} />
                   <InfoItem label="Cost code" value={booking.costCode || 'N/A'} />
                 </div>
                 <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">

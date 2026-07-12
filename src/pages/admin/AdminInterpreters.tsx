@@ -56,7 +56,7 @@ export const AdminInterpreters = () => {
 
   const [textFilter, setTextFilter] = useState('');
   const [langFilter, setLangFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONBOARDING' | 'SUSPENDED' | 'IMPORTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONLY_TRANSL' | 'ONBOARDING' | 'SUSPENDED' | 'IMPORTED'>('ALL');
   const [queueFilter, setQueueFilter] = useState<'ALL' | 'CLAIMS' | 'PAYABLES'>('ALL');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const crmReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Interpreter CRM' };
@@ -179,7 +179,7 @@ export const AdminInterpreters = () => {
 
   const summary = {
     total: interpreters.length,
-    active: interpreters.filter(i => i.status === 'ACTIVE').length,
+    active: interpreters.filter(i => i.status === 'ACTIVE' || i.status === 'ONLY_TRANSL').length,
     passive: interpreters.filter(i => i.status === 'IMPORTED').length,
     claims: interpreters.reduce((sum, i) => sum + i.claimsInReview + i.missingClaims, 0),
     payables: interpreters.reduce((sum, i) => sum + i.payablePending, 0),
@@ -340,7 +340,7 @@ export const AdminInterpreters = () => {
       header: 'Status',
       accessor: (i: InterpreterWithStats) => (
         <div className="min-w-[125px]">
-          <Badge variant={i.status === 'ACTIVE' ? 'success' : i.status === 'SUSPENDED' ? 'danger' : i.status === 'IMPORTED' ? 'info' : 'warning'}>
+          <Badge variant={i.status === 'ACTIVE' || i.status === 'ONLY_TRANSL' ? 'success' : i.status === 'SUSPENDED' ? 'danger' : i.status === 'IMPORTED' ? 'info' : 'warning'}>
             {i.status}
           </Badge>
           <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -407,6 +407,7 @@ export const AdminInterpreters = () => {
           >
             <option value="ALL" className="dark:bg-slate-900">All Statuses</option>
             <option value="ACTIVE" className="dark:bg-slate-900">Active</option>
+            <option value="ONLY_TRANSL" className="dark:bg-slate-900">Translation only</option>
             <option value="IMPORTED" className="dark:bg-slate-900">Imported</option>
             <option value="ONBOARDING" className="dark:bg-slate-900">Onboarding</option>
             <option value="SUSPENDED" className="dark:bg-slate-900">Suspended</option>

@@ -10,6 +10,8 @@ import { assignInterpreterAction, createDependencies } from '../../ui/actions';
 import { useAuth } from '../../context/AuthContext';
 import { UserAvatar } from '../ui/UserAvatar';
 import { formatLanguagePair } from '../../utils/languageDisplay';
+import { isInterpreterAvailableForStaffAssignment } from '../../utils/interpreterFlow';
+import { isTranslationBooking } from '../../utils/interpreterJobLifecycle';
 
 interface AssignmentModalProps {
     isOpen: boolean;
@@ -47,9 +49,10 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
             setIsLoading(true);
             try {
                 const all = await InterpreterService.getAll();
-                // Sort: language match first, then active status
+                const translationJob = isTranslationBooking(booking);
+                // Passive imports remain staff-managed; translation-only profiles never receive interpreting work.
                 const sorted = all
-                    .filter(i => i.status === 'ACTIVE')
+                    .filter(i => isInterpreterAvailableForStaffAssignment(i.status, translationJob))
                     .sort((a, b) => {
                         const aMatch = a.languages.some(l => l.toLowerCase().includes((booking.languageTo || '').toLowerCase()));
                         const bMatch = b.languages.some(l => l.toLowerCase().includes((booking.languageTo || '').toLowerCase()));
@@ -156,7 +159,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                         </div>
                     ) : filteredInterpreters.length === 0 ? (
                         <div className="text-center py-8 border-2 border-dashed border-slate-100 rounded-xl">
-                            <p className="text-sm text-slate-400 italic">No active interpreters found matching your search.</p>
+                            <p className="text-sm text-slate-400 italic">No available professionals found matching your search.</p>
                         </div>
                     ) : (
                         filteredInterpreters.map((interpreter) => {

@@ -1,5 +1,9 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import {
+  shouldAdvanceBookingForTimesheet,
+  shouldCreateTimesheetSubmissionCommunications,
+} from './timesheetSubmissionPolicy';
 
 const db = admin.firestore();
 
@@ -21,6 +25,11 @@ export const onTimesheetSubmit = functions.firestore
     const timesheetId = context.params.timesheetId;
     console.log(`[onTimesheetSubmit] New timesheet: ${timesheetId} for booking ${ts.bookingId}`);
 
+    if (!shouldCreateTimesheetSubmissionCommunications(ts)) {
+      console.log(`[onTimesheetSubmit] Mirror artifact ${timesheetId} retained without lifecycle or communication side effects.`);
+      return null;
+    }
+
     try {
       const batch = db.batch();
 
@@ -28,7 +37,7 @@ export const onTimesheetSubmit = functions.firestore
       if (ts.bookingId) {
         const bookingRef = db.collection('bookings').doc(ts.bookingId);
         const bookingSnap = await bookingRef.get();
-        if (bookingSnap.exists) {
+        if (bookingSnap.exists && shouldAdvanceBookingForTimesheet(ts, bookingSnap.data()?.status)) {
           batch.update(bookingRef, {
             status: 'TIMESHEET_SUBMITTED',
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -85,6 +94,7 @@ If you have any questions, please contact us directly.<br><br>
 Kind regards,<br>The Lingland Finance Team`
           },
           timesheetId,
+          recipientType: 'INTERPRETER',
           source: 'timesheet_submit',
           createdAt: new Date().toISOString()
         });

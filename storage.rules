@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'SUPER_ADMIN'];
+    }
+
+    function profileId() {
+      return signedIn()
+        ? firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.profileId
+        : '';
+    }
+
+    function canAccessBooking(bookingId) {
+      let booking = firestore.get(/databases/(default)/documents/bookings/$(bookingId));
+      return isAdmin() || (signedIn() && (
+        booking.data.clientId == profileId()
+        || booking.data.interpreterId == profileId()
+      ));
+    }
+
+    function safeUpload() {
+      return request.resource != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf|text/plain|application/msword|application/vnd.openxmlformats-officedocument.*');
+    }
+
+    match /applications/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if signedIn() && request.auth.uid == userId && safeUpload();
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /bookings/guests/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if signedIn() && request.auth.uid == userId && safeUpload();
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /bookings/clients/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == userId && safeUpload());
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /profiles/{role}/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == userId && safeUpload());
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /onboarding/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == userId && safeUpload());
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /timesheets/{bookingId}/{allPaths=**} {
+      allow read: if canAccessBooking(bookingId);
+      allow create: if canAccessBooking(bookingId) && safeUpload();
+      allow update, delete: if isAdmin();
+    }
+
+    match /invoices/interpreters/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if signedIn() && request.auth.uid == userId && safeUpload();
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /chat/{threadId}/{allPaths=**} {
+      allow read: if isAdmin() || (
+        signedIn()
+        && request.auth.uid in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants
+      );
+      allow create, update: if signedIn()
+        && request.auth.uid in firestore.get(/databases/(default)/documents/chatThreads/$(threadId)).data.participants
+        && safeUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

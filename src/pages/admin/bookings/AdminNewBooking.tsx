@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
     AlertCircle,
-    ArrowLeft,
     Building2,
     CalendarDays,
     Check,
@@ -22,27 +21,35 @@ import {
     Search,
     SlidersHorizontal,
     Trash2,
+    Upload,
     UserCheck,
     UserPlus,
     Video,
     X,
     Zap,
 } from 'lucide-react';
-import { BookingService, InterpreterService } from '../../../services/api';
+import { BookingService, InterpreterService, StorageService } from '../../../services/api';
 import { Booking, BookingStatus, Client, Interpreter, ServiceType } from '../../../types';
 import { useClients } from '../../../context/ClientContext';
 import { useToast } from '../../../context/ToastContext';
 import { Button } from '../../../components/ui/Button';
 import { Modal } from '../../../components/ui/Modal';
-import { StatusBadge } from '../../../components/StatusBadge';
 import { useAuth } from '../../../context/AuthContext';
 import { UkAddress } from '../../../services/addressService';
 import { PostcodeLookup } from '../../../components/ui/PostcodeLookup';
 import { useConfirm } from '../../../context/ConfirmContext';
+import {
+    BookingMetricCell as MetricCell,
+    BookingMetricsBand,
+    BookingNavigationState,
+    BookingRecordHeader,
+    BookingSection as Section,
+    getBookingNavigationStateForReturn,
+} from '../../../components/bookings/BookingRecordShell';
+import { isInterpreterAvailableForStaffAssignment } from '../../../utils/interpreterFlow';
 
 type ClientSource = 'EXISTING' | 'GUEST';
 
-const panelClass = 'rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900';
 const labelClass = 'mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400';
 const inputClass = 'h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:disabled:bg-slate-900';
 const textareaClass = 'min-h-32 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-950 dark:text-white';
@@ -61,45 +68,12 @@ const serviceIcons: Record<string, React.ElementType> = {
     [ServiceType.BSL]: Globe2,
 };
 
-const Section = ({ title, icon: Icon, children, action }: { title: string; icon: React.ElementType; children: React.ReactNode; action?: React.ReactNode }) => (
-    <section className={panelClass}>
-        <div className="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
-            <div className="flex min-w-0 items-center gap-2">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    <Icon size={15} />
-                </div>
-                <h2 className="truncate text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
-            </div>
-            {action}
-        </div>
-        <div className="p-3">{children}</div>
-    </section>
-);
-
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div className="min-w-0">
         <label className={labelClass}>{label}</label>
         {children}
     </div>
 );
-
-const MetricCell = ({ icon: Icon, label, value, tone = 'default' }: { icon: React.ElementType; label: string; value: string; tone?: 'default' | 'warning' | 'success' }) => {
-    const toneClass = tone === 'warning'
-        ? 'text-amber-700 dark:text-amber-300'
-        : tone === 'success'
-            ? 'text-emerald-700 dark:text-emerald-300'
-            : 'text-slate-950 dark:text-white';
-
-    return (
-        <div className="min-w-0 border-b border-slate-200 p-3 dark:border-slate-800 sm:border-b-0 sm:border-r last:sm:border-r-0">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                <Icon size={13} />
-                <span>{label}</span>
-            </div>
-            <p className={`mt-1 truncate text-sm font-semibold ${toneClass}`}>{value || '-'}</p>
-        </div>
-    );
-};
 
 const SegmentedButton = ({ active, children, icon: Icon, onClick, disabled = false }: { active: boolean; children: React.ReactNode; icon?: React.ElementType; onClick: () => void; disabled?: boolean }) => (
     <button
@@ -137,7 +111,7 @@ export const AdminNewBooking = () => {
     const { confirm } = useConfirm();
     const { id } = useParams<{ id: string }>();
     const isEditMode = Boolean(id);
-    const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
+    const routeState = location.state as BookingNavigationState | null;
     const { clientsMap } = useClients();
 
     const [loading, setLoading] = useState(false);
@@ -155,6 +129,7 @@ export const AdminNewBooking = () => {
     const [selectedInterpreter, setSelectedInterpreter] = useState<Interpreter | null>(null);
     const [interpreterTouched, setInterpreterTouched] = useState(false);
     const [serviceTypeTouched, setServiceTypeTouched] = useState(false);
+    const [uploadingFiles, setUploadingFiles] = useState(false);
 
     const [formData, setFormData] = useState({
         costCode: '',
@@ -177,7 +152,11 @@ export const AdminNewBooking = () => {
         contactPhone: '',
         translationFormat: 'Only Word',
         translationFormatOther: '',
+        translationDeadline: '',
         quoteRequested: false,
+        wordCount: 0,
+        numberOfDocs: 0,
+        finalQuote: 0,
         sourceFiles: [] as Array<string | { name?: string; url?: string }>,
         deliveryEmail: '',
         lat: undefined as number | undefined,
@@ -205,9 +184,11 @@ export const AdminNewBooking = () => {
     const loadInitialData = async () => {
         try {
             const allInterpreters = await InterpreterService.getAll();
-            const activeInterpreters = allInterpreters.filter(int => int.status === 'ACTIVE');
-            setInterpreters(activeInterpreters);
-            setAvailableLanguages(Array.from(new Set(activeInterpreters.flatMap(int => int.languages || []))).sort());
+            const workforceInterpreters = allInterpreters.filter(int =>
+                ['ACTIVE', 'IMPORTED', 'ONLY_TRANSL'].includes(int.status)
+            );
+            setInterpreters(workforceInterpreters);
+            setAvailableLanguages(Array.from(new Set(workforceInterpreters.flatMap(int => int.languages || []))).sort());
         } catch (error) {
             console.error('Failed to load booking editor data', error);
         }
@@ -249,7 +230,11 @@ export const AdminNewBooking = () => {
                 contactPhone: booking.guestContact?.phone || '',
                 translationFormat: booking.translationFormat || 'Only Word',
                 translationFormatOther: booking.translationFormatOther || '',
+                translationDeadline: booking.translationDeadline || booking.date || '',
                 quoteRequested: Boolean(booking.quoteRequested),
+                wordCount: Number(booking.wordCount || 0),
+                numberOfDocs: Number(booking.numberOfDocs || 0),
+                finalQuote: Number(booking.finalQuote || booking.totalAmount || 0),
                 sourceFiles: booking.sourceFiles || [],
                 deliveryEmail: booking.deliveryEmail || booking.guestContact?.email || '',
                 lat: booking.lat,
@@ -280,14 +265,18 @@ export const AdminNewBooking = () => {
     }, [clients, clientSearchQuery]);
 
     const matchingInterpreters = useMemo(() => {
-        if (!formData.languageTo) return interpreters;
+        const available = interpreters.filter(i =>
+            isInterpreterAvailableForStaffAssignment(i.status, isTranslation)
+        );
+        if (!formData.languageTo) return available;
         const language = formData.languageTo.toLowerCase();
-        return interpreters.filter(i => (i.languages || []).some(l => l.toLowerCase() === language));
-    }, [interpreters, formData.languageTo]);
+        return available.filter(i => (i.languages || []).some(l => l.toLowerCase() === language));
+    }, [interpreters, formData.languageTo, isTranslation]);
 
     const filteredInterpreters = useMemo(() => {
         const query = searchingInterpreter.toLowerCase();
         return interpreters
+            .filter(i => isInterpreterAvailableForStaffAssignment(i.status, isTranslation))
             .filter(i =>
                 i.name.toLowerCase().includes(query) ||
                 (i.languages || []).some(l => l.toLowerCase().includes(query)) ||
@@ -305,23 +294,34 @@ export const AdminNewBooking = () => {
                 return a.name.localeCompare(b.name);
             })
             .slice(0, 14);
-    }, [interpreters, searchingInterpreter, formData.languageTo]);
+    }, [interpreters, searchingInterpreter, formData.languageTo, isTranslation]);
 
     const selectedClientLabel = selectedClient?.companyName || formData.organization || 'No client selected';
     const hasClient = Boolean(selectedClient || formData.organization || formData.contactName);
     const hasContact = Boolean(formData.contactEmail || formData.contactPhone);
     const hasLanguage = Boolean(formData.languageTo);
-    const hasSchedule = Boolean(formData.date && (isTranslation || formData.startTime));
+    const hasSchedule = isTranslation
+        ? Boolean(formData.translationDeadline || formData.date)
+        : Boolean(formData.date && formData.startTime);
     const hasLocation = isTranslation || effectiveLocationType === 'ONLINE' || Boolean(formData.address || formData.postcode);
     const requiredMissing = !hasLanguage || !hasSchedule;
+    const assignmentLocked = Boolean(isEditMode && originalBooking && [
+        BookingStatus.CANCELLED,
+        BookingStatus.TIMESHEET_SUBMITTED,
+        BookingStatus.READY_FOR_INVOICE,
+        BookingStatus.INVOICING,
+        BookingStatus.INVOICED,
+        BookingStatus.PAID,
+    ].includes(originalBooking.status));
 
-    const scheduleLabel = formData.date
-        ? `${formData.date}${formData.startTime ? `, ${formData.startTime}` : ''}`
+    const effectiveDate = isTranslation ? (formData.translationDeadline || formData.date) : formData.date;
+    const scheduleLabel = effectiveDate
+        ? `${effectiveDate}${!isTranslation && formData.startTime ? `, ${formData.startTime}` : ''}`
         : 'No date';
 
     const returnToEditOrigin = () => {
         if (routeState?.returnTo) {
-            navigate(routeState.returnTo);
+            navigate(routeState.returnTo, { state: getBookingNavigationStateForReturn(routeState) });
             return;
         }
         navigate(isEditMode && id ? `/admin/bookings/${id}` : '/admin/bookings');
@@ -341,6 +341,35 @@ export const AdminNewBooking = () => {
             houseNumber: address.houseNumber || prev.houseNumber,
             lat: address.lat,
             lng: address.lng,
+        }));
+    };
+
+    const handleSourceFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files || []);
+        if (files.length === 0 || !user?.id) return;
+
+        setUploadingFiles(true);
+        try {
+            const uploadedFiles = await Promise.all(files.map(async file => {
+                const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '_');
+                const path = `bookings/admin/${user.id}/${Date.now()}_${safeName}`;
+                const url = await StorageService.uploadFile(file, path);
+                return { name: file.name, url };
+            }));
+            setFormData(prev => ({ ...prev, sourceFiles: [...prev.sourceFiles, ...uploadedFiles] }));
+            showToast(`${uploadedFiles.length} source document${uploadedFiles.length === 1 ? '' : 's'} uploaded`, 'success');
+        } catch {
+            showToast('Failed to upload one or more source documents', 'error');
+        } finally {
+            setUploadingFiles(false);
+            event.target.value = '';
+        }
+    };
+
+    const removeSourceFile = (index: number) => {
+        setFormData(prev => ({
+            ...prev,
+            sourceFiles: prev.sourceFiles.filter((_, fileIndex) => fileIndex !== index),
         }));
     };
 
@@ -374,7 +403,7 @@ export const AdminNewBooking = () => {
                 serviceType: shouldPreserveLegacyServiceType ? originalBooking?.serviceType : formData.serviceType,
                 languageFrom: formData.languageFrom,
                 languageTo: formData.languageTo,
-                date: formData.date,
+                date: isTranslation ? (formData.translationDeadline || formData.date) : formData.date,
                 startTime: formData.startTime,
                 durationMinutes: Number(formData.durationMinutes) || 60,
                 locationType: effectiveLocationType,
@@ -390,7 +419,11 @@ export const AdminNewBooking = () => {
                 updatedAt: new Date().toISOString(),
                 translationFormat: formData.translationFormat,
                 translationFormatOther: formData.translationFormatOther,
+                translationDeadline: formData.translationDeadline || (isTranslation ? formData.date : ''),
                 quoteRequested: formData.quoteRequested,
+                wordCount: Math.max(0, Number(formData.wordCount) || 0),
+                numberOfDocs: Math.max(0, Number(formData.numberOfDocs) || 0),
+                finalQuote: Math.max(0, Number(formData.finalQuote) || 0),
                 sourceFiles: formData.sourceFiles,
                 deliveryEmail: formData.deliveryEmail || formData.contactEmail,
                 lat: formData.lat,
@@ -417,29 +450,36 @@ export const AdminNewBooking = () => {
                 };
             }
 
-            if (selectedInterpreter) {
+            if (!isEditMode && selectedInterpreter) {
                 bookingData.interpreterId = selectedInterpreter.id;
                 bookingData.interpreterName = selectedInterpreter.name;
                 bookingData.interpreterPhotoUrl = selectedInterpreter.photoUrl || originalBooking?.interpreterPhotoUrl || null;
-            } else if (isEditMode && interpreterTouched) {
-                bookingData.interpreterId = null;
-                bookingData.interpreterName = null;
-                bookingData.interpreterPhotoUrl = null;
             }
 
             if (isEditMode) {
                 delete bookingData.id;
+                delete bookingData.interpreterId;
+                delete bookingData.interpreterName;
+                delete bookingData.interpreterPhotoUrl;
+                delete bookingData.offeredInterpreterIds;
                 await BookingService.update(id!, bookingData);
+
+                const previousInterpreterId = originalBooking?.interpreterId || null;
+                const nextInterpreterId = selectedInterpreter?.id || null;
+                if (interpreterTouched && previousInterpreterId !== nextInterpreterId) {
+                    if (nextInterpreterId) {
+                        await BookingService.assignInterpreterToBooking(id!, nextInterpreterId);
+                    } else if (previousInterpreterId) {
+                        await BookingService.unassignInterpreterFromBooking(id!, 'Removed in booking editor');
+                    }
+                }
                 showToast('Booking updated successfully', 'success');
                 returnToEditOrigin();
             } else {
                 bookingData.createdAt = new Date().toISOString();
                 bookingData.sourceSystem = 'STAFF_MANUAL';
                 bookingData.syncStatus = 'LOCAL_ONLY';
-                const createdBooking = await BookingService.create(bookingData);
-                if (selectedInterpreter) {
-                    await BookingService.createAssignment(createdBooking.id, selectedInterpreter.id);
-                }
+                await BookingService.create(bookingData);
                 showToast('Booking created successfully', 'success');
                 navigate(routeState?.returnTo || '/admin/bookings');
             }
@@ -465,7 +505,7 @@ export const AdminNewBooking = () => {
         try {
             await BookingService.delete(id);
             showToast('Job deleted permanently', 'success');
-            navigate(routeState?.returnTo || '/admin/bookings');
+            navigate(routeState?.parentReturnTo || routeState?.returnTo || '/admin/bookings');
         } catch {
             showToast('Failed to delete job', 'error');
         } finally {
@@ -483,32 +523,15 @@ export const AdminNewBooking = () => {
 
     return (
         <form onSubmit={handleSubmit} className="-m-3 min-h-full bg-slate-100 pb-20 dark:bg-slate-950 sm:-m-5 lg:-m-6">
-            <div className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-5 lg:px-6">
-                <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="flex min-w-0 items-center gap-3">
-                        <button
-                            type="button"
-                            onClick={returnToEditOrigin}
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
-                            aria-label="Back"
-                        >
-                            <ArrowLeft size={18} />
-                        </button>
-                        <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                                <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">
-                                    {isEditMode ? 'Edit booking record' : 'New booking record'}
-                                </h1>
-                                {originalBooking && <StatusBadge status={originalBooking.status} />}
-                                <span className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
-                                    {originalBooking?.bookingRef || 'Draft'}
-                                </span>
-                            </div>
-                            <p className="truncate text-xs text-slate-500">{selectedClientLabel}</p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            <BookingRecordHeader
+                title={isEditMode ? 'Booking record' : 'New booking record'}
+                reference={originalBooking?.displayRef || originalBooking?.jobNumber || originalBooking?.bookingRef || 'Draft'}
+                subtitle={selectedClientLabel}
+                status={originalBooking?.status}
+                backLabel={routeState?.returnLabel || (isEditMode ? 'Booking record' : 'Job Centre')}
+                onBack={returnToEditOrigin}
+                actions={
+                    <>
                         {isEditMode && (
                             <Button type="button" variant="ghost" icon={Trash2} onClick={handleDeleteBooking} disabled={loading} className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30">
                                 Delete job
@@ -518,9 +541,9 @@ export const AdminNewBooking = () => {
                         <Button type="submit" icon={Save} isLoading={loading} disabled={loading || requiredMissing}>
                             {isEditMode ? 'Save changes' : 'Create booking'}
                         </Button>
-                    </div>
-                </div>
-            </div>
+                    </>
+                }
+            />
 
             <div className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
                 {isEditMode && originalBooking?.sourceSystem === 'AIRTABLE' && (
@@ -529,15 +552,13 @@ export const AdminNewBooking = () => {
                     </div>
                 )}
 
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-5">
+                <BookingMetricsBand>
                         <MetricCell icon={Building2} label="Requester" value={selectedClientLabel} tone={hasClient ? 'default' : 'warning'} />
                         <MetricCell icon={Globe2} label="Language" value={formData.languageTo ? `${formData.languageFrom} to ${formData.languageTo}` : 'Missing language'} tone={hasLanguage ? 'default' : 'warning'} />
-                        <MetricCell icon={CalendarDays} label="Schedule" value={scheduleLabel} tone={hasSchedule ? 'default' : 'warning'} />
+                        <MetricCell icon={CalendarDays} label={isTranslation ? 'Deadline' : 'Schedule'} value={scheduleLabel} tone={hasSchedule ? 'default' : 'warning'} />
                         <MetricCell icon={MapPin} label="Location" value={locationLabel} tone={hasLocation ? 'default' : 'warning'} />
                         <MetricCell icon={UserCheck} label="Assignment" value={selectedInterpreter?.name || `${matchingInterpreters.length} possible`} tone={selectedInterpreter ? 'success' : 'default'} />
-                    </div>
-                </div>
+                </BookingMetricsBand>
 
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
                     <main className="space-y-4">
@@ -618,7 +639,7 @@ export const AdminNewBooking = () => {
                             </div>
                         </Section>
 
-                        <Section title="Service and schedule" icon={SlidersHorizontal}>
+                        <Section title={isTranslation ? 'Service' : 'Service and schedule'} icon={SlidersHorizontal}>
                             <div className="space-y-3">
                                 <Field label="Service type">
                                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -633,7 +654,7 @@ export const AdminNewBooking = () => {
                                     </div>
                                 </Field>
 
-                                <div className="grid gap-3 md:grid-cols-4">
+                                <div className={`grid gap-3 ${isTranslation ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
                                     <Field label="From">
                                         <input className={inputClass} value={formData.languageFrom} onChange={e => setFormData({ ...formData, languageFrom: e.target.value })} />
                                     </Field>
@@ -643,11 +664,13 @@ export const AdminNewBooking = () => {
                                             {availableLanguages.map(language => <option key={language} value={language} />)}
                                         </datalist>
                                     </Field>
-                                    <Field label="Gender">
-                                        <select className={inputClass} value={formData.genderPreference} onChange={e => setFormData({ ...formData, genderPreference: e.target.value as any })}>
-                                            {genderOptions.map(option => <option key={option} value={option}>{option}</option>)}
-                                        </select>
-                                    </Field>
+                                    {!isTranslation && (
+                                        <Field label="Gender">
+                                            <select className={inputClass} value={formData.genderPreference} onChange={e => setFormData({ ...formData, genderPreference: e.target.value as any })}>
+                                                {genderOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                                            </select>
+                                        </Field>
+                                    )}
                                     <Field label="Matches">
                                         <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
                                             {formData.languageTo ? `${matchingInterpreters.length} active` : 'Choose language'}
@@ -656,32 +679,51 @@ export const AdminNewBooking = () => {
                                 </div>
 
                                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-                                    <div className="grid gap-3 md:grid-cols-3">
-                                        <Field label="Date">
-                                            <input type="date" className={inputClass} value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+                                    <div className={`grid gap-3 ${isTranslation ? '' : 'md:grid-cols-3'}`}>
+                                        <Field label={isTranslation ? 'Delivery deadline' : 'Date'}>
+                                            <input
+                                                type="date"
+                                                className={inputClass}
+                                                value={isTranslation ? (formData.translationDeadline || formData.date) : formData.date}
+                                                onChange={e => setFormData({
+                                                    ...formData,
+                                                    date: e.target.value,
+                                                    ...(isTranslation ? { translationDeadline: e.target.value } : {}),
+                                                })}
+                                            />
                                         </Field>
-                                        <Field label="Start">
-                                            <div className="relative">
-                                                <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                                <input type="time" className={`${inputClass} pl-8`} value={formData.startTime} disabled={isTranslation} onChange={e => setFormData({ ...formData, startTime: e.target.value })} />
-                                            </div>
-                                        </Field>
-                                        <Field label="Duration">
-                                            <input type="number" min={15} step={15} className={inputClass} value={formData.durationMinutes} disabled={isTranslation} onChange={e => setFormData({ ...formData, durationMinutes: Number(e.target.value) })} />
-                                        </Field>
+                                        {!isTranslation && (
+                                            <>
+                                                <Field label="Start">
+                                                    <div className="relative">
+                                                        <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                        <input type="time" className={`${inputClass} pl-8`} value={formData.startTime} onChange={e => setFormData({ ...formData, startTime: e.target.value })} />
+                                                    </div>
+                                                </Field>
+                                                <Field label="Duration">
+                                                    <input type="number" min={15} step={15} className={inputClass} value={formData.durationMinutes} onChange={e => setFormData({ ...formData, durationMinutes: Number(e.target.value) })} />
+                                                </Field>
+                                            </>
+                                        )}
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-slate-950">
-                                        <SegmentedButton active={effectiveLocationType === 'ONSITE'} disabled={isRemoteService} icon={MapPin} onClick={() => setFormData({ ...formData, locationType: 'ONSITE' })}>
-                                            On-site
-                                        </SegmentedButton>
-                                        <SegmentedButton active={effectiveLocationType === 'ONLINE'} icon={Video} onClick={() => setFormData({ ...formData, locationType: 'ONLINE' })}>
-                                            Remote
-                                        </SegmentedButton>
-                                    </div>
+                                    {isTranslation ? (
+                                        <div className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                                            <FileText size={15} className="text-blue-600" /> Document delivery workflow
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-slate-950">
+                                            <SegmentedButton active={effectiveLocationType === 'ONSITE'} disabled={isRemoteService} icon={MapPin} onClick={() => setFormData({ ...formData, locationType: 'ONSITE' })}>
+                                                On-site
+                                            </SegmentedButton>
+                                            <SegmentedButton active={effectiveLocationType === 'ONLINE'} icon={Video} onClick={() => setFormData({ ...formData, locationType: 'ONLINE' })}>
+                                                Remote
+                                            </SegmentedButton>
+                                        </div>
+                                    )}
                                 </div>
 
-                                {effectiveLocationType === 'ONLINE' ? (
+                                {!isTranslation && (effectiveLocationType === 'ONLINE' ? (
                                     <Field label="Remote connection">
                                         <input className={inputClass} value={formData.onlineLink} onChange={e => setFormData({ ...formData, onlineLink: e.target.value })} placeholder="Teams, Zoom, telephone bridge or joining notes" />
                                     </Field>
@@ -700,13 +742,26 @@ export const AdminNewBooking = () => {
                                             </Field>
                                         </div>
                                     </div>
-                                )}
+                                ))}
                             </div>
                         </Section>
 
                         {isTranslation && (
                             <Section title="Translation delivery" icon={FileText}>
-                                <div className="grid gap-3 lg:grid-cols-[1fr_1fr_220px]">
+                                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                    <Field label="Word count">
+                                        <input type="number" min={0} step={1} className={inputClass} value={formData.wordCount || ''} onChange={e => setFormData({ ...formData, wordCount: Number(e.target.value) || 0 })} placeholder="0" />
+                                    </Field>
+                                    <Field label="Number of documents">
+                                        <input type="number" min={0} step={1} className={inputClass} value={formData.numberOfDocs || ''} onChange={e => setFormData({ ...formData, numberOfDocs: Number(e.target.value) || 0 })} placeholder="0" />
+                                    </Field>
+                                    <Field label="Final quote (GBP)">
+                                        <input type="number" min={0} step="0.01" className={inputClass} value={formData.finalQuote || ''} onChange={e => setFormData({ ...formData, finalQuote: Number(e.target.value) || 0 })} placeholder="0.00" />
+                                    </Field>
+                                    <Field label="Delivery email">
+                                        <input type="email" className={inputClass} value={formData.deliveryEmail} onChange={e => setFormData({ ...formData, deliveryEmail: e.target.value })} placeholder="delivery@example.com" />
+                                    </Field>
+                                    <div className="md:col-span-2 xl:col-span-3">
                                     <Field label="Format">
                                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                             {translationFormats.map(format => (
@@ -716,9 +771,7 @@ export const AdminNewBooking = () => {
                                             ))}
                                         </div>
                                     </Field>
-                                    <Field label="Delivery email">
-                                        <input type="email" className={inputClass} value={formData.deliveryEmail} onChange={e => setFormData({ ...formData, deliveryEmail: e.target.value })} placeholder="delivery@example.com" />
-                                    </Field>
+                                    </div>
                                     <label className="flex h-full min-h-16 items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
                                         <span className="text-sm font-semibold text-slate-950 dark:text-white">Quote first</span>
                                         <input type="checkbox" checked={formData.quoteRequested} onChange={e => setFormData({ ...formData, quoteRequested: e.target.checked })} className="h-5 w-5 rounded border-slate-300 text-blue-600" />
@@ -727,6 +780,50 @@ export const AdminNewBooking = () => {
                                         <Field label="Specify format">
                                             <input className={inputClass} value={formData.translationFormatOther} onChange={e => setFormData({ ...formData, translationFormatOther: e.target.value })} />
                                         </Field>
+                                    )}
+                                </div>
+
+                                <div className="mt-4 rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-950 dark:text-white">Source documents</p>
+                                            <p className="text-xs text-slate-500">PDF, Word, spreadsheet or image files supplied for translation.</p>
+                                        </div>
+                                        <label className={`inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${uploadingFiles ? 'pointer-events-none opacity-50' : ''}`}>
+                                            <Upload size={14} />
+                                            {uploadingFiles ? 'Uploading...' : 'Add documents'}
+                                            <input
+                                                type="file"
+                                                multiple
+                                                className="hidden"
+                                                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.rtf,image/*"
+                                                onChange={handleSourceFileUpload}
+                                                disabled={uploadingFiles}
+                                            />
+                                        </label>
+                                    </div>
+                                    {formData.sourceFiles.length > 0 ? (
+                                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                                            {formData.sourceFiles.map((file, index) => {
+                                                const name = typeof file === 'string' ? `Document ${index + 1}` : file.name || `Document ${index + 1}`;
+                                                const url = typeof file === 'string' ? file : file.url;
+                                                return (
+                                                    <div key={`${name}-${index}`} className="flex min-w-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
+                                                        <FileText size={14} className="shrink-0 text-blue-600" />
+                                                        {url ? (
+                                                            <a href={url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-xs font-semibold text-blue-600 hover:underline">{name}</a>
+                                                        ) : (
+                                                            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 dark:text-slate-200">{name}</span>
+                                                        )}
+                                                        <button type="button" onClick={() => removeSourceFile(index)} className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" aria-label={`Remove ${name}`}>
+                                                            <X size={14} />
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-300">No source documents attached.</p>
                                     )}
                                 </div>
                             </Section>
@@ -739,12 +836,18 @@ export const AdminNewBooking = () => {
                                 <ChecklistItem done={hasClient} label="Requester" value={selectedClientLabel} />
                                 <ChecklistItem done={hasContact} label="Contact" value={formData.contactEmail || formData.contactPhone || 'No contact channel'} />
                                 <ChecklistItem done={hasLanguage} label="Language" value={formData.languageTo || 'Missing target language'} />
-                                <ChecklistItem done={hasSchedule} label="Schedule" value={scheduleLabel} />
+                                <ChecklistItem done={hasSchedule} label={isTranslation ? 'Deadline' : 'Schedule'} value={scheduleLabel} />
                                 <ChecklistItem done={hasLocation} label="Location" value={locationLabel} />
                             </div>
                         </Section>
 
-                        <Section title="Interpreter assignment" icon={UserPlus}>
+                        <Section
+                            title={isTranslation ? 'Translator assignment' : 'Interpreter assignment'}
+                            icon={UserPlus}
+                            action={assignmentLocked ? (
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-300">Locked</span>
+                            ) : undefined}
+                        >
                             <div className="space-y-3">
                                 {selectedInterpreter ? (
                                     <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
@@ -753,17 +856,19 @@ export const AdminNewBooking = () => {
                                                 <p className="truncate text-sm font-semibold text-emerald-950 dark:text-emerald-100">{selectedInterpreter.name}</p>
                                                 <p className="truncate text-xs text-emerald-700 dark:text-emerald-300">{(selectedInterpreter.languages || []).slice(0, 4).join(', ')}</p>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setSelectedInterpreter(null);
-                                                    setInterpreterTouched(true);
-                                                }}
-                                                className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
-                                                aria-label="Remove interpreter"
-                                            >
-                                                <X size={16} />
-                                            </button>
+                                            {!assignmentLocked && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedInterpreter(null);
+                                                        setInterpreterTouched(true);
+                                                    }}
+                                                    className="rounded-md p-1 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
+                                                    aria-label={`Remove ${isTranslation ? 'translator' : 'interpreter'}`}
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ) : (
@@ -772,37 +877,45 @@ export const AdminNewBooking = () => {
                                     </div>
                                 )}
 
-                                <div className="relative">
-                                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input className={`${inputClass} pl-9`} value={searchingInterpreter} onChange={e => setSearchingInterpreter(e.target.value)} placeholder="Search interpreter or language" />
-                                </div>
+                                {assignmentLocked ? (
+                                    <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+                                        Assignment is locked after the claim or finance handoff. Reopen the workflow before changing the professional.
+                                    </p>
+                                ) : (
+                                    <>
+                                        <div className="relative">
+                                            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                            <input className={`${inputClass} pl-9`} value={searchingInterpreter} onChange={e => setSearchingInterpreter(e.target.value)} placeholder={`Search ${isTranslation ? 'translator' : 'interpreter'} or language`} />
+                                        </div>
 
-                                <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-md border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-                                    {filteredInterpreters.map(interpreter => {
-                                        const exactLanguage = formData.languageTo && (interpreter.languages || []).some(l => l.toLowerCase() === formData.languageTo.toLowerCase());
-                                        return (
-                                            <button
-                                                key={interpreter.id}
-                                                type="button"
-                                                onClick={() => {
-                                                    setSelectedInterpreter(interpreter);
-                                                    setInterpreterTouched(true);
-                                                    setSearchingInterpreter('');
-                                                }}
-                                                className="flex w-full items-center justify-between gap-3 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800"
-                                            >
-                                                <div className="min-w-0">
-                                                    <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{interpreter.name}</p>
-                                                    <p className="truncate text-xs text-slate-500">{(interpreter.languages || []).slice(0, 4).join(', ')}</p>
-                                                </div>
-                                                <div className="flex shrink-0 items-center gap-2">
-                                                    {exactLanguage && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">MATCH</span>}
-                                                    {interpreter.acceptsDirectAssignment ? <Zap size={14} className="text-amber-500" /> : <ChevronRight size={14} className="text-slate-300" />}
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
+                                        <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-md border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                                            {filteredInterpreters.map(interpreter => {
+                                                const exactLanguage = formData.languageTo && (interpreter.languages || []).some(l => l.toLowerCase() === formData.languageTo.toLowerCase());
+                                                return (
+                                                    <button
+                                                        key={interpreter.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSelectedInterpreter(interpreter);
+                                                            setInterpreterTouched(true);
+                                                            setSearchingInterpreter('');
+                                                        }}
+                                                        className="flex w-full items-center justify-between gap-3 bg-white px-3 py-2 text-left transition-colors hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800"
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{interpreter.name}</p>
+                                                            <p className="truncate text-xs text-slate-500">{(interpreter.languages || []).slice(0, 4).join(', ')}</p>
+                                                        </div>
+                                                        <div className="flex shrink-0 items-center gap-2">
+                                                            {exactLanguage && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">MATCH</span>}
+                                                            {interpreter.acceptsDirectAssignment ? <Zap size={14} className="text-amber-500" /> : <ChevronRight size={14} className="text-slate-300" />}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </Section>
 

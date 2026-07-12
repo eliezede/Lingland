@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { SystemService } from '../services/api';
 import { SystemSettings } from '../types';
-import { MOCK_SETTINGS } from '../services/mockData';
+import { DEFAULT_SYSTEM_SETTINGS } from '../services/systemService';
 
 interface SettingsContextType {
   settings: SystemSettings;
@@ -14,7 +14,7 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [settings, setSettings] = useState<SystemSettings>(MOCK_SETTINGS);
+  const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
   const [loading, setLoading] = useState(true);
 
   const loadSettings = async () => {

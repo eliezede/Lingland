@@ -1,9 +1,7 @@
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebaseConfig';
-import { SystemSettings } from '../types';
-import { MOCK_CLIENTS, MOCK_INTERPRETERS, MOCK_BOOKINGS, MOCK_USERS, MOCK_SETTINGS, saveMockData } from './mockData';
-import { safeFetch } from './utils';
+import { ServiceType, SystemSettings } from '../types';
 
 const DEFAULT_PLATFORM_MODE: NonNullable<SystemSettings['platformMode']> = {
   operatingMode: 'AIRTABLE_MIRROR',
@@ -17,6 +15,36 @@ const DEFAULT_PLATFORM_MODE: NonNullable<SystemSettings['platformMode']> = {
     nextSequence: 17037,
     displayIncludesLanguage: true
   }
+};
+
+export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  general: {
+    companyName: 'Lingland',
+    supportEmail: '',
+    businessAddress: '',
+    websiteUrl: 'https://lingland.co.uk',
+    portalUrl: typeof window !== 'undefined' ? window.location.origin : 'https://lingland.co.uk',
+  },
+  finance: {
+    currency: 'GBP',
+    vatRate: 0.20,
+    vatNumber: '',
+    invoicePrefix: 'INV-',
+    nextInvoiceNumber: 1,
+    paymentTermsDays: 30,
+    invoiceFooterText: '',
+  },
+  operations: {
+    minBookingDurationMinutes: 60,
+    cancellationWindowHours: 24,
+    timeIncrementMinutes: 15,
+    defaultOnlinePlatformUrl: '',
+  },
+  masterData: {
+    activeServiceTypes: [ServiceType.FACE_TO_FACE, ServiceType.VIDEO, ServiceType.TELEPHONE, ServiceType.TRANSLATION, ServiceType.BSL],
+    priorityLanguages: [],
+  },
+  platformMode: DEFAULT_PLATFORM_MODE,
 };
 
 const withSettingsDefaults = (settings: SystemSettings): SystemSettings => ({
@@ -43,26 +71,9 @@ export const SystemService = {
     }
   },
 
-  seedDatabase: async () => {
-    console.log("Starting Database Seed...");
-    try {
-      for (const client of MOCK_CLIENTS) await setDoc(doc(db, 'clients', client.id), client);
-      for (const interpreter of MOCK_INTERPRETERS) await setDoc(doc(db, 'interpreters', interpreter.id), interpreter);
-      for (const booking of MOCK_BOOKINGS) await setDoc(doc(db, 'bookings', booking.id), booking);
-      for (const user of MOCK_USERS) await setDoc(doc(db, 'users', user.id), user);
-      await setDoc(doc(db, 'system', 'settings'), MOCK_SETTINGS);
-      return true;
-    } catch (e) {
-      console.error("Seeding failed:", e);
-      throw e;
-    }
-  },
-
   getSettings: async (): Promise<SystemSettings> => {
-    return safeFetch(async () => {
-      const snap = await getDoc(doc(db, 'system', 'settings'));
-      return withSettingsDefaults(snap.exists() ? snap.data() as SystemSettings : MOCK_SETTINGS);
-    }, withSettingsDefaults(MOCK_SETTINGS));
+    const snap = await getDoc(doc(db, 'system', 'settings'));
+    return withSettingsDefaults(snap.exists() ? snap.data() as SystemSettings : DEFAULT_SYSTEM_SETTINGS);
   },
 
   getPlatformMode: async () => {
@@ -71,14 +82,6 @@ export const SystemService = {
   },
 
   updateSettings: async (settings: Partial<SystemSettings>) => {
-    try {
-      await setDoc(doc(db, 'system', 'settings'), settings, { merge: true });
-      Object.assign(MOCK_SETTINGS, settings);
-      saveMockData();
-    } catch (e) {
-      console.log("Update settings offline");
-      Object.assign(MOCK_SETTINGS, settings);
-      saveMockData();
-    }
+    await setDoc(doc(db, 'system', 'settings'), settings, { merge: true });
   }
 };

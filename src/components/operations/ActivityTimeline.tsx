@@ -21,11 +21,32 @@ export interface TimelineEvent {
     id: string;
     type: string;
     description?: string;
-    createdAt: string;
+    createdAt: unknown;
     actorUserId?: string;
     actorName?: string;
     metadata?: any;
 }
+
+const parseEventDate = (value: unknown): Date | null => {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+    if (typeof value === 'object') {
+        const timestamp = value as { toDate?: () => Date; seconds?: number; _seconds?: number };
+        if (typeof timestamp.toDate === 'function') {
+            const date = timestamp.toDate();
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+        const seconds = timestamp.seconds ?? timestamp._seconds;
+        if (typeof seconds === 'number') {
+            const date = new Date(seconds * 1000);
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+    }
+
+    const date = new Date(value as string | number);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
 
 interface ActivityTimelineProps {
     events: TimelineEvent[];
@@ -99,7 +120,9 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
             <div className="absolute left-[15px] top-2 bottom-2 w-px bg-slate-200 dark:bg-slate-800" />
 
             <div className="space-y-8">
-                {events.map((evt, idx) => (
+                {events.map((evt, idx) => {
+                    const eventDate = parseEventDate(evt.createdAt);
+                    return (
                     <div key={evt.id || idx} className="relative flex gap-4 group">
                         {/* Icon Bubble */}
                         <div className="relative z-10 w-8 h-8 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
@@ -118,12 +141,18 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                                     </p>
                                 </div>
                                 <div className="shrink-0 text-right">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                        {new Date(evt.createdAt).toLocaleDateString([], { day: '2-digit', month: 'short' })}
-                                    </p>
-                                    <p className="text-[10px] text-slate-400 font-medium">
-                                        {new Date(evt.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                    </p>
+                                    {eventDate ? (
+                                        <>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                                {eventDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                                            </p>
+                                            <p className="text-[10px] text-slate-400 font-medium">
+                                                {eventDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p className="max-w-20 text-[10px] font-medium text-slate-400">Date unavailable</p>
+                                    )}
                                 </div>
                             </div>
 
@@ -155,7 +184,8 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                             )}
                         </div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

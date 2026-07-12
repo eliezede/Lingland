@@ -1,11 +1,17 @@
 
 import { useState, useEffect } from 'react';
 import { BookingService, BillingService } from '../services/api';
-import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../types';
+import { Booking, Timesheet } from '../types';
+import {
+  buildInterpreterHistory,
+  InterpreterHistoryRecord,
+  isPendingInterpreterTimesheet,
+} from '../utils/interpreterJobLifecycle';
 
 export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [pendingSubmission, setPendingSubmission] = useState<Booking[]>([]);
   const [submittedHistory, setSubmittedHistory] = useState<Timesheet[]>([]);
+  const [jobHistory, setJobHistory] = useState<InterpreterHistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,19 +27,14 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
         BillingService.getInterpreterTimesheets(interpreterId)
       ]);
 
-      // Find completed jobs without timesheets
-      // In real app: check if booking status is COMPLETED and no timesheet exists
-      const pending = schedule.filter(b => {
-        const hasTimesheet = timesheets.some(t => t.bookingId === b.id);
-        const scheduledEnd = new Date(`${b.date}T${b.endTime || b.expectedEndTime || b.startTime || '23:59'}`);
-        const isCompleted = b.serviceCategory === ServiceCategory.TRANSLATION
-          ? new Date(`${b.date}T23:59:00`) <= new Date()
-          : scheduledEnd <= new Date();
-        return b.status === BookingStatus.BOOKED && isCompleted && !hasTimesheet;
-      });
+      const timesheetBookingIds = new Set(timesheets.map(timesheet => timesheet.bookingId));
+      const pending = schedule.filter(booking => (
+        isPendingInterpreterTimesheet(booking, timesheetBookingIds)
+      ));
 
       setPendingSubmission(pending);
       setSubmittedHistory(timesheets.sort((a,b) => (b.submittedAt ? new Date(b.submittedAt).getTime() : 0) - (a.submittedAt ? new Date(a.submittedAt).getTime() : 0)));
+      setJobHistory(buildInterpreterHistory(schedule, timesheets));
     } catch (e) {
       console.error(e);
     } finally {
@@ -47,5 +48,5 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
     await loadData();
   };
 
-  return { pendingSubmission, submittedHistory, loading, submitTimesheet, refresh: loadData };
+  return { pendingSubmission, submittedHistory, jobHistory, loading, submitTimesheet, refresh: loadData };
 };

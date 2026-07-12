@@ -159,6 +159,41 @@ export type AirtableMirrorAudit = {
   platformOnly: AirtableMirrorAuditRow[];
 };
 
+export type FinancialReconciliationIssue = {
+  id: string;
+  invoiceType: 'CLIENT' | 'INTERPRETER';
+  invoiceId: string;
+  reference: string;
+  partyName: string;
+  sourceTable: string;
+  sourceRecordId: string;
+  serviceCategory: string;
+  reason: string;
+  severity: 'MEDIUM' | 'HIGH';
+  recommendedAction: string;
+  totalAmount: number;
+  lineTotal: number;
+  lineCount: number;
+  declaredLineCount?: number;
+  platformStatus: string;
+  expectedStatus?: string;
+};
+
+export type FinancialReconciliationAudit = {
+  success: boolean;
+  generatedAt: string;
+  totalInvoices: number;
+  clientInvoices: number;
+  interpreterInvoices: number;
+  healthyInvoices: number;
+  affectedInvoices: number;
+  issueCount: number;
+  byReason: Record<string, number>;
+  bySeverity: Record<string, number>;
+  issues: FinancialReconciliationIssue[];
+  issuesTruncated: boolean;
+};
+
 export const AIRTABLE_SYNC_MODULES: Array<{
   id: AirtableSyncModule;
   label: string;
@@ -258,6 +293,12 @@ export const AirtableSyncService = {
     return response.data as AirtableSyncAuditTrail;
   },
 
+  getFinancialReconciliationAudit: async (): Promise<FinancialReconciliationAudit> => {
+    const auditFn = httpsCallable(functions, 'getFinancialReconciliationAudit');
+    const response = await auditFn();
+    return response.data as FinancialReconciliationAudit;
+  },
+
   getDependencyCounts: async (): Promise<AirtableDependencyCounts> => {
     const [clients, redbook, translations] = await Promise.all([
       getCountFromServer(query(
@@ -321,6 +362,29 @@ export const AirtableSyncService = {
     return [
       headers.join(','),
       ...conflicts.map(conflict => headers.map(header => escapeCell((conflict as any)[header])).join(','))
+    ].join('\n');
+  },
+
+  exportFinancialAuditCsv: (issues: FinancialReconciliationIssue[]): string => {
+    const headers: Array<keyof FinancialReconciliationIssue> = [
+      'severity',
+      'invoiceType',
+      'reference',
+      'partyName',
+      'sourceTable',
+      'sourceRecordId',
+      'reason',
+      'platformStatus',
+      'expectedStatus',
+      'totalAmount',
+      'lineTotal',
+      'lineCount',
+      'recommendedAction'
+    ];
+    const escapeCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    return [
+      headers.join(','),
+      ...issues.map(issue => headers.map(header => escapeCell(issue[header])).join(','))
     ].join('\n');
   }
 };

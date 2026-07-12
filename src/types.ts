@@ -231,6 +231,10 @@ export interface Booking extends SourceTrackingFields {
   currency?: string;
   priority?: 'High' | 'Normal' | 'Low';
   totalAmount?: number;
+  vatAmount?: number;
+  clientInvoiceSubtotal?: number;
+  clientInvoiceVatAmount?: number;
+  clientInvoiceTotal?: number;
   timesheetId?: string | null;
   timesheetStatus?: Timesheet['status'] | string;
   timesheetSubmittedAt?: string;
@@ -239,9 +243,16 @@ export interface Booking extends SourceTrackingFields {
   clientInvoiceId?: string | null;
   clientInvoiceNumber?: string;
   clientInvoiceReference?: string;
+  clientInvoiceStatus?: string;
   interpreterInvoiceId?: string | null;
   interpreterInvoiceNumber?: string;
   interpreterInvoiceReference?: string;
+  interpreterInvoiceStatus?: string;
+  interpreterPaymentStatus?: string;
+  interpreterInvoiceTotal?: number;
+  interpreterAmountCalculated?: number;
+  professionalCost?: number;
+  interpreterPaidAt?: string;
   paymentStatus?: 'NOT_READY' | 'READY_FOR_INVOICE' | 'INVOICED' | 'PAID' | 'ISSUE';
   invoicedAt?: string;
   paidAt?: string;
@@ -547,6 +558,12 @@ export interface ClientInvoice extends TenantScopedEntity, SourceTrackingFields 
   totalAmount: number;
   currency: string;
   items: ClientInvoiceItem[];
+  lineCount?: number;
+  linkedRedbookRecordIds?: string[];
+  linkedTranslationRecordIds?: string[];
+  financialIntegrityStatus?: 'VERIFIED' | 'AMOUNT_MISSING' | 'LINK_MISSING' | 'REVIEW_REQUIRED';
+  amountSourceField?: string;
+  referenceIntegrityStatus?: 'VERIFIED' | 'MISSING';
 }
 
 export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFields {
@@ -561,6 +578,12 @@ export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFi
   currency: string;
   uploadedPdfUrl?: string;
   interpreterPhotoUrl?: string;
+  lineCount?: number;
+  linkedRedbookRecordIds?: string[];
+  linkedTranslationRecordIds?: string[];
+  financialIntegrityStatus?: 'VERIFIED' | 'AMOUNT_MISSING' | 'LINK_MISSING' | 'REVIEW_REQUIRED';
+  amountSourceField?: string;
+  referenceIntegrityStatus?: 'VERIFIED' | 'MISSING';
 }
 
 export interface Rate {
@@ -700,7 +723,7 @@ export interface ViewFilter {
 }
 
 export type SortableField = 'date' | 'status' | 'client' | 'interpreter' | 'languageTo' | 'duration' | 'amount' | 'serviceCategory';
-export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'interpreterId' | 'date' | 'clientName' | 'costCode' | 'totalAmount';
+export type FilterableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'interpreterId' | 'date' | 'clientName' | 'costCode' | 'totalAmount' | 'financeException';
 export type GroupableField = 'status' | 'languageTo' | 'serviceType' | 'serviceCategory' | 'locationType' | 'date' | 'client' | 'interpreter';
 export type BookingWorkspace = 'operations' | 'finance';
 
@@ -748,6 +771,7 @@ export interface BookingView {
   workspace?: BookingWorkspace;
   viewScope?: BookingViewScope;
   ownerId?: string;
+  definitionVersion?: number;
   // Legacy (kept for backward compat)
   filters: ViewFilter;
   sortBy: 'dateAsc' | 'dateDesc' | 'status' | 'client';

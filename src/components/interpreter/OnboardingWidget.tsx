@@ -17,6 +17,7 @@ import { Badge, BadgeVariant } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { Spinner } from '../ui/Spinner';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface OnboardingWidgetProps {
   interpreter: Interpreter;
@@ -25,6 +26,7 @@ interface OnboardingWidgetProps {
 
 export const OnboardingWidget: React.FC<OnboardingWidgetProps> = ({ interpreter, onUpdate }) => {
   const { showToast } = useToast();
+  const { user } = useAuth();
   const [uploading, setUploading] = useState<string | null>(null);
 
   const onboarding = interpreter.onboarding || {
@@ -127,9 +129,13 @@ export const OnboardingWidget: React.FC<OnboardingWidgetProps> = ({ interpreter,
   };
 
   const handleFileUpload = async (stepId: string, file: File) => {
+    if (!user?.id) {
+      showToast('Your authenticated session is required to upload documents.', 'error');
+      return;
+    }
     setUploading(stepId);
     try {
-      const path = `interpreters/${interpreter.id}/onboarding/${stepId}_${Date.now()}_${file.name}`;
+      const path = `onboarding/${user.id}/${stepId}_${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
 
       const updatedOnboarding = { ...onboarding };

@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.onTimesheetSubmit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const timesheetSubmissionPolicy_1 = require("./timesheetSubmissionPolicy");
 const db = admin.firestore();
 /**
  * Cloud Function: onTimesheetSubmit
@@ -54,13 +55,17 @@ exports.onTimesheetSubmit = functions.firestore
         return null;
     const timesheetId = context.params.timesheetId;
     console.log(`[onTimesheetSubmit] New timesheet: ${timesheetId} for booking ${ts.bookingId}`);
+    if (!(0, timesheetSubmissionPolicy_1.shouldCreateTimesheetSubmissionCommunications)(ts)) {
+        console.log(`[onTimesheetSubmit] Mirror artifact ${timesheetId} retained without lifecycle or communication side effects.`);
+        return null;
+    }
     try {
         const batch = db.batch();
         // 1. Ensure booking status is TIMESHEET_SUBMITTED
         if (ts.bookingId) {
             const bookingRef = db.collection('bookings').doc(ts.bookingId);
             const bookingSnap = await bookingRef.get();
-            if (bookingSnap.exists) {
+            if (bookingSnap.exists && (0, timesheetSubmissionPolicy_1.shouldAdvanceBookingForTimesheet)(ts, bookingSnap.data()?.status)) {
                 batch.update(bookingRef, {
                     status: 'TIMESHEET_SUBMITTED',
                     updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -111,6 +116,7 @@ If you have any questions, please contact us directly.<br><br>
 Kind regards,<br>The Lingland Finance Team`
                 },
                 timesheetId,
+                recipientType: 'INTERPRETER',
                 source: 'timesheet_submit',
                 createdAt: new Date().toISOString()
             });

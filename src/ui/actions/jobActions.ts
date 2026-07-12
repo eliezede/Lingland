@@ -1,6 +1,5 @@
-import { assignInterpreter as domainAssignInterpreter, AssignInterpreterDependencies } from '../../domains/jobs/useCases/assignInterpreter';
-import { unassignInterpreter as domainUnassignInterpreter } from '../../domains/jobs/useCases/unassignInterpreter';
 import { ActionDependencies } from './dependencies';
+import { BookingService } from '../../services/bookingService';
 
 /**
  * UI Action to assign an interpreter to a job.
@@ -12,7 +11,7 @@ export const assignInterpreterAction = async (
     deps: ActionDependencies
 ): Promise<void> => {
     try {
-        await domainAssignInterpreter(jobId, interpreterId, deps as AssignInterpreterDependencies);
+        await BookingService.assignInterpreterToBooking(jobId, interpreterId);
     } catch (error) {
         console.error('Action: assignInterpreter failed', error);
         throw error;
@@ -27,7 +26,7 @@ export const unassignInterpreterAction = async (
     _deps: ActionDependencies
 ): Promise<void> => {
     try {
-        await domainUnassignInterpreter(jobId);
+        await BookingService.unassignInterpreterFromBooking(jobId);
     } catch (error) {
         console.error('Action: unassignInterpreter failed', error);
         throw error;

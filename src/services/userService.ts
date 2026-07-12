@@ -1,101 +1,48 @@
-import { collection, doc, getDoc, getDocs, updateDoc, deleteDoc, setDoc, addDoc, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, updateDoc, setDoc, addDoc, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 import { User, Interpreter, StaffProfile, Client } from '../types';
 import { StorageService } from './storageService';
-import { MOCK_USERS, saveMockData } from './mockData';
-import { convertDoc, safeFetch } from './utils';
+import { convertDoc } from './utils';
 import { SystemService } from './systemService';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from './firebaseConfig';
 
 export const UserService = {
   getUserById: async (id: string): Promise<User | undefined> => {
-    try {
-      const docRef = doc(db, 'users', id);
-      const snap = await getDoc(docRef);
-      return snap.exists() ? convertDoc<User>(snap) : MOCK_USERS.find(u => u.id === id);
-    } catch (e) {
-      return MOCK_USERS.find(u => u.id === id);
-    }
+    const docRef = doc(db, 'users', id);
+    const snap = await getDoc(docRef);
+    return snap.exists() ? convertDoc<User>(snap) : undefined;
   },
 
   getAll: async (): Promise<User[]> => {
-    return safeFetch(async () => {
-      const snap = await getDocs(collection(db, 'users'));
-      return snap.docs.map(d => convertDoc<User>(d));
-    }, MOCK_USERS);
+    const snap = await getDocs(collection(db, 'users'));
+    return snap.docs.map(d => convertDoc<User>(d));
   },
 
   getByEmail: async (email: string): Promise<User | undefined> => {
     const cleanEmail = email.trim().toLowerCase();
-    try {
-      const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
-      const snap = await getDocs(q);
-      if (!snap.empty) return convertDoc<User>(snap.docs[0]);
-    } catch (e) {
-      // fall through to mock data
-    }
-    return MOCK_USERS.find(u => u.email.toLowerCase() === cleanEmail);
+    const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
+    const snap = await getDocs(q);
+    return snap.empty ? undefined : convertDoc<User>(snap.docs[0]);
   },
 
   update: async (id: string, data: Partial<User>) => {
-    try {
-      await updateDoc(doc(db, 'users', id), data);
-    } catch (e) { 
-      const idx = MOCK_USERS.findIndex(u => u.id === id);
-      if (idx !== -1) {
-        MOCK_USERS[idx] = { ...MOCK_USERS[idx], ...data } as User;
-        saveMockData();
-      }
-    }
+    await updateDoc(doc(db, 'users', id), data);
   },
 
   delete: async (id: string) => {
-    // 1. Sync Mock Data first to ensure consistent state
-    const idx = MOCK_USERS.findIndex(u => u.id === id);
-    if (idx !== -1) {
-      MOCK_USERS.splice(idx, 1);
-      saveMockData();
-    }
-
-    try {
-      await deleteDoc(doc(db, 'users', id));
-    } catch (e) {
-      console.warn('Firebase user deletion failed', e);
-    }
+    await httpsCallable(functions, 'deletePlatformEntity')({ entityType: 'USER', id });
   },
 
   rigorousDelete: async (user: User) => {
-    // Determine and cleanup associated profile based on role
-    try {
-      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
-        const { StaffService } = await import('./staffService');
-        await StaffService.deleteProfileByUserId(user.id);
-      } else if (user.role === 'INTERPRETER') {
-        const { InterpreterService } = await import('./interpreterService');
-        if (user.profileId) await InterpreterService.delete(user.profileId);
-      } else if (user.role === 'CLIENT') {
-        const { ClientService } = await import('./clientService');
-        if (user.profileId) await ClientService.delete(user.profileId);
-      }
-    } catch (e) {
-      console.warn('Error during rigorous profile cleanup:', e);
-    }
-
-    // Finally delete the main user record
-    await UserService.delete(user.id);
+    await httpsCallable(functions, 'deletePlatformEntity')({ entityType: 'USER', id: user.id });
   },
 
   create: async (data: Omit<User, 'id'>) => {
-    try {
-      const newDocRef = doc(collection(db, 'users'));
-      const userData = { ...data, status: data.status || 'ACTIVE' };
-      await setDoc(newDocRef, userData);
-      return { id: newDocRef.id, ...userData };
-    } catch (e) { 
-      const mockUser = { id: `mock-u-${Date.now()}`, ...data, status: data.status || 'ACTIVE' } as User;
-      MOCK_USERS.push(mockUser);
-      saveMockData();
-      return mockUser;
-    }
+    const newDocRef = doc(collection(db, 'users'));
+    const userData = { ...data, status: data.status || 'ACTIVE' };
+    await setDoc(newDocRef, userData);
+    return { id: newDocRef.id, ...userData };
   },
 
   sendActivationInvite: async (email: string, displayName: string) => {

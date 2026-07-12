@@ -1,8 +1,7 @@
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
-import { Booking, Interpreter } from '../../types';
+import { Booking, Interpreter, ServiceCategory } from '../../types';
 import { Job } from '../jobs/types';
-import { MOCK_INTERPRETERS } from '../../services/mockData';
 
 export interface InterpreterMatchResult {
     interpreter: Interpreter;
@@ -24,7 +23,10 @@ const getLanguagePriority = (interpreter: Interpreter, languageTo?: string): num
     return legacyMatch ? 18 : null;
 };
 
-export const rankInterpreterForBooking = (interpreter: Interpreter, job: Pick<Booking | Job, 'languageTo' | 'date' | 'postcode' | 'locationType'>): InterpreterMatchResult => {
+type MatchableJob = Pick<Booking | Job, 'languageTo' | 'date' | 'postcode' | 'locationType'>
+    & Partial<Pick<Booking, 'serviceCategory'>>;
+
+export const rankInterpreterForBooking = (interpreter: Interpreter, job: MatchableJob): InterpreterMatchResult => {
     let score = 0;
     const reasons: string[] = [];
     const warnings: string[] = [];
@@ -37,15 +39,27 @@ export const rankInterpreterForBooking = (interpreter: Interpreter, job: Pick<Bo
     score += Math.max(35, 65 - Math.min(priority, 18) * 2);
     reasons.push(priority <= 1 ? `${job.languageTo} priority language` : `${job.languageTo} configured`);
 
-    if (interpreter.status !== 'ACTIVE') {
+    const isPassiveImportedProfile = interpreter.status === 'IMPORTED';
+    const isTranslationOnly = interpreter.status === 'ONLY_TRANSL';
+    if (isTranslationOnly && job.serviceCategory !== ServiceCategory.TRANSLATION) {
+        return { interpreter, score: 0, reasons, warnings: ['Translation-only professional'] };
+    }
+    if (interpreter.status !== 'ACTIVE' && !isPassiveImportedProfile && !isTranslationOnly) {
         return { interpreter, score: 0, reasons, warnings: [`Interpreter status is ${interpreter.status}`] };
     }
-    reasons.push('Active interpreter');
+    reasons.push(isPassiveImportedProfile
+        ? 'Staff-managed active profile'
+        : isTranslationOnly ? 'Active translation professional' : 'Active interpreter');
 
-    if (!interpreter.isAvailable) {
+    if (!interpreter.isAvailable && !isPassiveImportedProfile) {
         return { interpreter, score: 0, reasons, warnings: ['Marked unavailable'] };
     }
-    reasons.push('Available');
+    if (isPassiveImportedProfile && !interpreter.isAvailable) {
+        warnings.push('Availability requires staff confirmation');
+        warnings.push('Portal account not activated');
+    } else {
+        reasons.push('Available');
+    }
 
     const dbsExpiry = interpreter.dbs?.renewDate || interpreter.dbsExpiry;
     if (dbsExpiry) {
@@ -107,14 +121,9 @@ export const calculateInterpreterScore = (interpreter: Interpreter, job: Job): n
 };
 
 export const findBestInterpreters = async (job: Job, limitCount: number = 5): Promise<Interpreter[]> => {
-    let allInterpreters: Interpreter[] = [];
-    try {
-        const q = query(collection(db, 'interpreters'), where('status', '==', 'ACTIVE'));
-        const snap = await getDocs(q);
-        allInterpreters = snap.docs.map(d => ({ id: d.id, ...d.data() } as Interpreter));
-    } catch (error) {
-        allInterpreters = MOCK_INTERPRETERS.filter(i => i.status === 'ACTIVE');
-    }
+    const q = query(collection(db, 'interpreters'), where('status', 'in', ['ACTIVE', 'IMPORTED', 'ONLY_TRANSL']));
+    const snap = await getDocs(q);
+    const allInterpreters = snap.docs.map(d => ({ id: d.id, ...d.data() } as Interpreter));
 
     const scored = allInterpreters
         .map(interpreter => rankInterpreterForBooking(interpreter, job))

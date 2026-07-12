@@ -185,7 +185,7 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
 
     setIsUploading(true);
     try {
-      const path = `chats/${activeThreadId}/${Date.now()}_${file.name}`;
+      const path = `chat/${activeThreadId}/${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
       await ChatService.sendMessage(
         activeThreadId,
@@ -203,9 +203,7 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
 
   const startSupportChat = async () => {
     if (!user) return;
-    const adminUser = await ChatService.getAdminSupportUser();
-    if (!adminUser) return;
-    const threadId = await ChatService.getOrCreateDirectThreadWithUser(user, adminUser, { name: 'Operations support' });
+    const threadId = await ChatService.getOrCreateSupportThread();
     selectThread(threadId);
   };
 

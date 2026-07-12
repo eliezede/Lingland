@@ -3,7 +3,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useBookingViews } from '../../hooks/useBookingViews';
 import { BookingStatus, BookingWorkspace, FilterableField, SortableField, GroupableField, ViewFilterRule, ViewSortRule, ServiceType, Interpreter, BookingView } from '../../types';
-import { Trash2, Save, Plus, X, Filter, ArrowUpDown, Layers, Columns3, Pin, EyeOff, RotateCcw } from 'lucide-react';
+import { Copy, Trash2, Save, Plus, X, Filter, ArrowUpDown, Layers, Columns3, Pin, EyeOff, RotateCcw } from 'lucide-react';
 import { InterpreterService } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -20,6 +20,7 @@ const FILTERABLE_FIELDS: { value: FilterableField; label: string }[] = [
     { value: 'clientName', label: 'Client' },
     { value: 'costCode', label: 'PO / Cost Code' },
     { value: 'totalAmount', label: 'Client Charge' },
+    { value: 'financeException', label: 'Finance Exception' },
     { value: 'languageTo', label: 'To Language' },
     { value: 'serviceType', label: 'Service Type' },
     { value: 'locationType', label: 'Location Type' },
@@ -59,6 +60,7 @@ const GRID_FIELD_LABELS: Record<string, string> = {
     duration: 'Duration',
     contact: 'Contact',
     amount: 'Client Charge',
+    vat: 'VAT',
     professionalCost: 'Professional Cost',
     margin: 'Margin',
     costCode: 'Cost Code',
@@ -194,6 +196,19 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
         showToast('View layout reset', 'success');
     };
 
+    const duplicateView = () => {
+        if (!currentView) return;
+        const { id: _id, isSystem: _isSystem, ...viewData } = currentView;
+        saveCustomView({
+            ...viewData,
+            name: `${currentView.name} copy`,
+            isFavorite: false,
+            viewScope: 'PERSONAL',
+        });
+        showToast('View duplicated', 'success');
+        onClose();
+    };
+
     return (
         <Modal
             isOpen={isOpen}
@@ -227,7 +242,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
 
                     <div className="space-y-3">
                         {filterRules.map(rule => (
-                            <div key={rule.id} className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                            <div key={rule.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50 sm:flex-nowrap">
                                 <select
                                     value={rule.field}
                                     onChange={(e) => updateFilterRule(rule.id, { field: e.target.value as FilterableField })}
@@ -253,7 +268,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                                     <select
                                         value={rule.value}
                                         onChange={(e) => updateFilterRule(rule.id, { value: e.target.value })}
-                                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold"
+                                        className="order-2 w-full basis-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-800 dark:bg-slate-900 sm:order-none sm:w-auto sm:basis-auto sm:flex-1"
                                     >
                                         <option value="">Select Status</option>
                                         {Object.values(BookingStatus).map(s => <option key={s} value={s}>{s}</option>)}
@@ -262,7 +277,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                                     <select
                                         value={rule.value}
                                         onChange={(e) => updateFilterRule(rule.id, { value: e.target.value })}
-                                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold"
+                                        className="order-2 w-full basis-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-800 dark:bg-slate-900 sm:order-none sm:w-auto sm:basis-auto sm:flex-1"
                                     >
                                         <option value="">Select Service</option>
                                         {Object.values(ServiceType).map(s => <option key={s} value={s}>{s}</option>)}
@@ -271,7 +286,7 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                                     <select
                                         value={rule.value}
                                         onChange={(e) => updateFilterRule(rule.id, { value: e.target.value })}
-                                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold"
+                                        className="order-2 w-full basis-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-800 dark:bg-slate-900 sm:order-none sm:w-auto sm:basis-auto sm:flex-1"
                                     >
                                         <option value="">Select Location Type</option>
                                         <option value="ONSITE">On-Site</option>
@@ -289,14 +304,14 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                                                 updateFilterRule(rule.id, { value: matched ? matched.id : val });
                                             }}
                                             placeholder="Search interpreter..."
-                                            className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold"
+                                            className="order-2 w-full basis-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-800 dark:bg-slate-900 sm:order-none sm:w-auto sm:basis-auto sm:flex-1"
                                         />
                                         <datalist id={`interpreters-${rule.id}`}>
                                             {interpreters.map(i => <option key={i.id} value={i.name} />)}
                                         </datalist>
                                     </>
                                 ) : rule.field === 'date' ? (
-                                    <div className="flex-1 flex gap-1 items-center">
+                                    <div className="order-2 flex w-full basis-full items-center gap-1 sm:order-none sm:w-auto sm:basis-auto sm:flex-1">
                                         <input
                                             type="date"
                                             value={rule.value.split(',')[0] || ''}
@@ -328,11 +343,11 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                                         type="text"
                                         value={rule.value}
                                         onChange={(e) => updateFilterRule(rule.id, { value: e.target.value })}
-                                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold"
+                                        className="order-2 w-full basis-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-800 dark:bg-slate-900 sm:order-none sm:w-auto sm:basis-auto sm:flex-1"
                                     />
                                 )}
 
-                                <button onClick={() => removeFilterRule(rule.id)} className="text-slate-400 hover:text-red-500 p-1">
+                                <button onClick={() => removeFilterRule(rule.id)} className="order-1 p-1 text-slate-400 hover:text-red-500 sm:order-none" aria-label="Remove filter rule">
                                     <X size={14} />
                                 </button>
                             </div>
@@ -435,12 +450,17 @@ export const ViewManagerDrawer: React.FC<ViewManagerDrawerProps> = ({
                     </section>
                 )}
 
-                <div className="pt-8 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                    {viewId && !isSystem ? (
-                        <Button variant="outline" className="text-red-600 border-red-100 hover:bg-red-50" onClick={() => { deleteCustomView(viewId); onClose(); }} icon={Trash2}>Delete View</Button>
-                    ) : <div />}
+                <div className="flex flex-col gap-3 border-t border-slate-100 pt-8 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap gap-2">
+                        {viewId && (
+                            <Button variant="outline" onClick={duplicateView} icon={Copy}>Duplicate View</Button>
+                        )}
+                        {viewId && !isSystem && (
+                            <Button variant="outline" className="border-red-100 text-red-600 hover:bg-red-50" onClick={() => { deleteCustomView(viewId); onClose(); }} icon={Trash2}>Delete View</Button>
+                        )}
+                    </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 sm:justify-end">
                         <Button variant="outline" onClick={onClose}>Cancel</Button>
                         <Button onClick={handleSave} icon={Save}>Save View</Button>
                     </div>

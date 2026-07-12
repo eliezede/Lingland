@@ -23,6 +23,7 @@ import { BillingService } from '../../../services/api';
 import { useToast } from '../../../context/ToastContext';
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { formatLanguagePair } from '../../../utils/languageDisplay';
+import { WorkspacePagination } from '../../../components/operations/WorkspacePagination';
 
 type ClaimStage = 'NEEDS_CLAIM' | 'SUBMITTED' | 'APPROVED' | 'CLIENT_INVOICED' | 'PAID' | 'ISSUE';
 
@@ -32,6 +33,7 @@ type ClaimRow = {
   job: Booking;
   timesheet?: Timesheet;
   source: 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'MISSING';
+  duplicateTimesheetCount?: number;
 };
 
 const money = (amount?: number) =>
@@ -80,6 +82,21 @@ const getTimesheetStage = (timesheet: Timesheet, job?: Booking): ClaimStage => {
   return 'SUBMITTED';
 };
 
+const CLAIM_EXPECTED_STATUSES = new Set<BookingStatus>([
+  BookingStatus.SESSION_COMPLETED,
+  BookingStatus.TIMESHEET_SUBMITTED,
+  BookingStatus.TIMESHEET_VERIFIED,
+  BookingStatus.READY_FOR_INVOICE,
+  BookingStatus.INVOICING,
+  BookingStatus.INVOICED,
+  BookingStatus.PAID,
+]);
+
+const getMissingClaimStage = (job: Booking): ClaimStage =>
+  [BookingStatus.SESSION_COMPLETED, BookingStatus.TIMESHEET_SUBMITTED].includes(job.status)
+    ? 'NEEDS_CLAIM'
+    : 'ISSUE';
+
 export const TimesheetQueue = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -89,11 +106,14 @@ export const TimesheetQueue = () => {
   const [timesheets, setTimesheets] = useState<Timesheet[]>([]);
   const [loadingTimesheets, setLoadingTimesheets] = useState(true);
   const [selectedRow, setSelectedRow] = useState<ClaimRow | null>(null);
+  const [approvalOverrides, setApprovalOverrides] = useState({ clientAmount: '', interpreterAmount: '' });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkLoading, setIsBulkLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<'ALL' | ClaimStage>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | ClaimRow['source']>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const scopedJobId = searchParams.get('jobId') || '';
   const scopedInterpreterId = searchParams.get('interpreterId') || '';
   const routeState = location.state as { returnTo?: string; returnLabel?: string } | null;
@@ -116,27 +136,49 @@ export const TimesheetQueue = () => {
 
   const rows = useMemo<ClaimRow[]>(() => {
     const bookingById = new Map(bookings.map(job => [job.id, job]));
-    const timesheetRows = timesheets.map(timesheet => {
-      const job = bookingById.get(timesheet.bookingId);
+    const timesheetsByBooking = new Map<string, Timesheet[]>();
+    timesheets.forEach(timesheet => {
+      const group = timesheetsByBooking.get(timesheet.bookingId) || [];
+      group.push(timesheet);
+      timesheetsByBooking.set(timesheet.bookingId, group);
+    });
+
+    const getTimesheetPriority = (timesheet: Timesheet) => {
+      const statusRank = { SUBMITTED: 1, APPROVED: 2, INVOICING: 3, INVOICED: 4 }[String(timesheet.status)] || 0;
+      return statusRank
+        + (timesheet.adminApproved ? 5 : 0)
+        + (timesheet.interpreterInvoiceId ? 10 : 0)
+        + (timesheet.clientInvoiceId ? 20 : 0);
+    };
+
+    const timesheetRows = Array.from(timesheetsByBooking.entries()).map(([bookingId, bookingTimesheets]) => {
+      const job = bookingById.get(bookingId);
       if (!job) return null;
+      const orderedTimesheets = [...bookingTimesheets].sort((a, b) => {
+        const priorityDifference = getTimesheetPriority(b) - getTimesheetPriority(a);
+        if (priorityDifference !== 0) return priorityDifference;
+        return new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime();
+      });
+      const timesheet = orderedTimesheets[0];
       const source = String(timesheet.source || '').toUpperCase();
       const manual = Boolean(timesheet.recordedByStaff || source === 'STAFF_MANUAL' || source === 'MANUAL_STAFF');
       const mirrored = source === 'AIRTABLE_MIRROR' || job.sourceSystem === 'AIRTABLE' || Boolean(job.legacyAirtableRef);
       return {
         id: timesheet.id,
-        stage: getTimesheetStage(timesheet, job),
+        stage: bookingTimesheets.length > 1 ? 'ISSUE' : getTimesheetStage(timesheet, job),
         job,
         timesheet,
         source: manual ? 'STAFF_MANUAL' : mirrored ? 'AIRTABLE_MIRROR' : 'INTERPRETER_APP',
+        duplicateTimesheetCount: bookingTimesheets.length > 1 ? bookingTimesheets.length : undefined,
       } as ClaimRow;
     }).filter(Boolean) as ClaimRow[];
 
-    const bookingsWithTimesheet = new Set(timesheets.map(ts => ts.bookingId));
+    const bookingsWithTimesheet = new Set(timesheetsByBooking.keys());
     const missingClaimRows: ClaimRow[] = bookings
-      .filter(job => job.status === BookingStatus.SESSION_COMPLETED && !bookingsWithTimesheet.has(job.id))
+      .filter(job => CLAIM_EXPECTED_STATUSES.has(job.status) && !bookingsWithTimesheet.has(job.id))
       .map(job => ({
         id: `missing-${job.id}`,
-        stage: 'NEEDS_CLAIM' as ClaimStage,
+        stage: getMissingClaimStage(job),
         job,
         source: 'MISSING' as const,
       }));
@@ -172,6 +214,16 @@ export const TimesheetQueue = () => {
       ].filter(Boolean).some(value => String(value).toLowerCase().includes(needle));
     });
   }, [query, rows, sourceFilter, stageFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, scopedInterpreterId, scopedJobId, sourceFilter, stageFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
+  const pageEndIndex = Math.min(pageStartIndex + pageSize, filteredRows.length);
+  const paginatedRows = filteredRows.slice(pageStartIndex, pageEndIndex);
 
   const selectedActionableIds = useMemo(
     () => selectedIds.filter(id => {
@@ -211,10 +263,20 @@ export const TimesheetQueue = () => {
     }
   };
 
-  const handleVerify = async (row: ClaimRow) => {
+  const openClaim = (row: ClaimRow) => {
+    setApprovalOverrides({ clientAmount: '', interpreterAmount: '' });
+    setSelectedRow(row);
+  };
+
+  const handleVerify = async (row: ClaimRow, useOverrides = false) => {
     if (!row.timesheet) return;
     try {
-      await BillingService.approveTimesheet(row.timesheet.id);
+      const clientAmount = Number(approvalOverrides.clientAmount);
+      const interpreterAmount = Number(approvalOverrides.interpreterAmount);
+      await BillingService.approveTimesheet(row.timesheet.id, useOverrides ? {
+        ...(clientAmount > 0 ? { clientAmount } : {}),
+        ...(interpreterAmount > 0 ? { interpreterAmount } : {}),
+      } : undefined);
       showToast('Claim authorized for billing', 'success');
       setSelectedRow(current => current?.id === row.id ? null : current);
       await refreshAll();
@@ -226,7 +288,7 @@ export const TimesheetQueue = () => {
   const handleBulkVerify = async (ids: string[]) => {
     setIsBulkLoading(true);
     let done = 0;
-    await Promise.allSettled(ids.map(async id => {
+    const results = await Promise.allSettled(ids.map(async id => {
       const row = rows.find(item => item.id === id);
       if (!row?.timesheet || row.stage !== 'SUBMITTED') return;
       await BillingService.approveTimesheet(row.timesheet.id);
@@ -235,7 +297,13 @@ export const TimesheetQueue = () => {
     setIsBulkLoading(false);
     setSelectedIds([]);
     await refreshAll();
-    showToast(`${done} claim${done !== 1 ? 's' : ''} authorized for billing`, 'success');
+    const failed = results.filter(result => result.status === 'rejected').length;
+    showToast(
+      failed
+        ? `${done} authorized; ${failed} require rate or amount review`
+        : `${done} claim${done !== 1 ? 's' : ''} authorized for billing`,
+      failed ? 'info' : 'success'
+    );
   };
 
   const isLoading = bookingsLoading || loadingTimesheets;
@@ -340,11 +408,17 @@ export const TimesheetQueue = () => {
               <tr className="border-b border-slate-200 dark:border-slate-800">
                 <th className="w-12 px-4 py-3">
                   <button
-                    onClick={() => setSelectedIds(selectedIds.length === filteredRows.length ? [] : filteredRows.map(row => row.id))}
-                    className={`h-5 w-5 rounded border ${selectedIds.length === filteredRows.length && filteredRows.length ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900'}`}
+                    onClick={() => {
+                      const visibleIds = paginatedRows.map(row => row.id);
+                      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
+                      setSelectedIds(current => allVisibleSelected
+                        ? current.filter(id => !visibleIds.includes(id))
+                        : Array.from(new Set([...current, ...visibleIds])));
+                    }}
+                    className={`h-5 w-5 rounded border ${paginatedRows.length > 0 && paginatedRows.every(row => selectedIds.includes(row.id)) ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900'}`}
                     aria-label="Select all visible claims"
                   >
-                    {selectedIds.length === filteredRows.length && filteredRows.length ? <CheckCircle2 size={13} className="m-auto text-white" /> : null}
+                    {paginatedRows.length > 0 && paginatedRows.every(row => selectedIds.includes(row.id)) ? <CheckCircle2 size={13} className="m-auto text-white" /> : null}
                   </button>
                 </th>
                 {['Job', 'Stage', 'Schedule', 'Interpreter', 'Client billing', 'Interpreter pay', 'Source', 'Action'].map(header => (
@@ -367,7 +441,7 @@ export const TimesheetQueue = () => {
                     No claims match this view.
                   </td>
                 </tr>
-              ) : filteredRows.map(row => {
+              ) : paginatedRows.map(row => {
                 const selected = selectedIds.includes(row.id);
                 const clientAmount = row.timesheet?.clientAmountCalculated || row.job.totalAmount || 0;
                 const interpreterAmount = row.timesheet?.interpreterAmountCalculated || row.timesheet?.totalToPay || 0;
@@ -375,7 +449,7 @@ export const TimesheetQueue = () => {
                 return (
                   <tr
                     key={row.id}
-                    onClick={() => setSelectedRow(row)}
+                    onClick={() => openClaim(row)}
                     onDoubleClick={() => navigate(`/admin/bookings/${row.job.id}`, { state: claimsReturnState })}
                     className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 ${selected ? 'bg-blue-50/50 dark:bg-blue-500/10' : ''}`}
                   >
@@ -395,6 +469,11 @@ export const TimesheetQueue = () => {
                         {row.timesheet?.nonExecutionReason && (
                           <span className="mt-1 w-fit rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                             Exception
+                          </span>
+                        )}
+                        {row.duplicateTimesheetCount && (
+                          <span className="mt-1 w-fit rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-black uppercase text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                            {row.duplicateTimesheetCount} duplicate claims
                           </span>
                         )}
                       </div>
@@ -438,6 +517,21 @@ export const TimesheetQueue = () => {
             </tbody>
           </table>
         </div>
+        <WorkspacePagination
+          totalCount={filteredRows.length}
+          pageStartIndex={pageStartIndex}
+          pageEndIndex={pageEndIndex}
+          currentPage={safeCurrentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          entityLabel="claim"
+          onPreviousPage={() => setCurrentPage(page => Math.max(1, page - 1))}
+          onNextPage={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+          onPageSizeChange={(nextPageSize) => {
+            setPageSize(nextPageSize);
+            setCurrentPage(1);
+          }}
+        />
       </section>
 
       <BulkActionBar
@@ -484,6 +578,12 @@ export const TimesheetQueue = () => {
               </div>
             </div>
 
+            {selectedRow.duplicateTimesheetCount && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                {selectedRow.duplicateTimesheetCount} timesheet records are linked to this job. Billing actions are blocked in this workbench until an administrator reconciles the duplicate records.
+              </div>
+            )}
+
             <div className="grid gap-4 lg:grid-cols-2">
               <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                 <div className="mb-4 flex items-center gap-2">
@@ -520,6 +620,42 @@ export const TimesheetQueue = () => {
               </section>
             </div>
 
+            {selectedRow.stage === 'SUBMITTED' && (
+              <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <div className="mb-3 flex items-start gap-2">
+                  <AlertCircle size={17} className="mt-0.5 shrink-0 text-amber-700 dark:text-amber-300" />
+                  <div>
+                    <h3 className="text-sm font-black text-amber-950 dark:text-amber-100">Staff amount override</h3>
+                    <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">Leave blank to use approved booking values and configured rate cards. Enter amounts only when the agreed terms have been verified outside the platform.</p>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    Client amount (GBP)
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={approvalOverrides.clientAmount}
+                      onChange={event => setApprovalOverrides(current => ({ ...current, clientAmount: event.target.value }))}
+                      className="mt-1.5 h-10 w-full rounded-md border border-amber-200 bg-white px-3 text-sm font-bold outline-none focus:border-blue-500 dark:border-amber-500/30 dark:bg-slate-950"
+                    />
+                  </label>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    Interpreter amount (GBP)
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={approvalOverrides.interpreterAmount}
+                      onChange={event => setApprovalOverrides(current => ({ ...current, interpreterAmount: event.target.value }))}
+                      className="mt-1.5 h-10 w-full rounded-md border border-amber-200 bg-white px-3 text-sm font-bold outline-none focus:border-blue-500 dark:border-amber-500/30 dark:bg-slate-950"
+                    />
+                  </label>
+                </div>
+              </section>
+            )}
+
             {selectedRow.timesheet?.supportingDocumentUrl ? (
               <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                 <div className="mb-3 flex items-center gap-2">
@@ -549,7 +685,7 @@ export const TimesheetQueue = () => {
                 </Button>
               )}
               {selectedRow.stage === 'SUBMITTED' && (
-                <Button icon={ShieldCheck} onClick={() => handleVerify(selectedRow)}>
+                <Button icon={ShieldCheck} onClick={() => handleVerify(selectedRow, true)}>
                   Authorize for billing
                 </Button>
               )}

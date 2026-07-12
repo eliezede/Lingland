@@ -41,14 +41,31 @@ admin.initializeApp();
 __exportStar(require("./billing/onTimesheetAdminApproved"), exports);
 __exportStar(require("./billing/generateClientInvoice"), exports);
 __exportStar(require("./billing/generateInterpreterInvoices"), exports);
+__exportStar(require("./billing/updateClientInvoiceStatus"), exports);
+__exportStar(require("./billing/manageInterpreterInvoices"), exports);
+__exportStar(require("./billing/recordManualClientInvoice"), exports);
+__exportStar(require("./billing/submitTimesheet"), exports);
 __exportStar(require("./mail/onEmailCreated"), exports);
 __exportStar(require("./auth/onUserCreated"), exports);
 __exportStar(require("./airtable/onAirtableFormSubmit"), exports);
 __exportStar(require("./airtable/redbookSync"), exports);
+__exportStar(require("./airtable/syncInterpreters"), exports);
+__exportStar(require("./jobs/respondToAssignment"), exports);
+__exportStar(require("./jobs/recordInterpreterAttendance"), exports);
+__exportStar(require("./jobs/clientBookingActions"), exports);
+__exportStar(require("./jobs/createAdminBooking"), exports);
+__exportStar(require("./jobs/adminAssignmentActions"), exports);
+__exportStar(require("./jobs/adminUpdateBookingStatus"), exports);
+__exportStar(require("./admin/deletePlatformEntity"), exports);
 __exportStar(require("./notifications/onNotificationCreated"), exports);
 __exportStar(require("./notifications/onTimesheetSubmit"), exports); // NT-05: Notify admins + interpreter on timesheet creation
 __exportStar(require("./notifications/onBookingOffer"), exports);
 __exportStar(require("./notifications/onAssignmentOffer"), exports);
 __exportStar(require("./notifications/onOfferDeclined"), exports);
+__exportStar(require("./notifications/createNotification"), exports);
+__exportStar(require("./notifications/onMessageCreated"), exports);
+__exportStar(require("./communications/createSupportThread"), exports);
 __exportStar(require("./cron/dbsExpiryCheck"), exports); // ON-03: Daily cron for DBS expiry alerts
+__exportStar(require("./public/submitPublicIntake"), exports);
+__exportStar(require("./audit/onCriticalChange"), exports);
 //# sourceMappingURL=index.js.map

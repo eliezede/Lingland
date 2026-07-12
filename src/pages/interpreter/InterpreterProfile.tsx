@@ -87,7 +87,7 @@ export const InterpreterProfile = () => {
 
     setIsUploading(true);
     try {
-      const path = `interpreters/${user.profileId}/documents/dbs_${Date.now()}_${file.name}`;
+      const path = `onboarding/${user.id}/profile_dbs_${Date.now()}_${file.name}`;
       const url = await StorageService.uploadFile(file, path);
       setFormData(prev => ({ ...prev, dbsDocumentUrl: url }));
       showToast('Document uploaded successfully', 'success');

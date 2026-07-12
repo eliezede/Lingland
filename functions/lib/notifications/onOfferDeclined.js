@@ -101,6 +101,7 @@ exports.onAssignmentDeclined = functions.firestore
                 </div>
               `
                     },
+                    recipientType: 'ADMIN',
                     source: 'on_offer_declined',
                     createdAt: new Date().toISOString()
                 });
@@ -174,6 +175,7 @@ exports.onBookingDeclined = functions.firestore
                 </div>
               `
                     },
+                    recipientType: 'ADMIN',
                     source: 'on_booking_declined',
                     createdAt: new Date().toISOString()
                 });

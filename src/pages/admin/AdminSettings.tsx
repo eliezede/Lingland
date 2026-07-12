@@ -246,7 +246,7 @@ export const AdminSettings = () => {
                       <option value="SELECTIVE_LIVE">Selective live</option>
                       <option value="LIVE">Live - all templates enabled</option>
                     </select>
-                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Suppressed mode writes an audit record instead of adding messages to the Firebase mail queue.</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Suppressed mode blocks outbound delivery and records every attempted communication for audit.</p>
                   </div>
 
                   <div className={panelClass}>

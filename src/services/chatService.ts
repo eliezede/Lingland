@@ -13,10 +13,9 @@ import {
   getDocs,
   limit,
 } from 'firebase/firestore';
-import { db } from './firebaseConfig';
-import { ChatMessage, ChatThread, NotificationType, User, UserRole } from '../types';
-import { NotificationService } from './notificationService';
-import { MOCK_USERS } from './mockData';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebaseConfig';
+import { ChatMessage, ChatThread, User, UserRole } from '../types';
 
 type ChatParticipant = Pick<User, 'id' | 'displayName' | 'photoUrl' | 'email' | 'role' | 'profileId'>;
 
@@ -195,15 +194,6 @@ export const ChatService = {
 
     await updateDoc(threadRef, updateData);
 
-    recipients.forEach(participantId => {
-      NotificationService.notify(
-        participantId,
-        `New message from ${senderName}`,
-        attachment ? (attachment.type === 'IMAGE' ? 'Image attachment' : 'Document attachment') : (cleanText.length > 80 ? `${cleanText.slice(0, 77)}...` : cleanText),
-        NotificationType.CHAT,
-        thread.type === 'BOOKING' && thread.bookingId ? `/admin/bookings/${thread.bookingId}` : ''
-      ).catch(() => {});
-    });
   },
 
   subscribeToMessages: (threadId: string, callback: (messages: ChatMessage[]) => void) => {
@@ -244,41 +234,35 @@ export const ChatService = {
 
   resolveUserByProfileId: async (profileId: string): Promise<ChatParticipant | null> => {
     if (!profileId) return null;
-    try {
-      const q = query(collection(db, 'users'), where('profileId', '==', profileId), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
-    } catch {
-      // fall through to mock fallback
-    }
-    const mockUser = MOCK_USERS.find(user => user.profileId === profileId);
-    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+    const q = query(collection(db, 'users'), where('profileId', '==', profileId), limit(1));
+    const snap = await getDocs(q);
+    return snap.empty ? null : getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
   },
 
   resolveUserByEmail: async (email: string): Promise<ChatParticipant | null> => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return null;
-    try {
-      const q = query(collection(db, 'users'), where('email', '==', cleanEmail), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
-    } catch {
-      // fall through to mock fallback
-    }
-    const mockUser = MOCK_USERS.find(user => user.email?.toLowerCase() === cleanEmail);
-    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+    const q = query(collection(db, 'users'), where('email', '==', cleanEmail), limit(1));
+    const snap = await getDocs(q);
+    return snap.empty ? null : getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
   },
 
   getAdminSupportUser: async (): Promise<ChatParticipant | null> => {
-    try {
-      const q = query(collection(db, 'users'), where('role', 'in', [UserRole.SUPER_ADMIN, UserRole.ADMIN]), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) return getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
-    } catch {
-      // fall through to mock fallback
+    const q = query(collection(db, 'users'), where('role', 'in', [UserRole.SUPER_ADMIN, UserRole.ADMIN]), limit(1));
+    const snap = await getDocs(q);
+    return snap.empty ? null : getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
+  },
+
+  getOrCreateSupportThread: async (bookingId?: string): Promise<string> => {
+    const createThread = httpsCallable<
+      { bookingId?: string },
+      { success: boolean; threadId: string }
+    >(functions, 'createSupportThread');
+    const response = await createThread({ ...(bookingId ? { bookingId } : {}) });
+    if (!response.data?.success || !response.data.threadId) {
+      throw new Error('The operations conversation could not be opened.');
     }
-    const mockUser = MOCK_USERS.find(user => user.role === UserRole.SUPER_ADMIN || user.role === UserRole.ADMIN);
-    return mockUser ? getUserFromDoc(mockUser.id, mockUser) : null;
+    return response.data.threadId;
   },
 
   getOrCreateDirectThreadWithUser: async (

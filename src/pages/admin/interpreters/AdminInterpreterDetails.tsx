@@ -81,7 +81,7 @@ export const AdminInterpreterDetails = () => {
       const [profile, schedule, financialHistory, offers, interpreterTimesheets] = await Promise.all([
         InterpreterService.getById(interpreterId),
         BookingService.getInterpreterSchedule(interpreterId),
-        BillingService.getInterpreterInvoices(),
+        BillingService.getInterpreterInvoices(interpreterId),
         BookingService.getInterpreterOffers(interpreterId),
         BillingService.getInterpreterTimesheets(interpreterId)
       ]);
@@ -104,7 +104,7 @@ export const AdminInterpreterDetails = () => {
       });
 
       setJobs(mergedJobs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-      setInvoices(financialHistory.filter(inv => inv.interpreterId === interpreterId));
+      setInvoices(financialHistory);
       setTimesheets(interpreterTimesheets);
     } finally {
       setLoading(false);
@@ -189,7 +189,8 @@ export const AdminInterpreterDetails = () => {
   };
 
   const getStatusBadgeClass = (status: string) => {
-    if (status === 'ACTIVE') return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    if (status === 'ACTIVE' || status === 'ONLY_TRANSL') return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    if (status === 'IMPORTED') return 'bg-sky-50 text-sky-700 border border-sky-200';
     if (status === 'ONBOARDING') return 'bg-blue-50 text-blue-700 border border-blue-200';
     if (status === 'SUSPENDED') return 'bg-amber-50 text-amber-700 border border-amber-200';
     return 'bg-red-50 text-red-700 border border-red-200';
@@ -1059,7 +1060,7 @@ export const AdminInterpreterDetails = () => {
                                   {job?.displayRef || job?.jobNumber || job?.bookingRef || timesheet.bookingId}
                                 </p>
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                                  {formatDate(timesheet.submittedAt || timesheet.createdAt)} - {timesheet.source || 'INTERPRETER_APP'} - {claimAmount(timesheet) ? money(claimAmount(timesheet)) : 'No amount'}
+                                  {formatDate(timesheet.actualStart || timesheet.submittedAt || timesheet.createdAt)} - {timesheet.source || (timesheet.sourceSystem === 'AIRTABLE' ? 'AIRTABLE_MIRROR' : 'INTERPRETER_APP')} - {claimAmount(timesheet) ? money(claimAmount(timesheet)) : 'No amount'}
                                 </p>
                               </button>
                               <div className="flex shrink-0 items-center gap-2">

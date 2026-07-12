@@ -1,10 +1,11 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { brevoService } from '../services/brevoService';
+import { canDeliverCommunication, normalizeCommunicationMode } from '../communications/deliveryPolicy';
 
 const getCommunicationMode = async () => {
     const settings = await admin.firestore().collection('system').doc('settings').get();
-    return settings.data()?.platformMode?.communicationMode || 'SUPPRESSED';
+    return normalizeCommunicationMode(settings.data()?.platformMode?.communicationMode);
 };
 
 export const onEmailCreated = functions.runWith({
@@ -27,16 +28,19 @@ export const onEmailCreated = functions.runWith({
 
         try {
             const communicationMode = await getCommunicationMode();
-            if (communicationMode !== 'LIVE') {
+            const recipientType = String(data.recipientType || '').toUpperCase();
+            const canSend = canDeliverCommunication(communicationMode, recipientType);
+            if (!canSend) {
                 console.log(`[onEmailCreated] Suppressed email ${context.params.mailId} because communication mode is ${communicationMode}.`);
-                await admin.firestore().collection('emailAudit').add({
+                await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
                     ...data,
                     mailId: context.params.mailId,
                     status: 'SUPPRESSED',
+                    recipientType: recipientType || 'UNKNOWN',
                     communicationMode,
                     suppressedReason: `Communication mode ${communicationMode} suppressed outbound delivery`,
                     createdAt: new Date().toISOString()
-                });
+                }, { merge: true });
 
                 return snap.ref.update({
                     delivery: {
@@ -54,14 +58,32 @@ export const onEmailCreated = functions.runWith({
                 html
             );
 
+            await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
+                ...data,
+                mailId: context.params.mailId,
+                status: 'SENT',
+                communicationMode,
+                sentAt: new Date().toISOString(),
+                createdAt: data.createdAt || new Date().toISOString()
+            }, { merge: true });
+
             // Update the status in the Firestore document
             return snap.ref.update({
                 delivery: {
                     state: 'SUCCESS',
+                    communicationMode,
                     sentAt: new Date().toISOString()
                 }
             });
         } catch (error: any) {
+            await admin.firestore().collection('emailAudit').doc(context.params.mailId).set({
+                ...data,
+                mailId: context.params.mailId,
+                status: 'ERROR',
+                error: String(error?.message || 'Unknown email delivery error'),
+                errorAt: new Date().toISOString(),
+                createdAt: data.createdAt || new Date().toISOString()
+            }, { merge: true }).catch(() => undefined);
             console.error(`[onEmailCreated] ❌ Error sending email:`, error);
             return snap.ref.update({
                 delivery: {

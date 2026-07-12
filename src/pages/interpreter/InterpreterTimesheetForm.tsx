@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { BillingService, BookingService, StorageService } from '../../services/api';
+import { BillingService, BookingService, InterpreterService, StorageService } from '../../services/api';
 import { Booking, BookingStatus, ServiceCategory, SessionMode } from '../../types';
 import { useInterpreterTimesheets } from '../../hooks/useInterpreterTimesheets';
 import { useAuth } from '../../context/AuthContext';
@@ -22,6 +22,7 @@ export const InterpreterTimesheetForm = () => {
   const { submitTimesheet } = useInterpreterTimesheets(user?.profileId);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
+  const [interpreterRates, setInterpreterRates] = useState<any>(null);
 
   const [formData, setFormData] = useState({
     start: '',
@@ -51,6 +52,14 @@ export const InterpreterTimesheetForm = () => {
     }
     navigate('/interpreter/timesheets');
   };
+
+  useEffect(() => {
+    if (user?.profileId) {
+      InterpreterService.getById(user.profileId)
+        .then(profile => setInterpreterRates(profile?.rates || null))
+        .catch(() => setInterpreterRates(null));
+    }
+  }, [user?.profileId]);
 
   useEffect(() => {
     if (bookingId) {
@@ -117,7 +126,7 @@ export const InterpreterTimesheetForm = () => {
   };
 
   const calculatedStats = useMemo(() => {
-    if (!formData.start || !formData.end) return { duration: 0, earnings: 0 };
+    if (!formData.start || !formData.end) return { duration: 0, earnings: 0, rateResolved: false };
     
     // Duration
     const [sH, sM] = formData.start.split(':').map(Number);
@@ -128,18 +137,29 @@ export const InterpreterTimesheetForm = () => {
     const billableMins = Math.max(0, diff - formData.breakMins);
     const durationH = billableMins / 60;
     
-    // Basic estimate using fallback rates when the job does not provide them.
-    const sessionEarnings = durationH * ((job as any)?.interpreterRate || 25);
-    const travelEarnings = (formData.travelTime / 60) * ((job as any)?.travelRate || 12);
-    const mileageEarnings = formData.mileage * ((job as any)?.mileageRate || 0.45);
+    const mode = String(formData.sessionMode || job?.sessionMode || (job?.locationType === 'ONLINE' ? 'VIDEO' : 'F2F')).toUpperCase();
+    const sessionRate = Number(
+      job?.isOOH
+        ? (mode === 'VIDEO' ? interpreterRates?.oohVideo : mode === 'PHONE' ? interpreterRates?.oohPhone : interpreterRates?.oohF2F)
+        : (mode === 'VIDEO' ? interpreterRates?.stVideo : mode === 'PHONE' ? interpreterRates?.stPhone : (interpreterRates?.stF2F || interpreterRates?.f2fRate))
+    ) || 0;
+    const travelRate = Number(interpreterRates?.travelTimeST || 0);
+    const mileageRate = Number(interpreterRates?.mileageST || 0);
+    const rateResolved = sessionRate > 0
+      && (formData.travelTime <= 0 || travelRate > 0)
+      && (formData.mileage <= 0 || mileageRate > 0);
+    const sessionEarnings = rateResolved ? durationH * sessionRate : 0;
+    const travelEarnings = rateResolved ? (formData.travelTime / 60) * travelRate : 0;
+    const mileageEarnings = rateResolved ? formData.mileage * mileageRate : 0;
     
     const total = sessionEarnings + travelEarnings + mileageEarnings + formData.parking + formData.transport;
     
     return {
       duration: billableMins,
-      earnings: total
+      earnings: rateResolved ? total : 0,
+      rateResolved
     };
-  }, [formData, job]);
+  }, [formData, job, interpreterRates]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -175,7 +195,7 @@ export const InterpreterTimesheetForm = () => {
         const response = await fetch(signatureUrl);
         const blob = await response.blob();
         const file = new File([blob], `signature_${Date.now()}.png`, { type: 'image/png' });
-        const path = `timesheets/signatures/${bookingId}_${Date.now()}.png`;
+        const path = `timesheets/${bookingId}/signatures/${Date.now()}.png`;
         signatureUrl = await StorageService.uploadFile(file, path);
       }
 
@@ -367,7 +387,11 @@ export const InterpreterTimesheetForm = () => {
               <div className="bg-blue-600 p-6 rounded-3xl shadow-xl shadow-blue-200 flex items-center justify-between text-white">
                 <div>
                   <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Estimated Earnings</p>
-                  <p className="text-3xl font-black">{money(job.serviceCategory === ServiceCategory.TRANSLATION ? formData.wordCount * formData.unitPrice : calculatedStats.earnings)}</p>
+                  <p className="text-3xl font-black">
+                    {job.serviceCategory === ServiceCategory.TRANSLATION || calculatedStats.rateResolved
+                      ? money(job.serviceCategory === ServiceCategory.TRANSLATION ? formData.wordCount * formData.unitPrice : calculatedStats.earnings)
+                      : 'Rate review required'}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Billable Units</p>
@@ -524,7 +548,9 @@ export const InterpreterTimesheetForm = () => {
                    </div>
                    <div className="pl-4 space-y-1">
                       <p className="text-slate-500 text-[10px] font-black uppercase">Total Earnings</p>
-                      <p className="text-xl font-black text-emerald-400">{money(finalEarnings)}</p>
+                      <p className="text-xl font-black text-emerald-400">
+                        {isTranslation || calculatedStats.rateResolved ? money(finalEarnings) : 'Pending rate review'}
+                      </p>
                     </div>
                 </div>
              </div>
