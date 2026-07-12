@@ -62,8 +62,9 @@ const withSettingsDefaults = (settings: SystemSettings): SystemSettings => ({
 export const SystemService = {
   checkConnection: async (): Promise<boolean> => {
     try {
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1500));
-      const check = getDoc(doc(db, 'system', 'ping'));
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000));
+      // This probe runs before authentication, so it must use the explicitly public settings document.
+      const check = getDoc(doc(db, 'system', 'settings'));
       await Promise.race([check, timeout]);
       return true;
     } catch (error) {
