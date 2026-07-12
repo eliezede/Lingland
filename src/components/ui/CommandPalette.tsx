@@ -53,7 +53,7 @@ export const CommandPalette = () => {
         { id: 'settings', title: 'System Config', subtitle: 'Platform settings and configuration', icon: Settings, category: 'Admin', keywords: ['settings', 'config', 'system'], onSelect: () => navigate('/admin/settings') },
         { id: 'users', title: 'Users & Roles', subtitle: 'Manage user accounts and permissions', icon: Shield, category: 'Admin', keywords: ['users', 'roles', 'permissions', 'accounts'], onSelect: () => navigate('/admin/users') },
         { id: 'data-center', title: 'Data Center', subtitle: 'Sync readiness, exports and platform data guardrails', icon: Database, category: 'Admin', keywords: ['data', 'database', 'import', 'export', 'system', 'sync', 'readiness'], onSelect: () => navigate('/admin/administration/data') },
-        { id: 'audit-log', title: 'Audit & Event Control', subtitle: 'Audit readiness and required event model', icon: FileText, category: 'Admin', keywords: ['audit', 'logs', 'history', 'trail', 'events'], onSelect: () => navigate('/admin/system/audit-log') },
+        { id: 'audit-log', title: 'Audit & Event Control', subtitle: 'Immutable operations, finance, sync and communication events', icon: FileText, category: 'Admin', keywords: ['audit', 'logs', 'history', 'trail', 'events'], onSelect: () => navigate('/admin/system/audit-log') },
     ];
 
     const filtered = query.trim() === ''

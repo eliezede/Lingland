@@ -33,3 +33,4 @@ export * from './communications/createSupportThread';
 export * from './cron/dbsExpiryCheck'; // ON-03: Daily cron for DBS expiry alerts
 export * from './public/submitPublicIntake';
 export * from './audit/onCriticalChange';
+export * from './audit/createAuditHealthCheck';

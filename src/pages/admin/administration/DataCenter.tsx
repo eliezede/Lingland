@@ -47,9 +47,9 @@ export const DataCenter = () => {
       id: 'audit',
       area: 'Audit visibility',
       owner: 'Security',
-      status: 'REVIEW',
+      status: 'ACTIVE',
       route: '/admin/system/audit-log',
-      detail: 'Audit UI exists; backend event capture still needs to be hardened before relying on it.'
+      detail: 'Immutable operational, finance, communication and synchronization events with actor and source context.'
     },
     {
       id: 'settings',
@@ -98,7 +98,7 @@ export const DataCenter = () => {
   const capabilityCards = [
     { label: 'Import control', icon: Upload, status: 'Active', detail: 'Use Airtable Migration for mirror mode sync.', route: '/admin/administration/migration' },
     { label: 'Export packs', icon: Download, status: 'Planned', detail: 'Needs scoped finance/ops reports before activation.' },
-    { label: 'Audit review', icon: FileSearch, status: 'Review', detail: 'UI exists; event model must be wired.', route: '/admin/system/audit-log' },
+    { label: 'Audit review', icon: FileSearch, status: 'Active', detail: 'Review semantic events, before/after values and sync lineage.', route: '/admin/system/audit-log' },
     { label: 'Platform guard', icon: Shield, status: 'Active', detail: 'Hybrid/email suppression controlled in Settings.', route: '/admin/settings' }
   ];
 

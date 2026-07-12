@@ -33,15 +33,19 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.auditInterpreters = exports.auditClients = exports.auditUsers = exports.auditInterpreterInvoices = exports.auditClientInvoices = exports.auditTimesheets = exports.auditAssignments = exports.auditBookings = void 0;
+exports.auditSyncConflicts = exports.auditSyncRuns = exports.auditNotifications = exports.auditEmailDelivery = exports.auditMail = exports.auditJobEvents = exports.auditInterpreters = exports.auditClients = exports.auditUsers = exports.auditInterpreterInvoices = exports.auditClientInvoices = exports.auditTimesheets = exports.auditAssignments = exports.auditBookings = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
-const db = admin.firestore();
+const auditPolicy_1 = require("./auditPolicy");
+const auditWriter_1 = require("./auditWriter");
 const AUDIT_FIELDS = [
-    'id', 'status', 'paymentStatus', 'clientId', 'interpreterId', 'bookingId', 'jobNumber', 'bookingRef',
+    'id', 'type', 'status', 'paymentStatus', 'resolutionStatus', 'pushStatus', 'delivery',
+    'clientId', 'interpreterId', 'bookingId', 'jobId', 'organizationId', 'jobNumber', 'bookingRef',
     'displayRef', 'invoiceNumber', 'reference', 'totalAmount', 'subtotal', 'vatAmount', 'clientInvoiceId',
     'interpreterInvoiceId', 'adminApproved', 'readyForClientInvoice', 'readyForInterpreterInvoice',
-    'role', 'profileId', 'sourceSystem', 'sourceRecordId', 'updatedBy', 'createdBy', 'adminApprovedBy',
+    'role', 'profileId', 'source', 'sourceSystem', 'sourceRecordId', 'sourceTable', 'updatedBy', 'createdBy',
+    'actorUserId', 'actorRole', 'adminApprovedBy', 'communicationMode', 'syncRunId', 'lastSyncRunId',
+    'runId', 'kind', 'success', 'dryRun', 'stats', 'metadata', 'createdAt', 'updatedAt', 'finishedAt',
 ];
 const snapshot = (value) => {
     if (!value)
@@ -56,23 +60,63 @@ const changedFields = (before, after) => {
     const fields = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
     return Array.from(fields).filter(field => JSON.stringify(before?.[field]) !== JSON.stringify(after?.[field])).slice(0, 100);
 };
+let cachedCommunicationMode = 'SUPPRESSED';
+let communicationModeExpiresAt = 0;
+const getCommunicationMode = async () => {
+    if (Date.now() < communicationModeExpiresAt)
+        return cachedCommunicationMode;
+    try {
+        const settings = await admin.firestore().collection('system').doc('settings').get();
+        cachedCommunicationMode = String(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase();
+        communicationModeExpiresAt = Date.now() + 60000;
+    }
+    catch {
+        cachedCommunicationMode = 'SUPPRESSED';
+    }
+    return cachedCommunicationMode;
+};
+const actorRoleCache = new Map();
+const getActorRole = async (actorId, embeddedRole, source) => {
+    if (embeddedRole)
+        return embeddedRole;
+    if (actorId.startsWith('SYSTEM') || source.includes('AIRTABLE'))
+        return 'SYSTEM';
+    if (actorRoleCache.has(actorId))
+        return actorRoleCache.get(actorId);
+    try {
+        const actor = await admin.firestore().collection('users').doc(actorId).get();
+        const role = String(actor.data()?.role || 'UNKNOWN').toUpperCase();
+        actorRoleCache.set(actorId, role);
+        return role;
+    }
+    catch {
+        return 'UNKNOWN';
+    }
+};
 const writeAudit = async (collectionName, change, context) => {
     const before = change.before.exists ? change.before.data() : undefined;
     const after = change.after.exists ? change.after.data() : undefined;
-    const action = !change.before.exists ? 'CREATED' : !change.after.exists ? 'DELETED' : 'UPDATED';
-    const actorId = String(after?.updatedBy || after?.createdBy || after?.adminApprovedBy || before?.updatedBy || 'SYSTEM_OR_LEGACY_CLIENT');
-    await db.collection('auditEvents').doc(context.eventId).set({
-        id: context.eventId,
+    const source = (0, auditPolicy_1.deriveAuditSource)(before, after);
+    const actorId = (0, auditPolicy_1.deriveActorId)(collectionName, before, after);
+    const actorRole = await getActorRole(actorId, (0, auditPolicy_1.deriveEmbeddedActorRole)(before, after), source);
+    const communicationMode = (0, auditPolicy_1.deriveEmbeddedCommunicationMode)(before, after) || await getCommunicationMode();
+    const createdAt = new Date().toISOString();
+    await (0, auditWriter_1.writeAuditEvent)(context.eventId, {
         entityType: collectionName,
         entityId: String(context.params.documentId || ''),
-        action,
+        action: (0, auditPolicy_1.deriveAuditAction)(collectionName, before, after),
         actorId,
-        source: String(after?.source || after?.sourceSystem || before?.source || before?.sourceSystem || 'PLATFORM'),
+        actorRole,
+        source,
+        communicationMode,
+        syncRunId: (0, auditPolicy_1.deriveSyncRunId)(before, after),
         changedFields: changedFields(before, after),
         before: snapshot(before),
         after: snapshot(after),
-        createdAt: new Date().toISOString(),
-    }, { merge: false });
+        organizationId: String(after?.organizationId || before?.organizationId || ''),
+        bookingId: String(after?.bookingId || after?.jobId || before?.bookingId || before?.jobId || ''),
+        createdAt,
+    });
 };
 const auditCollection = (collectionName) => functions.firestore
     .document(`${collectionName}/{documentId}`)
@@ -85,4 +129,10 @@ exports.auditInterpreterInvoices = auditCollection('interpreterInvoices');
 exports.auditUsers = auditCollection('users');
 exports.auditClients = auditCollection('clients');
 exports.auditInterpreters = auditCollection('interpreters');
+exports.auditJobEvents = auditCollection('jobEvents');
+exports.auditMail = auditCollection('mail');
+exports.auditEmailDelivery = auditCollection('emailAudit');
+exports.auditNotifications = auditCollection('notifications');
+exports.auditSyncRuns = auditCollection('syncRuns');
+exports.auditSyncConflicts = auditCollection('syncConflicts');
 //# sourceMappingURL=onCriticalChange.js.map

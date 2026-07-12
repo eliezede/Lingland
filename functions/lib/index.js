@@ -68,4 +68,5 @@ __exportStar(require("./communications/createSupportThread"), exports);
 __exportStar(require("./cron/dbsExpiryCheck"), exports); // ON-03: Daily cron for DBS expiry alerts
 __exportStar(require("./public/submitPublicIntake"), exports);
 __exportStar(require("./audit/onCriticalChange"), exports);
+__exportStar(require("./audit/createAuditHealthCheck"), exports);
 //# sourceMappingURL=index.js.map
