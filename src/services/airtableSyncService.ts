@@ -3,6 +3,8 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebaseConfig';
 import { RedbookSyncDetail, RedbookSyncStats } from './redbookSyncService';
 
+const LONG_CALLABLE_OPTIONS = { timeout: 600_000 };
+
 export type AirtableSyncModule =
   | 'clients'
   | 'redbook'
@@ -258,7 +260,7 @@ export const AirtableSyncService = {
     limitRecords = 5000,
     syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
   ): Promise<AirtableSyncResult> => {
-    const syncFn = httpsCallable(functions, 'syncAirtableData');
+    const syncFn = httpsCallable(functions, 'syncAirtableData', LONG_CALLABLE_OPTIONS);
     const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy });
     return response.data as AirtableSyncResult;
   },
@@ -267,7 +269,7 @@ export const AirtableSyncService = {
     limitRecords = 5000,
     syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
   ): Promise<AirtableMirrorAudit> => {
-    const auditFn = httpsCallable(functions, 'getAirtableMirrorAudit');
+    const auditFn = httpsCallable(functions, 'getAirtableMirrorAudit', LONG_CALLABLE_OPTIONS);
     const response = await auditFn({ limitRecords, syncStrategy });
     return response.data as AirtableMirrorAudit;
   },
@@ -277,7 +279,7 @@ export const AirtableSyncService = {
     limitRecords = 20,
     syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
   ): Promise<AirtableRedbookRepairResult> => {
-    const repairFn = httpsCallable(functions, 'repairMissingRedbookRecords');
+    const repairFn = httpsCallable(functions, 'repairMissingRedbookRecords', LONG_CALLABLE_OPTIONS);
     const response = await repairFn({ dryRun, limitRecords, syncStrategy });
     return response.data as AirtableRedbookRepairResult;
   },
@@ -294,7 +296,7 @@ export const AirtableSyncService = {
   },
 
   getFinancialReconciliationAudit: async (): Promise<FinancialReconciliationAudit> => {
-    const auditFn = httpsCallable(functions, 'getFinancialReconciliationAudit');
+    const auditFn = httpsCallable(functions, 'getFinancialReconciliationAudit', LONG_CALLABLE_OPTIONS);
     const response = await auditFn();
     return response.data as FinancialReconciliationAudit;
   },

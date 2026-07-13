@@ -7,9 +7,11 @@ import { InterpreterService } from './interpreterService';
 
 import { UserService } from './userService';
 
+const AIRTABLE_CALLABLE_OPTIONS = { timeout: 600_000 };
+
 export const MigrationService = {
   getActiveInterpreterStats: async () => {
-    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters');
+    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters', AIRTABLE_CALLABLE_OPTIONS);
     const result = await syncInterpreters({ dryRun: true });
     const stats = (result.data as any)?.stats;
     return {
@@ -23,7 +25,7 @@ export const MigrationService = {
    * Returns stats about the migration
    */
   migrateActiveInterpreters: async () => {
-    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters');
+    const syncInterpreters = httpsCallable(functions, 'syncAirtableInterpreters', AIRTABLE_CALLABLE_OPTIONS);
     const result = await syncInterpreters({ dryRun: false });
     const stats = (result.data as any)?.stats;
     return {

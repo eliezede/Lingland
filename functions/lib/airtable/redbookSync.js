@@ -470,29 +470,43 @@ const getInterpreterDirectory = () => {
     }
     return interpreterDirectoryPromise;
 };
+const matchInterpreterDirectory = (directory, predicate, fallback, matchMethod, matchConfidence) => {
+    const matches = directory.filter(predicate);
+    if (matches.length === 1) {
+        return toInterpreterResolution(matches[0].id, matches[0].data, fallback, matchMethod, matchConfidence);
+    }
+    if (matches.length > 1) {
+        return {
+            id: '',
+            name: fallback.name,
+            email: fallback.email,
+            photoUrl: '',
+            matchMethod,
+            matchConfidence: 0,
+            ambiguousCandidates: matches.map(item => item.id)
+        };
+    }
+    return null;
+};
 const resolveInterpreter = async (email, name, airtableRecordId = '', phone = '') => {
     const normalizedEmail = cleanEmail(email);
     const normalizedName = name.trim();
     const normalizedNameKey = (0, identityMatching_1.normalizeIdentityName)(normalizedName);
+    const normalizedPhoneKey = (0, identityMatching_1.normalizeIdentityPhone)(phone);
+    const fallback = { name: normalizedName, email: normalizedEmail };
+    const directory = await getInterpreterDirectory();
     if (airtableRecordId) {
-        const bySource = await db.collection('interpreters')
-            .where('sourceRecordId', '==', airtableRecordId)
-            .limit(1)
-            .get();
-        if (!bySource.empty) {
-            const profile = bySource.docs[0].data();
-            return toInterpreterResolution(bySource.docs[0].id, profile, { name: normalizedName, email: normalizedEmail }, 'sourceRecordId', 100);
-        }
-        const byLinkedRecord = await db.collection('interpreters')
-            .where('airtableRecordIds', 'array-contains', airtableRecordId)
-            .limit(1)
-            .get();
-        if (!byLinkedRecord.empty) {
-            const profile = byLinkedRecord.docs[0].data();
-            return toInterpreterResolution(byLinkedRecord.docs[0].id, profile, { name: normalizedName, email: normalizedEmail }, 'airtableRecordIds', 98);
-        }
+        const bySource = matchInterpreterDirectory(directory, item => String(item.data.sourceRecordId || '') === airtableRecordId, fallback, 'sourceRecordId', 100);
+        if (bySource)
+            return bySource;
+        const byLinkedRecord = matchInterpreterDirectory(directory, item => Array.isArray(item.data.airtableRecordIds) && item.data.airtableRecordIds.map(String).includes(airtableRecordId), fallback, 'airtableRecordIds', 98);
+        if (byLinkedRecord)
+            return byLinkedRecord;
     }
     if (normalizedEmail) {
+        const interpreterByEmail = matchInterpreterDirectory(directory, item => cleanEmail(String(item.data.email || '')) === normalizedEmail, fallback, 'profileEmail', 94);
+        if (interpreterByEmail)
+            return interpreterByEmail;
         const userByEmail = await db.collection('users')
             .where('email', '==', normalizedEmail)
             .limit(1)
@@ -500,69 +514,24 @@ const resolveInterpreter = async (email, name, airtableRecordId = '', phone = ''
         if (!userByEmail.empty) {
             const user = userByEmail.docs[0].data();
             if (user.profileId) {
-                const profile = await db.collection('interpreters').doc(user.profileId).get();
-                return toInterpreterResolution(user.profileId, profile.data(), { name: user.displayName || name, email: user.email || normalizedEmail }, 'userEmail', 96);
+                const directoryProfile = directory.find(item => item.id === user.profileId);
+                const profile = directoryProfile?.data || (await db.collection('interpreters').doc(user.profileId).get()).data();
+                return toInterpreterResolution(user.profileId, profile, { name: user.displayName || name, email: user.email || normalizedEmail }, 'userEmail', 96);
             }
         }
-        const interpreterByEmail = await db.collection('interpreters')
-            .where('email', '==', normalizedEmail)
-            .limit(1)
-            .get();
-        if (!interpreterByEmail.empty) {
-            const profile = interpreterByEmail.docs[0].data();
-            return toInterpreterResolution(interpreterByEmail.docs[0].id, profile, { name, email: normalizedEmail }, 'profileEmail', 94);
-        }
     }
-    if (phone) {
-        const directory = await getInterpreterDirectory();
-        const match = (0, identityMatching_1.findUniquePhoneCandidate)(directory.map(item => ({
-            ...item,
-            phone: String(item.data.phone || ''),
-            normalizedPhone: String(item.data.normalizedPhone || '')
-        })), phone);
-        if (match) {
-            return toInterpreterResolution(match.id, match.data, { name: normalizedName, email: normalizedEmail }, 'profilePhone', 90);
-        }
+    if (normalizedPhoneKey) {
+        const byPhone = matchInterpreterDirectory(directory, item => (0, identityMatching_1.normalizeIdentityPhone)(String(item.data.normalizedPhone || item.data.phone || '')) === normalizedPhoneKey, fallback, 'profilePhone', 90);
+        if (byPhone)
+            return byPhone;
     }
     if (normalizedName) {
-        const interpreterByName = await db.collection('interpreters')
-            .where('name', '==', normalizedName)
-            .limit(2)
-            .get();
-        if (interpreterByName.size === 1) {
-            const profile = interpreterByName.docs[0].data();
-            return toInterpreterResolution(interpreterByName.docs[0].id, profile, { name: normalizedName, email: normalizedEmail }, 'exactName', 82);
-        }
-        if (interpreterByName.size > 1) {
-            return {
-                id: '',
-                name: normalizedName,
-                email: normalizedEmail,
-                photoUrl: '',
-                matchMethod: 'exactName',
-                matchConfidence: 0,
-                ambiguousCandidates: interpreterByName.docs.map(doc => doc.id)
-            };
-        }
-        const interpreterByNormalizedName = await db.collection('interpreters')
-            .where('normalizedName', '==', normalizedNameKey)
-            .limit(2)
-            .get();
-        if (interpreterByNormalizedName.size === 1) {
-            const profile = interpreterByNormalizedName.docs[0].data();
-            return toInterpreterResolution(interpreterByNormalizedName.docs[0].id, profile, { name: normalizedName, email: normalizedEmail }, 'normalizedName', 74);
-        }
-        if (interpreterByNormalizedName.size > 1) {
-            return {
-                id: '',
-                name: normalizedName,
-                email: normalizedEmail,
-                photoUrl: '',
-                matchMethod: 'normalizedName',
-                matchConfidence: 0,
-                ambiguousCandidates: interpreterByNormalizedName.docs.map(doc => doc.id)
-            };
-        }
+        const byExactName = matchInterpreterDirectory(directory, item => String(item.data.name || '').trim() === normalizedName, fallback, 'exactName', 82);
+        if (byExactName)
+            return byExactName;
+        const byNormalizedName = matchInterpreterDirectory(directory, item => (0, identityMatching_1.normalizeIdentityName)(String(item.data.normalizedName || item.data.name || '')) === normalizedNameKey, fallback, 'normalizedName', 74);
+        if (byNormalizedName)
+            return byNormalizedName;
     }
     return null;
 };

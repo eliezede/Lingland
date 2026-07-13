@@ -861,12 +861,20 @@ Evidence:
 
 Current blockers recorded 2026-07-13:
 
-- [ ] Deploy the updated professional resolver and conflict lifecycle.
-- [ ] Run interpreter dry sync to measure identity backfill without writing.
+- [x] Deploy the updated professional resolver and conflict lifecycle.
+- [x] Run interpreter dry sync to measure identity backfill without writing: 203 unique active interpreters, with 55 profiles consolidated from multiple Airtable rows.
 - [ ] Run controlled Airtable workflow dry run and compare unresolved-professional conflicts before/after.
 - [ ] Re-run mirror parity audit; previous evidence had 16 missing jobs and 153 status divergences.
 - [ ] Reconcile 466 affected invoices by reason before any finance sign-off.
 - [ ] Upgrade the Cloud Functions runtime before Node.js 20 decommissioning on 2026-10-30.
+
+Dry-run performance evidence recorded 2026-07-13:
+
+- [x] The first `OPEN_WORKFLOW` Interpretation Jobs Dry Run completed successfully in the backend in 218 seconds.
+- [x] Firebase logs proved status 200 even though the browser reported `deadline-exceeded`; this was a client callable timeout, not a failed synchronization.
+- [x] REDBOOK professional resolution now loads one interpreter directory per sync invocation instead of issuing repeated Firestore profile queries for every job.
+- [x] Long-running Airtable sync, audit, repair and interpreter import callables now allow up to 600 seconds on the web client.
+- [ ] Repeat the browser Dry Run after deployment and retain the complete module/result evidence in the UI.
 
 ## 21. Work Session Template
 
