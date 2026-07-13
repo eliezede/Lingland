@@ -173,7 +173,7 @@ export const AdminMigration = () => {
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
   const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
   const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
-  const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'unmatched' | 'changes'>('all');
+  const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'conflicts' | 'unmatched' | 'changes'>('all');
   const [showInfo, setShowInfo] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
@@ -514,16 +514,25 @@ export const AdminMigration = () => {
 
   const renderDetails = (result?: AirtableModuleResult | null) => {
     if (!result?.details?.length) return null;
+    const isErrorDetail = (detail: any) => detail.action === 'error';
+    const isConflictDetail = (detail: any) => detail.action === 'conflict' || Boolean(detail.conflictReasons?.length);
+    const isUnmatchedDetail = (detail: any) => (
+      detail.matchedBookings === 0
+      || detail.interpreterResolved === false
+      || ['created', 'would-create'].includes(detail.clientAction)
+    );
     const filteredDetails = result.details.filter((detail: any) => {
-      if (detailFilter === 'errors') return detail.action === 'error' || Boolean(detail.message);
-      if (detailFilter === 'unmatched') return detail.matchedBookings === 0 || detail.interpreterResolved === false || detail.clientAction === 'created';
+      if (detailFilter === 'errors') return isErrorDetail(detail);
+      if (detailFilter === 'conflicts') return isConflictDetail(detail);
+      if (detailFilter === 'unmatched') return isUnmatchedDetail(detail);
       if (detailFilter === 'changes') return ['created', 'updated', 'conflict'].includes(detail.action);
       return true;
     });
     const filterOptions: Array<{ id: typeof detailFilter; label: string; count: number }> = [
       { id: 'all', label: 'All', count: result.details.length },
-      { id: 'errors', label: 'Errors', count: result.details.filter((detail: any) => detail.action === 'error' || Boolean(detail.message)).length },
-      { id: 'unmatched', label: 'Unmatched', count: result.details.filter((detail: any) => detail.matchedBookings === 0 || detail.interpreterResolved === false || detail.clientAction === 'created').length },
+      { id: 'errors', label: 'Errors', count: result.details.filter(isErrorDetail).length },
+      { id: 'conflicts', label: 'Conflicts', count: result.details.filter(isConflictDetail).length },
+      { id: 'unmatched', label: 'Unmatched', count: result.details.filter(isUnmatchedDetail).length },
       { id: 'changes', label: 'Changes', count: result.details.filter((detail: any) => ['created', 'updated', 'conflict'].includes(detail.action)).length }
     ];
 
@@ -625,6 +634,11 @@ export const AdminMigration = () => {
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-medium">{detail.status || '-'}</p>
+                    {detail.conflictReasons?.map((reason: string) => (
+                      <p key={reason} className="mt-1 max-w-xs text-xs font-bold text-amber-700 dark:text-amber-300">
+                        {reason.replaceAll('_', ' ')}
+                      </p>
+                    ))}
                     {detail.message && <p className="max-w-xs text-xs text-red-600 dark:text-red-300">{detail.message}</p>}
                   </td>
                 </tr>

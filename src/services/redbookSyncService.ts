@@ -28,6 +28,10 @@ export type RedbookSyncDetail = {
   interpreterName?: string;
   interpreterId?: string;
   interpreterResolved?: boolean;
+  interpreterMatchMethod?: string;
+  interpreterMatchConfidence?: number;
+  ambiguousCandidates?: string[];
+  conflictReasons?: string[];
   status?: string;
   message?: string;
 };

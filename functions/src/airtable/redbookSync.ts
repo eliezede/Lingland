@@ -60,6 +60,7 @@ const TRANSLATION_CLIENT_INVOICES_TABLE = 'TR invoices';
 const TRANSLATOR_INVOICES_TABLE = 'INV TR';
 const MAX_DETAILS = 50;
 const MODULE_DETAIL_LIMIT = 30;
+const REDBOOK_PROCESS_CONCURRENCY = 8;
 const ASSIGNMENTS_COLLECTION = 'assignments';
 const DEFAULT_SYNC_STRATEGY: AirtableSyncStrategy = 'OPEN_WORKFLOW';
 const FINANCE_PROJECTION_VERSION = 2;
@@ -2025,6 +2026,57 @@ const pushErrorDetail = (
   }
 };
 
+const detailPriority = (detail: Record<string, unknown>) => {
+  if (detail.action === 'error') return 100;
+  if (Array.isArray(detail.conflictReasons) && detail.conflictReasons.length > 0) return 90;
+  if (detail.interpreterResolved === false) return 80;
+  if (detail.action === 'created') return 60;
+  if (detail.action === 'updated') return 40;
+  return 10;
+};
+
+const pushPrioritizedDetail = (
+  details: Array<Record<string, unknown>>,
+  detail: Record<string, unknown>,
+  limit = MODULE_DETAIL_LIMIT
+) => {
+  const cleanDetail = cleanReportData(detail);
+  if (details.length < limit) {
+    details.push(cleanDetail);
+    return;
+  }
+
+  const incomingPriority = detailPriority(cleanDetail);
+  let lowestPriority = Number.POSITIVE_INFINITY;
+  let replaceIndex = -1;
+  details.forEach((item, index) => {
+    const priority = detailPriority(item);
+    if (priority < lowestPriority) {
+      lowestPriority = priority;
+      replaceIndex = index;
+    }
+  });
+  if (replaceIndex >= 0 && incomingPriority > lowestPriority) {
+    details[replaceIndex] = cleanDetail;
+  }
+};
+
+const processWithConcurrency = async <T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>
+) => {
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+};
+
 const emptyActionStats = () => ({
   created: 0,
   updated: 0,
@@ -3710,7 +3762,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
     };
   }
 
-  for (const record of records) {
+  await processWithConcurrency(records, REDBOOK_PROCESS_CONCURRENCY, async record => {
     try {
       const mapped = await mapRecordToBooking(record) as any;
       if (!mode.dryRun && importMode !== 'READ_ONLY') mapped.booking.lastSyncRunId = runRef.id;
@@ -3742,6 +3794,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
         existing = existingSnap.exists ? existingSnap.data() || null : null;
       }
       mapped.booking.status = preserveStatusIfLocalAhead(existing?.status, mapped.booking.status, platformMode.sourceOfTruth);
+      const conflictReasons: string[] = [];
       const hasInterpreterSignal = Boolean(
         mapped.sourceSnapshot.interpreterName
         || mapped.sourceSnapshot.interpreterEmail
@@ -3752,6 +3805,9 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       if (unresolvedInterpreter) {
         mapped.booking.syncStatus = 'CONFLICT';
         stats.conflict += 1;
+        conflictReasons.push(mapped.sourceSnapshot.interpreterAmbiguousCandidates?.length
+          ? 'PROFESSIONAL_MATCH_AMBIGUOUS'
+          : 'PROFESSIONAL_NOT_RESOLVED');
         await writeSyncConflict({
           runId: runRef.id,
           entityType: 'booking',
@@ -3776,6 +3832,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       if (existing?.status && existing.status !== mapped.booking.status && platformMode.sourceOfTruth !== 'AIRTABLE') {
         mapped.booking.syncStatus = 'CONFLICT';
         stats.conflict += 1;
+        conflictReasons.push('STATUS_SOURCE_OF_TRUTH_MISMATCH');
         await writeSyncConflict({
           runId: runRef.id,
           entityType: 'booking',
@@ -3838,8 +3895,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
         });
       }
 
-      if (details.length < MAX_DETAILS) {
-        details.push({
+      pushPrioritizedDetail(details, {
           action,
           sourceRecordId: record.id,
           sourceBaseId: mapped.booking.sourceBaseId,
@@ -3858,13 +3914,13 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
           interpreterMatchMethod: mapped.sourceSnapshot.interpreterMatchMethod,
           interpreterMatchConfidence: mapped.sourceSnapshot.interpreterMatchConfidence,
           ambiguousCandidates: mapped.sourceSnapshot.interpreterAmbiguousCandidates,
+          conflictReasons,
           status: mapped.booking.status,
           skipReason: action === 'skipped' && isTerminalStableStatus(mapped.booking.status)
             ? 'TERMINAL_STABLE_ALREADY_MIRRORED'
             : undefined,
           workflowArtifacts
-        });
-      }
+        }, MAX_DETAILS);
       markConflictScopeProcessed(conflictContext, mapped.booking.sourceTable || DEFAULT_TABLE_NAME, record.id);
     } catch (error) {
       stats.error += 1;
@@ -3875,7 +3931,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
         message: error instanceof Error ? error.message : 'Unknown error'
       }, MAX_DETAILS);
     }
-  }
+  });
 
   const [clientInvoiceSync, interpreterInvoiceSync] = includeFinance
     ? await Promise.all([
