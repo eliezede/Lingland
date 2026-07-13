@@ -13,6 +13,7 @@ import {
   preserveStatusIfLocalAhead,
 } from './statusMapping';
 import axios from 'axios';
+import { findUniquePhoneCandidate, normalizeIdentityName, normalizeIdentityPhone } from './identityMatching';
 import { createHash } from 'crypto';
 
 type AirtableRecord = {
@@ -457,11 +458,71 @@ const writeSyncConflict = async (input: {
     incomingValue: input.incomingValue,
     recommendedAction: input.recommendedAction,
     dryRun: input.dryRun,
-    resolutionStatus: existing.exists ? existing.data()?.resolutionStatus || 'OPEN' : 'OPEN',
+    resolutionStatus: 'OPEN',
+    resolvedAt: null,
+    resolvedBy: '',
+    resolutionMethod: '',
+    resolutionRunId: '',
     firstSeenAt: existing.exists ? existing.data()?.firstSeenAt : admin.firestore.FieldValue.serverTimestamp(),
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   }), { merge: true });
+};
+
+type ConflictReconciliationContext = {
+  processedScopes: Set<string>;
+};
+
+const createConflictReconciliationContext = (): ConflictReconciliationContext => ({
+  processedScopes: new Set<string>()
+});
+
+const conflictScopeKey = (sourceTable: string, sourceRecordId: string) => (
+  `${normalizeKey(sourceTable)}|${sourceRecordId.trim()}`
+);
+
+const markConflictScopeProcessed = (
+  context: ConflictReconciliationContext | undefined,
+  sourceTable: string,
+  sourceRecordId: string
+) => {
+  if (!context || !sourceRecordId) return;
+  context.processedScopes.add(conflictScopeKey(sourceTable, sourceRecordId));
+};
+
+const resolveStaleSyncConflicts = async (
+  runId: string,
+  context: ConflictReconciliationContext,
+  dryRun: boolean
+) => {
+  if (dryRun || context.processedScopes.size === 0) return 0;
+
+  const openConflicts = await db.collection('syncConflicts')
+    .where('resolutionStatus', '==', 'OPEN')
+    .get();
+  const staleConflicts = openConflicts.docs.filter(item => {
+    const data = item.data();
+    const scope = conflictScopeKey(normalize(data.sourceTable), normalize(data.sourceRecordId));
+    return context.processedScopes.has(scope) && normalize(data.runId) !== runId;
+  });
+
+  for (let start = 0; start < staleConflicts.length; start += 400) {
+    const batch = db.batch();
+    staleConflicts.slice(start, start + 400).forEach(item => {
+      batch.set(item.ref, {
+        resolutionStatus: 'RESOLVED',
+        resolutionMethod: 'AUTOMATIC_SYNC_RECONCILIATION',
+        resolutionReason: 'Source record reprocessed successfully without reproducing this conflict.',
+        resolutionRunId: runId,
+        resolvedBy: 'SYSTEM',
+        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    await batch.commit();
+  }
+
+  return staleConflicts.length;
 };
 
 const titleCase = (value: string): string => {
@@ -481,7 +542,7 @@ type InterpreterResolution = {
   name: string;
   email: string;
   photoUrl: string;
-  matchMethod: 'sourceRecordId' | 'airtableRecordIds' | 'userEmail' | 'profileEmail' | 'exactName' | 'normalizedName';
+  matchMethod: 'sourceRecordId' | 'airtableRecordIds' | 'userEmail' | 'profileEmail' | 'exactName' | 'normalizedName' | 'profilePhone';
   matchConfidence: number;
   ambiguousCandidates?: string[];
 };
@@ -501,10 +562,21 @@ const toInterpreterResolution = (
   matchConfidence
 });
 
-const resolveInterpreter = async (email: string, name: string, airtableRecordId = '') => {
+let interpreterDirectoryPromise: Promise<Array<{ id: string; data: admin.firestore.DocumentData }>> | null = null;
+
+const getInterpreterDirectory = () => {
+  if (!interpreterDirectoryPromise) {
+    interpreterDirectoryPromise = db.collection('interpreters').get().then(snapshot => (
+      snapshot.docs.map(item => ({ id: item.id, data: item.data() }))
+    ));
+  }
+  return interpreterDirectoryPromise;
+};
+
+const resolveInterpreter = async (email: string, name: string, airtableRecordId = '', phone = '') => {
   const normalizedEmail = cleanEmail(email);
   const normalizedName = name.trim();
-  const normalizedNameKey = normalizeForMatch(normalizedName);
+  const normalizedNameKey = normalizeIdentityName(normalizedName);
 
   if (airtableRecordId) {
     const bySource = await db.collection('interpreters')
@@ -546,6 +618,18 @@ const resolveInterpreter = async (email: string, name: string, airtableRecordId 
     if (!interpreterByEmail.empty) {
       const profile = interpreterByEmail.docs[0].data();
       return toInterpreterResolution(interpreterByEmail.docs[0].id, profile, { name, email: normalizedEmail }, 'profileEmail', 94);
+    }
+  }
+
+  if (phone) {
+    const directory = await getInterpreterDirectory();
+    const match = findUniquePhoneCandidate(directory.map(item => ({
+      ...item,
+      phone: String(item.data.phone || ''),
+      normalizedPhone: String(item.data.normalizedPhone || '')
+    })), phone);
+    if (match) {
+      return toInterpreterResolution(match.id, match.data, { name: normalizedName, email: normalizedEmail }, 'profilePhone', 90);
     }
   }
 
@@ -604,10 +688,10 @@ const interpreterCache = new Map<string, Promise<{
   ambiguousCandidates?: string[];
 } | null>>();
 
-const resolveInterpreterCached = async (email: string, name: string, airtableRecordId = '') => {
-  const key = `${airtableRecordId}|${cleanEmail(email)}|${name.trim().toLowerCase()}`;
+const resolveInterpreterCached = async (email: string, name: string, airtableRecordId = '', phone = '') => {
+  const key = `${airtableRecordId}|${cleanEmail(email)}|${normalizeIdentityName(name)}|${normalizeIdentityPhone(phone)}`;
   if (!interpreterCache.has(key)) {
-    interpreterCache.set(key, resolveInterpreter(email, name, airtableRecordId));
+    interpreterCache.set(key, resolveInterpreter(email, name, airtableRecordId, phone));
   }
   return interpreterCache.get(key)!;
 };
@@ -619,6 +703,7 @@ const slugify = (value: string): string => {
 
 const normalizeForMatch = (value: string): string => {
   return normalize(value)
+    .toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/\b(ltd|limited|plc|nhs|trust|cic|llp|department|dept|service|services)\b/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
@@ -1590,7 +1675,7 @@ const mapRecordToBooking = async (record: AirtableRecord) => {
   const interpreterEmail = cleanEmail(pick(fields, ['INT EMAIL', 'EMAIL (from assign to)', 'Interpreter Email']));
   const interpreterPhone = pick(fields, ['PHONE (from assign to)', 'Interpreter Phone']);
   const interpreterAirtableRecordId = pick(fields, ['assign to']);
-  const resolvedInterpreter = await resolveInterpreterCached(interpreterEmail, interpreterName, interpreterAirtableRecordId);
+  const resolvedInterpreter = await resolveInterpreterCached(interpreterEmail, interpreterName, interpreterAirtableRecordId, interpreterPhone);
   const statusMapping = mapStatus(fields, Boolean(resolvedInterpreter?.id || interpreterName || interpreterEmail || interpreterAirtableRecordId));
 
   const sourceSnapshot = {
@@ -1766,8 +1851,9 @@ const mapTranslationRecordToBooking = async (record: AirtableRecord, tableName: 
   const clientIdentity = pickClientIdentity(fields);
   const translatorName = pick(fields, ['TRANSLATOR', 'Assign to TR', 'Assign to', 'Interpreters']);
   const translatorEmail = cleanEmail(pick(fields, ['EMAIL (from Assign to TR)', 'EMAIL (from assign to)', 'EMAIL', 'Translator Email']));
+  const translatorPhone = pick(fields, ['PHONE (from Assign to TR)', 'PHONE (from assign to)', 'Translator Phone']);
   const translatorAirtableRecordId = pick(fields, ['Assign to TR', 'Assign to', 'Interpreters']);
-  const resolvedTranslator = await resolveInterpreterCached(translatorEmail, translatorName, translatorAirtableRecordId);
+  const resolvedTranslator = await resolveInterpreterCached(translatorEmail, translatorName, translatorAirtableRecordId, translatorPhone);
   const statusMapping = mapTranslationStatus(fields, Boolean(resolvedTranslator?.id || translatorName || translatorEmail));
   const createdOrCompleted = pickRaw(fields, ['COMPLETED', 'TR CREATED', 'Created', 'Last Modified']) || record.createdTime;
   const parsedDate = dateOnly(createdOrCompleted);
@@ -1791,6 +1877,7 @@ const mapTranslationRecordToBooking = async (record: AirtableRecord, tableName: 
     clientIdentity,
     translatorName,
     translatorEmail,
+    translatorPhone,
     translatorAirtableRecordId,
     translatorResolved: Boolean(resolvedTranslator?.id),
     translatorMatchMethod: resolvedTranslator?.matchMethod || '',
@@ -2004,7 +2091,8 @@ const syncTranslationBookings = async (
   tableName: string,
   mode: SyncMode,
   sourceOfTruth: string | undefined,
-  runId?: string
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
@@ -2048,6 +2136,7 @@ const syncTranslationBookings = async (
       const hasTranslatorSignal = Boolean(
         mapped.sourceSnapshot.translatorName
         || mapped.sourceSnapshot.translatorEmail
+        || mapped.sourceSnapshot.translatorPhone
         || mapped.sourceSnapshot.translatorAirtableRecordId
       );
       const unresolvedTranslator = hasTranslatorSignal && !mapped.booking.interpreterId;
@@ -2068,6 +2157,7 @@ const syncTranslationBookings = async (
           incomingValue: {
             name: mapped.sourceSnapshot.translatorName,
             email: mapped.sourceSnapshot.translatorEmail,
+            phone: mapped.sourceSnapshot.translatorPhone,
             airtableRecordId: mapped.sourceSnapshot.translatorAirtableRecordId
           },
           recommendedAction: 'Review translator identity, link the Airtable professional to an interpreter profile, then rerun sync.',
@@ -2161,6 +2251,7 @@ const syncTranslationBookings = async (
           workflowArtifacts
         });
       }
+      markConflictScopeProcessed(conflictContext, tableName, record.id);
     } catch (error) {
       stats.error += 1;
       if (details.length < MODULE_DETAIL_LIMIT) {
@@ -2181,7 +2272,8 @@ const syncClientInvoices = async (
   records: AirtableRecord[],
   mode: SyncMode,
   sourceOfTruth: string | undefined,
-  runId?: string
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
@@ -2500,6 +2592,7 @@ const syncClientInvoices = async (
       }
 
       await commitIfNeeded();
+      markConflictScopeProcessed(conflictContext, CLIENT_INVOICES_TABLE, record.id);
     } catch (error) {
       stats.error += 1;
       if (details.length < MAX_DETAILS) {
@@ -2520,7 +2613,8 @@ const syncInterpreterInvoices = async (
   records: AirtableRecord[],
   mode: SyncMode,
   sourceOfTruth: string | undefined,
-  runId?: string
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
@@ -2554,6 +2648,12 @@ const syncInterpreterInvoices = async (
       const invoiceRefText = hasInvoiceReference ? rawInvoiceReference : `AIRTABLE-INT-${record.id}`;
       const interpreterEmail = cleanEmail(pick(fields, ['INT EMAIL (from 🖥️ REDBOOK)']));
       const interpreterName = pick(fields, ['INV name', 'assign to (from 🖥️ REDBOOK)']) || firstBooking.interpreterName || 'Interpreter';
+      const interpreterPhone = pick(fields, [
+        'PHONE (from assign to)',
+        'PHONE (from assign to (from 🖥️ REDBOOK))',
+        'Interpreter Phone',
+        'INT PHONE'
+      ]);
       const resolvedInterpreter = firstBooking.interpreterId
         ? {
           id: firstBooking.interpreterId,
@@ -2561,7 +2661,7 @@ const syncInterpreterInvoices = async (
           email: firstBooking.interpreterEmail || interpreterEmail,
           photoUrl: firstBooking.interpreterPhotoUrl || ''
         }
-        : await resolveInterpreterCached(interpreterEmail, interpreterName);
+        : await resolveInterpreterCached(interpreterEmail, interpreterName, '', interpreterPhone);
       const hasPersonConflict = !resolvedInterpreter?.id;
       const interpreterId = resolvedInterpreter?.id || `airtable_interpreter_${slugify(interpreterEmail || interpreterName || record.id)}`;
       const invoiceId = `airtable_interpreter_invoice_${record.id}`;
@@ -2659,7 +2759,7 @@ const syncInterpreterInvoices = async (
           severity: 'HIGH',
           reason: 'PAYABLE_PERSON_NOT_RESOLVED',
           currentValue: { interpreterId },
-          incomingValue: { interpreterEmail, interpreterName },
+          incomingValue: { interpreterEmail, interpreterName, interpreterPhone },
           recommendedAction: 'Link this Airtable payable to an existing interpreter profile or passive imported interpreter before payment sign-off.',
           dryRun: mode.dryRun
         });
@@ -2835,6 +2935,7 @@ const syncInterpreterInvoices = async (
       }
 
       await commitIfNeeded();
+      markConflictScopeProcessed(conflictContext, INTERPRETER_INVOICES_TABLE, record.id);
     } catch (error) {
       stats.error += 1;
       if (details.length < MAX_DETAILS) {
@@ -2855,7 +2956,8 @@ const syncTranslationClientInvoices = async (
   records: AirtableRecord[],
   mode: SyncMode,
   sourceOfTruth: string | undefined,
-  runId?: string
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
@@ -3146,6 +3248,7 @@ const syncTranslationClientInvoices = async (
       }
 
       await commitIfNeeded();
+      markConflictScopeProcessed(conflictContext, TRANSLATION_CLIENT_INVOICES_TABLE, record.id);
     } catch (error) {
       stats.error += 1;
       pushErrorDetail(details, {
@@ -3165,7 +3268,8 @@ const syncTranslatorInvoices = async (
   records: AirtableRecord[],
   mode: SyncMode,
   sourceOfTruth: string | undefined,
-  runId?: string
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
@@ -3198,6 +3302,12 @@ const syncTranslatorInvoices = async (
       const invoiceRefText = hasInvoiceReference ? rawInvoiceReference : `AIRTABLE-TR-PAY-${record.id}`;
       const translatorEmail = cleanEmail(pick(fields, ['EMAIL', 'EMAIL (from Assign to TR)']));
       const translatorName = pick(fields, ['Assign to', 'TRANSLATOR']) || firstBooking.interpreterName || 'Translator';
+      const translatorPhone = pick(fields, [
+        'PHONE (from Assign to TR)',
+        'PHONE (from assign to)',
+        'Translator Phone',
+        'TR PHONE'
+      ]);
       const resolvedTranslator = firstBooking.interpreterId
         ? {
           id: firstBooking.interpreterId,
@@ -3205,7 +3315,7 @@ const syncTranslatorInvoices = async (
           email: firstBooking.interpreterEmail || translatorEmail,
           photoUrl: firstBooking.interpreterPhotoUrl || ''
         }
-        : await resolveInterpreterCached(translatorEmail, translatorName);
+        : await resolveInterpreterCached(translatorEmail, translatorName, '', translatorPhone);
       const hasPersonConflict = !resolvedTranslator?.id;
       const interpreterId = resolvedTranslator?.id || `airtable_interpreter_${slugify(translatorEmail || translatorName || record.id)}`;
       const invoiceId = `airtable_translator_invoice_${record.id}`;
@@ -3307,7 +3417,7 @@ const syncTranslatorInvoices = async (
           severity: 'HIGH',
           reason: 'TRANSLATOR_PAYABLE_PERSON_NOT_RESOLVED',
           currentValue: { interpreterId },
-          incomingValue: { translatorEmail, translatorName },
+          incomingValue: { translatorEmail, translatorName, translatorPhone },
           recommendedAction: 'Link this Airtable translator payable to an existing translator/interpreter profile or passive imported profile before payment sign-off.',
           dryRun: mode.dryRun
         });
@@ -3492,6 +3602,7 @@ const syncTranslatorInvoices = async (
       }
 
       await commitIfNeeded();
+      markConflictScopeProcessed(conflictContext, TRANSLATOR_INVOICES_TABLE, record.id);
     } catch (error) {
       stats.error += 1;
       if (details.length < MODULE_DETAIL_LIMIT) {
@@ -3510,8 +3621,10 @@ const syncTranslatorInvoices = async (
 
 const syncRecords = async (mode: SyncMode, includeFinance = true) => {
   interpreterCache.clear();
+  interpreterDirectoryPromise = null;
   clientCache.clear();
   bookingByAirtableRecordCache.clear();
+  const conflictContext = createConflictReconciliationContext();
   const platformMode = await getPlatformMode();
   const importMode = platformMode.airtableImportMode || 'ON';
   const lastSyncIso = await getLastSyncIso();
@@ -3624,6 +3737,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       const hasInterpreterSignal = Boolean(
         mapped.sourceSnapshot.interpreterName
         || mapped.sourceSnapshot.interpreterEmail
+        || mapped.sourceSnapshot.interpreterPhone
         || mapped.sourceSnapshot.interpreterAirtableRecordId
       );
       const unresolvedInterpreter = hasInterpreterSignal && !mapped.booking.interpreterId;
@@ -3644,6 +3758,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
           incomingValue: {
             name: mapped.sourceSnapshot.interpreterName,
             email: mapped.sourceSnapshot.interpreterEmail,
+            phone: mapped.sourceSnapshot.interpreterPhone,
             airtableRecordId: mapped.sourceSnapshot.interpreterAirtableRecordId
           },
           recommendedAction: 'Review interpreter identity, link the Airtable professional to an interpreter profile, then rerun sync.',
@@ -3742,6 +3857,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
           workflowArtifacts
         });
       }
+      markConflictScopeProcessed(conflictContext, mapped.booking.sourceTable || DEFAULT_TABLE_NAME, record.id);
     } catch (error) {
       stats.error += 1;
       pushErrorDetail(details, {
@@ -3755,14 +3871,19 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
 
   const [clientInvoiceSync, interpreterInvoiceSync] = includeFinance
     ? await Promise.all([
-      syncClientInvoices(clientInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth, runRef.id),
-      syncInterpreterInvoices(interpreterInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth, runRef.id)
+      syncClientInvoices(clientInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth, runRef.id, conflictContext),
+      syncInterpreterInvoices(interpreterInvoiceRecords, { ...mode, dryRun: mode.dryRun || importMode === 'READ_ONLY' }, platformMode.sourceOfTruth, runRef.id, conflictContext)
     ])
     : [
       { stats: emptyActionStats(), details: [] },
       { stats: emptyActionStats(), details: [] }
     ];
   const financeErrorCount = clientInvoiceSync.stats.error + interpreterInvoiceSync.stats.error;
+  const autoResolvedConflicts = await resolveStaleSyncConflicts(
+    runRef.id,
+    conflictContext,
+    mode.dryRun || importMode === 'READ_ONLY'
+  );
 
   const finishedAt = new Date().toISOString();
   const result = {
@@ -3788,6 +3909,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
       interpreterInvoicesDropped: interpreterFinanceSelection.dropped,
       filterActive: clientFinanceSelection.filterActive || interpreterFinanceSelection.filterActive
     },
+    autoResolvedConflicts,
     startedAt,
     finishedAt,
     stats,
@@ -3845,8 +3967,10 @@ const normalizeScheduledModules = (input: unknown): AirtableSyncModule[] => {
 
 const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModule[]) => {
   interpreterCache.clear();
+  interpreterDirectoryPromise = null;
   clientCache.clear();
   bookingByAirtableRecordCache.clear();
+  const conflictContext = createConflictReconciliationContext();
 
   const platformMode = await getPlatformMode();
   const importMode = platformMode.airtableImportMode || 'ON';
@@ -3855,6 +3979,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   const runRef = db.collection('syncRuns').doc();
   const overallStats: Record<SyncAction, number> = emptyActionStats();
   const moduleResults: Array<Record<string, unknown>> = [];
+  let nestedAutoResolvedConflicts = 0;
   const nextOffsets: Record<string, string> = {};
   const lastSyncIso = await getLastSyncIso();
   const workflowSourceRecordIds = await getWorkflowSourceRecordIds(mode.syncStrategy);
@@ -3931,6 +4056,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
 
   if (modules.includes('redbook')) {
     const redbookResult = await syncRecords(effectiveMode, false) as any;
+    nestedAutoResolvedConflicts += Number(redbookResult.autoResolvedConflicts || 0);
     Object.assign(nextOffsets, redbookResult.nextOffsets || {});
     addStats(overallStats, redbookResult.stats);
     moduleResults.push({
@@ -3950,8 +4076,8 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
     ]);
     const translations = translationsBatch.records;
     const webTranslations = webTranslationsBatch.records;
-    const translationResult = await syncTranslationBookings(translations, TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id);
-    const webTranslationResult = await syncTranslationBookings(webTranslations, WEB_TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id);
+    const translationResult = await syncTranslationBookings(translations, TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
+    const webTranslationResult = await syncTranslationBookings(webTranslations, WEB_TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
     const combined = {
       stats: emptyActionStats(),
       details: [...translationResult.details, ...webTranslationResult.details].slice(0, MAX_DETAILS)
@@ -3964,31 +4090,36 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   if (modules.includes('clientInvoices')) {
     const selection = await fetchModuleRecords(CLIENT_INVOICES_TABLE);
     const records = selection.records;
-    const result = await syncClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
+    const result = await syncClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
     pushModule('clientInvoices', 'Client invoices', [CLIENT_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('interpreterInvoices')) {
     const selection = await fetchModuleRecords(INTERPRETER_INVOICES_TABLE);
     const records = selection.records;
-    const result = await syncInterpreterInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
+    const result = await syncInterpreterInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
     pushModule('interpreterInvoices', 'Interpreter invoices', [INTERPRETER_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('translationClientInvoices')) {
     const selection = await fetchModuleRecords(TRANSLATION_CLIENT_INVOICES_TABLE);
     const records = selection.records;
-    const result = await syncTranslationClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
+    const result = await syncTranslationClientInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
     pushModule('translationClientInvoices', 'Translation client invoices', [TRANSLATION_CLIENT_INVOICES_TABLE], records.length, result);
   }
 
   if (modules.includes('translatorInvoices')) {
     const selection = await fetchModuleRecords(TRANSLATOR_INVOICES_TABLE);
     const records = selection.records;
-    const result = await syncTranslatorInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id);
+    const result = await syncTranslatorInvoices(records, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
     pushModule('translatorInvoices', 'Translator invoices', [TRANSLATOR_INVOICES_TABLE], records.length, result);
   }
 
+  const autoResolvedConflicts = nestedAutoResolvedConflicts + await resolveStaleSyncConflicts(
+    runRef.id,
+    conflictContext,
+    effectiveMode.dryRun
+  );
   const finishedAt = new Date().toISOString();
   const result = {
     success: overallStats.error === 0,
@@ -4008,6 +4139,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       workflowSourceRecordIds: workflowSourceRecordIds.size,
       filterActive: mode.syncStrategy !== 'FULL_AUDIT' && mode.syncStrategy !== 'CUSTOM_LIMIT' && workflowSourceRecordIds.size > 0
     },
+    autoResolvedConflicts,
     moduleResults
   };
 

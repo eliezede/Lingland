@@ -143,9 +143,9 @@ Last deployed milestone:
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | Phase A - Source Tracking Foundation | PARTIAL | Shared `SourceTrackingFields` type and `SourceTracking` helper created. Booking/client/interpreter creation paths now produce consistent source identity fields. Booking Detail exposes source table/base/hash fields when available. Cloud Functions now write `sourceBaseId`, `legacyRef`, `snapshotHash`, `airtableSnapshotHash`, `lastSyncedAt` and `lastSyncRunId` for Clients, REDBOOK jobs, Translation jobs, client invoices, interpreter invoices, translation client invoices and translator invoices. Sync actions now backfill missing source identity on existing records instead of skipping them only because the Airtable hash is unchanged. Browser verified on `/admin/bookings/airtable_recBoWGWlUh0RiPP7`: current old record shows source record/table/legacy ref, while `sourceBase` and `snapshotHash` remain `N/A` until the next real sync backfills them. Final controlled sync evidence is still required before `DONE`. |
-| Phase B - Sync Runs and Conflicts | PARTIAL | Cloud Functions now persist `syncRuns` for Dry Run and real Sync results. Status ownership mismatches now write idempotent `syncConflicts` records with source identity, severity, current/incoming values and recommendation. Airtable Migration Overview now reads recent `syncRuns` and open `syncConflicts` from Firestore and shows them in the control cockpit. Browser verified Overview via workspace select on `/admin/administration/migration`. Conflict resolution actions are still missing, so this phase is not `DONE`. |
+| Phase B - Sync Runs and Conflicts | PARTIAL | Cloud Functions persist `syncRuns` for Dry Run and real Sync results. Conflicts use deterministic identities and now reopen if a problem recurs. A successful write sync automatically resolves only stale conflicts belonging to source records processed in that same run, preserving the original evidence and recording resolution run/timestamp. Manual exception handling and live reconciliation proof are still required before `DONE`. |
 | Phase C - Client Import Completion | PARTIAL | Client identity extraction now captures normalized company name, Sage ref, booking contact, invoice contact/email/phone, department and location. Client matching now checks source record, Airtable key, Sage ref, booking email, invoice email and only uses normalized company name when it has a single match. Job-side client resolution now receives stronger finance/name keys. Client list search includes invoice email, Sage ref and Airtable key. Client Detail Account tab now exposes Airtable identity, Finance identity and Dedupe key. Browser verified `/admin/clients` and `/admin/clients/airtable_client_hhft-urology-department`. Remaining: explicit duplicate/conflict UI for ambiguous clients and a controlled client dry-run/sync evidence pass. |
-| Phase D - Interpreter/Translator Identity Resolution | PARTIAL | Cloud Functions now resolve assigned interpreters/translators by Airtable source record id and `airtableRecordIds` before falling back to user email, profile email, exact name and normalized name. Resolver returns `matchMethod`, `matchConfidence` and ambiguous candidates. REDBOOK and Translation syncs now create `syncConflicts` when Airtable has a professional signal but no safe platform match. Migration audit rows show match method/confidence. Active interpreter import writes `normalizedName`, and the shared `Interpreter` type includes it. Remaining: phone/language-pair confidence, explicit conflict resolution UI and browser audit from interpreter profile. |
+| Phase D - Interpreter/Translator Identity Resolution | PARTIAL | Cloud Functions resolve professionals by Airtable source record id and linked record ids, then user/profile email, unique normalized UK phone and unique normalized name. Name normalization is now shared by interpreter import and REDBOOK/Translation matching, fixing case/accent drift; interpreter import backfills `normalizedName` and `normalizedPhone`. Resolver evidence includes method, confidence and ambiguous candidates. Remaining: controlled live dry/write proof, language-pair exception review and explicit manual conflict handling. |
 | Phase E - Interpretation Job Status Mapping | PARTIAL | REDBOOK status mapper now derives operational, assignment, timesheet, billing and cancellation states. Imported interpretation jobs persist `sourceStatusRaw`, `airtableOperationalStatus`, `airtableFinancialStatus`, `airtableStatusSignals`, `statusMappedAt`, `statusMappingState`, `assignmentState`, `timesheetState`, `billingState` and `cancellationState`. Booking Detail Mirror/Source panel now shows Airtable status, mapped timestamp, assignment state and billing state. `AIRTABLE_REDBOOK_STATUS_MAPPING.md` documents the mapping table and conflict rules. Remaining: inventory actual current Airtable status values and browser check across five examples. |
 
 ## 5. Master Dependency Order
@@ -826,19 +826,25 @@ Evidence recorded 2026-07-12:
 
 Goal: Lingland can decide when to move from Airtable mirror to platform source of truth.
 
+Status: IN PROGRESS. The admin Go-Live Control is implemented against real mirror, finance, conflict, sync, audit and platform-mode data. Activation remains deliberately blocked while reconciliation issues exist.
+
 Tasks:
 
 - [ ] Complete reconciliation report.
-- [ ] Confirm no external emails in mirror/test mode.
+- [x] Confirm no external emails in mirror/test mode.
 - [ ] Confirm import can stay active without duplicate data.
 - [ ] Confirm clients/interpreters can be activated gradually.
 - [ ] Confirm new platform forms replace Airtable forms.
-- [ ] Create rollback rule:
-  - [ ] pause imports
-  - [ ] keep Airtable reference
-  - [ ] restore communication suppression
-  - [ ] export audit report
-- [ ] Create go-live checklist.
+- [x] Create safe-mirror rollback rule:
+  - [x] restore Airtable as source of truth
+  - [x] keep Airtable references and history
+  - [x] restore communication suppression
+  - [x] resume Airtable imports
+  - [x] export audit evidence
+- [x] Create persistent go-live checklist.
+- [x] Add semantic audit events for platform-mode changes, readiness evidence, checklist updates and rollback.
+- [x] Add automatic resolution of stale sync conflicts after a successful source-record reprocessing pass.
+- [x] Add shared case/accent-safe professional identity normalization and unique UK phone fallback.
 
 Acceptance:
 
@@ -850,7 +856,17 @@ Evidence:
 
 - [ ] Final reconciliation exported.
 - [ ] Browser walkthrough of Operations + Finance + App.
-- [ ] Build passes.
+- [x] Local browser proof of Go-Live Control with real persisted mode, inventory, sync, conflict and audit evidence.
+- [x] 12 test files / 50 tests, Functions TypeScript build, web typecheck and production web build pass.
+
+Current blockers recorded 2026-07-13:
+
+- [ ] Deploy the updated professional resolver and conflict lifecycle.
+- [ ] Run interpreter dry sync to measure identity backfill without writing.
+- [ ] Run controlled Airtable workflow dry run and compare unresolved-professional conflicts before/after.
+- [ ] Re-run mirror parity audit; previous evidence had 16 missing jobs and 153 status divergences.
+- [ ] Reconcile 466 affected invoices by reason before any finance sign-off.
+- [ ] Upgrade the Cloud Functions runtime before Node.js 20 decommissioning on 2026-10-30.
 
 ## 21. Work Session Template
 
@@ -892,13 +908,13 @@ Before saying "done", answer yes to all:
 
 ## 23. Immediate Next Phase Recommendation
 
-Next work should be:
+Next work should remain inside Phase O:
 
-1. Phase A - Source Tracking Foundation.
-2. Phase B - Sync Runs and Conflicts.
-3. Phase E - Interpretation Job Status Mapping.
-4. Phase I - Reconciliation Reports.
+1. Deploy and prove identity/conflict reconciliation in Dry Run.
+2. Execute a controlled write mirror cycle with communications suppressed.
+3. Re-run mirror and financial audits and classify every remaining systemic reason.
+4. Complete Operations, Finance, client and interpreter pilot evidence.
 
-Reason: these phases convert the platform from "usable UI with partial sync" into an auditable mirror that can be trusted before go-live.
+Reason: the platform now has the control plane; the remaining work is data proof and exception closure before activation.
 
 Do not spend another cycle on broad visual cleanup until these foundations are implemented.

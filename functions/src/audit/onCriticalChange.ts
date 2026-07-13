@@ -17,7 +17,8 @@ const AUDIT_FIELDS = [
   'interpreterInvoiceId', 'adminApproved', 'readyForClientInvoice', 'readyForInterpreterInvoice',
   'role', 'profileId', 'source', 'sourceSystem', 'sourceRecordId', 'sourceTable', 'updatedBy', 'createdBy',
   'actorUserId', 'actorRole', 'adminApprovedBy', 'communicationMode', 'syncRunId', 'lastSyncRunId',
-  'runId', 'kind', 'success', 'dryRun', 'stats', 'metadata', 'createdAt', 'updatedAt', 'finishedAt',
+  'runId', 'kind', 'success', 'dryRun', 'stats', 'metadata', 'platformMode', 'checklist',
+  'lastReadinessAudit', 'lastRollbackAt', 'lastRollbackBy', 'createdAt', 'updatedAt', 'finishedAt',
 ];
 
 const snapshot = (value: FirebaseFirestore.DocumentData | undefined) => {
@@ -113,3 +114,5 @@ export const auditEmailDelivery = auditCollection('emailAudit');
 export const auditNotifications = auditCollection('notifications');
 export const auditSyncRuns = auditCollection('syncRuns');
 export const auditSyncConflicts = auditCollection('syncConflicts');
+export const auditSystemSettings = auditCollection('system');
+export const auditGoLiveControl = auditCollection('goLiveControl');

@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.auditSyncConflicts = exports.auditSyncRuns = exports.auditNotifications = exports.auditEmailDelivery = exports.auditMail = exports.auditJobEvents = exports.auditInterpreters = exports.auditClients = exports.auditUsers = exports.auditInterpreterInvoices = exports.auditClientInvoices = exports.auditTimesheets = exports.auditAssignments = exports.auditBookings = void 0;
+exports.auditGoLiveControl = exports.auditSystemSettings = exports.auditSyncConflicts = exports.auditSyncRuns = exports.auditNotifications = exports.auditEmailDelivery = exports.auditMail = exports.auditJobEvents = exports.auditInterpreters = exports.auditClients = exports.auditUsers = exports.auditInterpreterInvoices = exports.auditClientInvoices = exports.auditTimesheets = exports.auditAssignments = exports.auditBookings = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const auditPolicy_1 = require("./auditPolicy");
@@ -45,7 +45,8 @@ const AUDIT_FIELDS = [
     'interpreterInvoiceId', 'adminApproved', 'readyForClientInvoice', 'readyForInterpreterInvoice',
     'role', 'profileId', 'source', 'sourceSystem', 'sourceRecordId', 'sourceTable', 'updatedBy', 'createdBy',
     'actorUserId', 'actorRole', 'adminApprovedBy', 'communicationMode', 'syncRunId', 'lastSyncRunId',
-    'runId', 'kind', 'success', 'dryRun', 'stats', 'metadata', 'createdAt', 'updatedAt', 'finishedAt',
+    'runId', 'kind', 'success', 'dryRun', 'stats', 'metadata', 'platformMode', 'checklist',
+    'lastReadinessAudit', 'lastRollbackAt', 'lastRollbackBy', 'createdAt', 'updatedAt', 'finishedAt',
 ];
 const snapshot = (value) => {
     if (!value)
@@ -135,4 +136,6 @@ exports.auditEmailDelivery = auditCollection('emailAudit');
 exports.auditNotifications = auditCollection('notifications');
 exports.auditSyncRuns = auditCollection('syncRuns');
 exports.auditSyncConflicts = auditCollection('syncConflicts');
+exports.auditSystemSettings = auditCollection('system');
+exports.auditGoLiveControl = auditCollection('goLiveControl');
 //# sourceMappingURL=onCriticalChange.js.map

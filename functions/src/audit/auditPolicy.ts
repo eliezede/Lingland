@@ -1,6 +1,7 @@
 export type AuditDocument = Record<string, any> | undefined;
 
 const upper = (value: unknown) => String(value || '').trim().toUpperCase();
+const changed = (before: unknown, after: unknown) => JSON.stringify(before ?? null) !== JSON.stringify(after ?? null);
 
 const statusValue = (value: AuditDocument) => upper(
   value?.status
@@ -78,6 +79,17 @@ export const deriveAuditAction = (
     if (created) return 'SYNC_CONFLICT_CREATED';
     if (beforeStatus !== afterStatus && ['RESOLVED', 'IGNORED'].includes(afterStatus)) return 'SYNC_CONFLICT_RESOLVED';
     return 'SYNC_CONFLICT_UPDATED';
+  }
+
+  if (collectionName === 'system' && changed(before?.platformMode, after?.platformMode)) {
+    return 'PLATFORM_MODE_CHANGED';
+  }
+
+  if (collectionName === 'goLiveControl') {
+    if (changed(before?.lastRollbackAt, after?.lastRollbackAt) && after?.lastRollbackAt) return 'SAFE_MIRROR_RESTORED';
+    if (changed(before?.lastReadinessAudit, after?.lastReadinessAudit) && after?.lastReadinessAudit) return 'GO_LIVE_READINESS_RECORDED';
+    if (changed(before?.checklist, after?.checklist)) return 'GO_LIVE_CHECKLIST_UPDATED';
+    return created ? 'GO_LIVE_CONTROL_CREATED' : 'GO_LIVE_CONTROL_UPDATED';
   }
 
   if (created) return 'CREATED';

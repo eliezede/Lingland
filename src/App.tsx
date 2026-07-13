@@ -41,6 +41,7 @@ const AssignmentCenter = lazyNamed(() => import('./pages/admin/operations/Assign
 const TimesheetQueue = lazyNamed(() => import('./pages/admin/operations/TimesheetQueue'), 'TimesheetQueue');
 const AdminBookingDetails = React.lazy(() => import('./pages/admin/bookings/AdminBookingDetails'));
 const DataCenter = lazyNamed(() => import('./pages/admin/administration/DataCenter'), 'DataCenter');
+const GoLiveControl = lazyNamed(() => import('./pages/admin/administration/GoLiveControl'), 'GoLiveControl');
 const AdminStaff = lazyNamed(() => import('./pages/admin/administration/AdminStaff'), 'AdminStaff');
 const AdminOrgChart = lazyNamed(() => import('./pages/admin/administration/AdminOrgChart'), 'AdminOrgChart');
 const AdminProfile = lazyNamed(() => import('./pages/admin/AdminProfile'), 'AdminProfile');
@@ -201,6 +202,7 @@ const App = () => {
                               <Route path="finance/reports" element={<AdminReports />} />
                               <Route path="reports" element={<AdminReports />} />
                               <Route path="administration/data" element={<DataCenter />} />
+                              <Route path="administration/go-live" element={<GoLiveControl />} />
                                <Route path="administration/staff" element={<AdminStaff />} />
                                <Route path="administration/org-chart" element={<AdminOrgChart />} />
                                <Route path="profile" element={<AdminProfile />} />

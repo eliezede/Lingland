@@ -40,6 +40,7 @@ exports.syncAirtableInterpreters = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const axios_1 = __importDefault(require("axios"));
+const identityMatching_1 = require("./identityMatching");
 const db = admin.firestore();
 const DEFAULT_BASE_ID = 'appnglRJzSscwJJph';
 const INTERPRETERS_TABLE = 'Interpreters';
@@ -50,11 +51,7 @@ const normalize = (value) => {
         return '';
     return String(value).trim();
 };
-const normalizeName = (value) => value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
+const normalizeName = identityMatching_1.normalizeIdentityName;
 const assertAdmin = async (uid) => {
     if (!uid)
         throw new functions.https.HttpsError('unauthenticated', 'Administrator authentication is required');
@@ -185,6 +182,7 @@ exports.syncAirtableInterpreters = functions.runWith({
                 id: interpreterRef.id,
                 name: item.name,
                 normalizedName: normalizeName(item.name),
+                normalizedPhone: (0, identityMatching_1.normalizeIdentityPhone)(item.phone),
                 email: item.email,
                 phone: item.phone,
                 languages: item.languages,

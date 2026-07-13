@@ -264,6 +264,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /goLiveControl/{documentId} {
+      allow read, write: if isAdmin();
+    }
+
     match /bookingViewPreferences/{preferenceId} {
       allow read, write: if isAdmin() && (
         resource == null || resource.data.userId == request.auth.uid

@@ -28,4 +28,10 @@ describe('audit policy', () => {
     expect(deriveSyncRunId(undefined, after)).toBe('run-42');
     expect(deriveActorId('jobEvents', undefined, after)).toBe('user-7');
   });
+
+  it('names transition control operations explicitly', () => {
+    expect(deriveAuditAction('system', { platformMode: { sourceOfTruth: 'AIRTABLE' } }, { platformMode: { sourceOfTruth: 'PLATFORM' } })).toBe('PLATFORM_MODE_CHANGED');
+    expect(deriveAuditAction('goLiveControl', { checklist: {} }, { checklist: { finance: true } })).toBe('GO_LIVE_CHECKLIST_UPDATED');
+    expect(deriveAuditAction('goLiveControl', {}, { lastRollbackAt: '2026-07-12T22:00:00Z' })).toBe('SAFE_MIRROR_RESTORED');
+  });
 });

@@ -52,6 +52,14 @@ export const DataCenter = () => {
       detail: 'Immutable operational, finance, communication and synchronization events with actor and source context.'
     },
     {
+      id: 'go-live',
+      area: 'Go-live readiness',
+      owner: 'Super Admin',
+      status: 'REVIEW',
+      route: '/admin/administration/go-live',
+      detail: 'Runs final mirror/finance gates, persists sign-off and provides atomic safe rollback.'
+    },
+    {
       id: 'settings',
       area: 'Platform mode',
       owner: 'Super Admin',

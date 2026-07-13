@@ -1,6 +1,6 @@
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from './firebaseConfig';
+import { auth, db } from './firebaseConfig';
 import { ServiceType, SystemSettings } from '../types';
 
 const DEFAULT_PLATFORM_MODE: NonNullable<SystemSettings['platformMode']> = {
@@ -83,6 +83,10 @@ export const SystemService = {
   },
 
   updateSettings: async (settings: Partial<SystemSettings>) => {
-    await setDoc(doc(db, 'system', 'settings'), settings, { merge: true });
+    await setDoc(doc(db, 'system', 'settings'), {
+      ...settings,
+      updatedBy: auth.currentUser?.uid || 'SYSTEM',
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
   }
 };

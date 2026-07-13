@@ -1,6 +1,7 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import axios from 'axios';
+import { normalizeIdentityName, normalizeIdentityPhone } from './identityMatching';
 
 type AirtableRecord = {
   id: string;
@@ -31,11 +32,7 @@ const normalize = (value: unknown): string => {
   return String(value).trim();
 };
 
-const normalizeName = (value: string): string => value
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, ' ')
-  .trim()
-  .replace(/\s+/g, ' ');
+const normalizeName = normalizeIdentityName;
 
 const assertAdmin = async (uid?: string) => {
   if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Administrator authentication is required');
@@ -183,6 +180,7 @@ export const syncAirtableInterpreters = functions.runWith({
         id: interpreterRef.id,
         name: item.name,
         normalizedName: normalizeName(item.name),
+        normalizedPhone: normalizeIdentityPhone(item.phone),
         email: item.email,
         phone: item.phone,
         languages: item.languages,
