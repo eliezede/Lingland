@@ -6,7 +6,7 @@ import {
   LogOut, Globe2, Menu, FileText, PoundSterling,
   UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -77,6 +77,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: 'NET', label: 'Network', icon: Users, rootPath: '/admin/interpreters', modules: [SystemModule.INTERPRETERS, SystemModule.CLIENTS, SystemModule.RECRUITMENT] },
     { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/billing', module: SystemModule.FINANCE },
     { id: 'REPORTS', label: 'Reports', icon: BarChart3, rootPath: '/admin/reports', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.INTERPRETERS, SystemModule.CLIENTS] },
+    { id: 'AI', label: 'AI Control', icon: BrainCircuit, rootPath: '/admin/ai-control', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
     { id: 'COMMS', label: 'Comms', icon: MessageSquare, rootPath: '/admin/messages', modules: [SystemModule.MESSAGES] },
     { id: 'ADMIN', label: 'Administration', icon: Settings, rootPath: '/admin/users', modules: [SystemModule.STAFF_MGMT, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
   ];
@@ -124,6 +125,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       '/admin/billing/reports': 'REPORTS',
       '/admin/finance/reports': 'REPORTS',
       '/admin/reports': 'REPORTS',
+      '/admin/ai-control': 'AI',
       '/admin/billing': 'FIN',
       '/admin/finance': 'FIN',
       '/admin/messages': 'COMMS',
@@ -348,6 +350,16 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   {!isSecondarySlim && <div className="sidebar-group-label">Working boards</div>}
                   <NavItem to="/admin/bookings" icon={Briefcase} label="Job Centre" active={location.pathname === '/admin/bookings'} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/billing" icon={PoundSterling} label="Finance Board" active={location.pathname === '/admin/billing'} isCollapsed={isSecondarySlim} />
+                </div>
+              )}
+
+              {activeCategory === 'AI' && (
+                <div className="space-y-4">
+                  {!isSecondarySlim && <div className="sidebar-group-label">AI operations</div>}
+                  <NavItem to="/admin/ai-control" icon={BrainCircuit} label="Control Center" active={location.pathname === '/admin/ai-control' && !new URLSearchParams(location.search).get('tab')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-control?tab=suggestions" icon={Sparkles} label="Suggestions" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'suggestions'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-control?tab=runs" icon={Activity} label="Review Runs" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'runs'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-control?tab=audit" icon={History} label="AI Audit" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'audit'} isCollapsed={isSecondarySlim} />
                 </div>
               )}
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Search, Command, Zap, Users, Briefcase, FileText, Settings, ArrowRight,
-    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database
+    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database, BrainCircuit
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -55,6 +55,7 @@ export const CommandPalette = () => {
         { id: 'data-center', title: 'Data Center', subtitle: 'Sync readiness, exports and platform data guardrails', icon: Database, category: 'Admin', keywords: ['data', 'database', 'import', 'export', 'system', 'sync', 'readiness'], onSelect: () => navigate('/admin/administration/data') },
         { id: 'audit-log', title: 'Audit & Event Control', subtitle: 'Immutable operations, finance, sync and communication events', icon: FileText, category: 'Admin', keywords: ['audit', 'logs', 'history', 'trail', 'events'], onSelect: () => navigate('/admin/system/audit-log') },
         { id: 'go-live', title: 'Go-Live Control', subtitle: 'Final reconciliation, sign-off and rollback', icon: ShieldCheck, category: 'Admin', keywords: ['go live', 'readiness', 'rollback', 'transition'], onSelect: () => navigate('/admin/administration/go-live') },
+        { id: 'ai-control', title: 'AI Control Center', subtitle: 'Read-only reviews, suggestions and AI audit', icon: BrainCircuit, category: 'Admin', keywords: ['ai', 'deepseek', 'suggestions', 'autopilot', 'audit'], onSelect: () => navigate('/admin/ai-control') },
     ];
 
     const filtered = query.trim() === ''

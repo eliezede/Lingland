@@ -69,4 +69,5 @@ __exportStar(require("./cron/dbsExpiryCheck"), exports); // ON-03: Daily cron fo
 __exportStar(require("./public/submitPublicIntake"), exports);
 __exportStar(require("./audit/onCriticalChange"), exports);
 __exportStar(require("./audit/createAuditHealthCheck"), exports);
+__exportStar(require("./ai/aiFunctions"), exports);
 //# sourceMappingURL=index.js.map

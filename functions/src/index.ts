@@ -34,3 +34,4 @@ export * from './cron/dbsExpiryCheck'; // ON-03: Daily cron for DBS expiry alert
 export * from './public/submitPublicIntake';
 export * from './audit/onCriticalChange';
 export * from './audit/createAuditHealthCheck';
+export * from './ai/aiFunctions';

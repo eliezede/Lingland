@@ -64,6 +64,7 @@ const AdminApplications = lazyNamed(() => import('./pages/admin/AdminApplication
 const AdminMessages = lazyNamed(() => import('./pages/admin/AdminMessages'), 'AdminMessages');
 const StaffOnboarding = lazyNamed(() => import('./pages/admin/StaffOnboarding'), 'StaffOnboarding');
 const AdminMigration = lazyNamed(() => import('./pages/admin/AdminMigration'), 'AdminMigration');
+const AIControlCenter = lazyNamed(() => import('./pages/admin/ai/AIControlCenter'), 'AIControlCenter');
 
 const InterpreterDashboard = lazyNamed(() => import('./pages/interpreter/InterpreterDashboard'), 'InterpreterDashboard');
 const InterpreterJobs = lazyNamed(() => import('./pages/interpreter/InterpreterJobs'), 'InterpreterJobs');
@@ -217,6 +218,7 @@ const App = () => {
                                <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
                                <Route path="onboarding" element={<StaffOnboarding />} />
                                <Route path="administration/migration" element={<AdminMigration />} />
+                               <Route path="ai-control" element={<AIControlCenter />} />
                                <Route path="*" element={<NotFound />} />
                             </Routes>
                           </AdminLayout>

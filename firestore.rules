@@ -226,8 +226,19 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    match /system/{document=**} {
-      allow read, write: if isAdmin();
+    match /system/{documentId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin() && documentId != 'aiControl';
+    }
+
+    match /system/{documentId}/{nestedDocument=**} {
+      allow read: if isAdmin();
+      allow write: if isAdmin() && documentId != 'aiControl';
+    }
+
+    match /system/aiControl {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     match /systemSettings/{document=**} {
@@ -260,6 +271,31 @@ service cloud.firestore {
     }
 
     match /auditEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiSuggestions/{suggestionId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiRuns/{runId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiAuditEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiFeedback/{feedbackId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiLearningMemory/{memoryId} {
       allow read: if isAdmin();
       allow write: if false;
     }

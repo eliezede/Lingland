@@ -2,6 +2,63 @@
 
 Bookmark: AI_AUTOPILOT_PROGRESSIVE_LEARNING_FUTURE_PHASE
 
+## Implementation Status - 16 July 2026
+
+The first safe release is implemented as an operational auditor. It is not an autonomous operator.
+
+### Completed And Verified
+
+- [x] Admin AI Control Center with Control, Suggestions, Runs and Audit workspaces.
+- [x] Server-enforced modes: `OFF`, `READ_ONLY_AUDIT` and `SUGGEST`.
+- [x] `ASSISTED`, `CONTROLLED_AUTOPILOT` and `FULL_AUTOPILOT` remain hard-locked.
+- [x] Execution and external communication remain false regardless of browser input.
+- [x] DeepSeek adapter uses Firebase Secret Manager and never returns the key to the browser.
+- [x] Provider context excludes names, emails, phones, addresses, notes and patient data.
+- [x] Structured provider output is validated against known entities and a closed action registry.
+- [x] Deterministic local rules work when DeepSeek is not configured.
+- [x] Read-only findings cover assignment, overdue jobs, status consistency, billing gaps, invoice integrity, mirror conflicts and cost anomalies.
+- [x] Suggestion deduplication, human decision records, feedback reason codes and learning-memory aggregation.
+- [x] Immutable AI run and audit trails with explicit execution and communication flags.
+- [x] Firestore access restricted to administrators; writes are performed only by callable functions.
+- [x] Desktop, mobile, dark and light UI verified in the browser without page-level horizontal overflow.
+- [x] Production callable functions and Firestore rules deployed.
+
+Deployed callables:
+
+- `getAIControlState`
+- `updateAIControlSettings`
+- `testDeepSeekConnection`
+- `runAIReview`
+- `reviewAISuggestion`
+- `submitAISuggestionFeedback`
+
+Current production boundary:
+
+- mode: `READ_ONLY_AUDIT`;
+- execution: disabled;
+- external communication: blocked;
+- DeepSeek secret: sentinel `NOT_CONFIGURED`, so only deterministic local rules run;
+- approval of a suggestion records the human decision but does not execute an operational action.
+
+### Live Validation Evidence
+
+- A real Jobs review generated 25 read-only observations without changing jobs or sending communication.
+- The observations exposed imported jobs with a financial status but no linked client invoice identifier.
+- A second review completed with provider status `NOT_CONFIGURED` and created no duplicates.
+- Runs and Audit record scope, mode, provider state, findings, actor role and result.
+- The suggestion detail shows reason, expected benefit, evidence, data used and structured feedback.
+
+### Remaining Gates
+
+- [ ] Replace the sentinel with a real DeepSeek key and pass the provider connection test.
+- [ ] Validate provider-generated findings against a controlled non-production dataset.
+- [ ] Accumulate at least 30 days of reviewed suggestions and outcome feedback.
+- [ ] Implement reversible platform tools before enabling any execution.
+- [ ] Add outcome and cost-impact measurement for approved suggestions.
+- [ ] Add scheduled reviews only after manual review quality is proven.
+- [ ] Upgrade the Firebase Functions runtime from deprecated Node.js 20 before 30 October 2026.
+- [ ] Keep Assisted and Autopilot modes locked until all Go/No-Go criteria pass.
+
 ## Executive Position
 
 The AI Autopilot must be treated as a future operational layer, not as a shortcut around the platform issues that still need to be fixed.
@@ -245,7 +302,7 @@ These should go into an `AI Product Insights` queue, not directly change the app
 Admin section for:
 
 - Autopilot mode;
-- DeepSeek API key;
+- DeepSeek credential status (the key remains in Firebase Secret Manager);
 - model selection;
 - communication policy;
 - approval rules;
@@ -501,4 +558,3 @@ Start with:
 6. Staff feedback on suggestions.
 
 This gives immediate value without risking live operations.
-
