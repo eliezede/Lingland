@@ -20,6 +20,8 @@ The first safe release is implemented as an operational auditor. It is not an au
 - [x] Suggestion deduplication, human decision records, feedback reason codes and learning-memory aggregation.
 - [x] Immutable AI run and audit trails with explicit execution and communication flags.
 - [x] Firestore access restricted to administrators; writes are performed only by callable functions.
+- [x] Contextual `?` manual documents daily workflow, modes, scopes, findings, safety and troubleshooting.
+- [x] Seven-step guided tour highlights Safety, Guardrails, Provider, Review, Suggestions, Runs and Audit; it runs on first visit and can be restarted from the manual.
 - [x] Desktop, mobile, dark and light UI verified in the browser without page-level horizontal overflow.
 - [x] Production callable functions and Firestore rules deployed.
 
@@ -37,7 +39,7 @@ Current production boundary:
 - mode: `READ_ONLY_AUDIT`;
 - execution: disabled;
 - external communication: blocked;
-- DeepSeek secret: sentinel `NOT_CONFIGURED`, so only deterministic local rules run;
+- DeepSeek secret: configured in Firebase Secret Manager and verified as connected;
 - approval of a suggestion records the human decision but does not execute an operational action.
 
 ### Live Validation Evidence
@@ -50,7 +52,7 @@ Current production boundary:
 
 ### Remaining Gates
 
-- [ ] Replace the sentinel with a real DeepSeek key and pass the provider connection test.
+- [x] Replace the sentinel with a real DeepSeek key and pass the provider connection test.
 - [ ] Validate provider-generated findings against a controlled non-production dataset.
 - [ ] Accumulate at least 30 days of reviewed suggestions and outcome feedback.
 - [ ] Implement reversible platform tools before enabling any execution.

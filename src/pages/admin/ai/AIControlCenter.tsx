@@ -29,6 +29,16 @@ import { PageHeader } from '../../../components/layout/PageHeader';
 import { Button } from '../../../components/ui/Button';
 import { useToast } from '../../../context/ToastContext';
 import {
+  AIControlHelpButton,
+  AIControlManual,
+  AIControlTour,
+} from './AIControlGuide';
+import {
+  AI_CONTROL_TOUR_STEPS,
+  AI_CONTROL_TOUR_STORAGE_KEY,
+  AIControlGuideTab,
+} from './aiControlGuideData';
+import {
   AIControlConfig,
   AIControlService,
   AIControlState,
@@ -37,7 +47,7 @@ import {
   AISuggestion,
 } from '../../../services/aiControlService';
 
-type ControlTab = 'control' | 'suggestions' | 'runs' | 'audit';
+type ControlTab = AIControlGuideTab;
 
 const tabs: Array<{ id: ControlTab; label: string; icon: React.ElementType }> = [
   { id: 'control', label: 'Control', icon: Gauge },
@@ -92,7 +102,7 @@ const Pill = ({ children, className = '' }: { children: React.ReactNode; classNa
 );
 
 const SafetyState = ({ state }: { state: AIControlState }) => (
-  <section className="mb-5 grid border-y border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 xl:grid-cols-4">
+  <section data-ai-tour="safety" className="mb-5 grid border-y border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 xl:grid-cols-4">
     <div className="flex min-h-20 items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:border-r xl:border-b-0">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><BrainCircuit size={18} /></div>
       <div className="min-w-0"><p className="text-[10px] font-bold uppercase text-slate-400">Mode</p><p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{state.config.mode.replaceAll('_', ' ')}</p></div>
@@ -134,6 +144,9 @@ export const AIControlCenter = () => {
   const [reviewNote, setReviewNote] = useState('');
   const [feedbackReason, setFeedbackReason] = useState<'USEFUL' | 'WRONG' | 'TOO_RISKY' | 'MISSING_CONTEXT' | 'GOOD_NOT_NOW' | 'SHOULD_BECOME_RULE'>('USEFUL');
   const [feedbackComment, setFeedbackComment] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [tourStep, setTourStep] = useState<number | null>(null);
+  const [tourAutoChecked, setTourAutoChecked] = useState(false);
 
   const loadState = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -151,10 +164,52 @@ export const AIControlCenter = () => {
 
   useEffect(() => { void loadState(); }, [loadState]);
 
-  const setTab = (tab: ControlTab) => {
+  const setTab = useCallback((tab: ControlTab) => {
     const next = new URLSearchParams(searchParams);
     if (tab === 'control') next.delete('tab'); else next.set('tab', tab);
     setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (loading || !state || tourAutoChecked) return;
+    setTourAutoChecked(true);
+    try {
+      if (window.localStorage.getItem(AI_CONTROL_TOUR_STORAGE_KEY) !== 'completed') {
+        setManualOpen(false);
+        setTourStep(0);
+      }
+    } catch {
+      // The guide remains available from the help button when storage is unavailable.
+    }
+  }, [loading, state, tourAutoChecked]);
+
+  const markTourSeen = () => {
+    try { window.localStorage.setItem(AI_CONTROL_TOUR_STORAGE_KEY, 'completed'); } catch { /* no-op */ }
+  };
+
+  const startTour = () => {
+    setSelectedSuggestion(null);
+    setManualOpen(false);
+    setTab('control');
+    setTourStep(0);
+  };
+
+  const closeTour = (returnToControl = false) => {
+    markTourSeen();
+    setTourStep(null);
+    if (returnToControl) setTab('control');
+  };
+
+  const advanceTour = () => {
+    setTourStep(current => {
+      if (current === null) return null;
+      if (current >= AI_CONTROL_TOUR_STEPS.length - 1) {
+        markTourSeen();
+        window.setTimeout(() => setTab('control'), 0);
+        return null;
+      }
+      return current + 1;
+    });
   };
 
   const saveSettings = async () => {
@@ -272,12 +327,13 @@ export const AIControlCenter = () => {
   return (
     <div className="min-w-0">
       <PageHeader title="AI Control Center" subtitle="Controlled operational intelligence with human review, minimized data and an immutable decision trail.">
+        <AIControlHelpButton onClick={() => { setSelectedSuggestion(null); setTourStep(null); setManualOpen(true); }} />
         <Button variant="secondary" icon={RefreshCw} onClick={() => void loadState()} disabled={loading}>Refresh</Button>
       </PageHeader>
 
       <SafetyState state={state} />
 
-      <div className="mb-5 flex overflow-x-auto border-b border-slate-200 dark:border-slate-800" role="tablist" aria-label="AI Control sections">
+      <div data-ai-tour="sections" className="mb-5 flex overflow-x-auto border-b border-slate-200 dark:border-slate-800" role="tablist" aria-label="AI Control sections">
         {tabs.map(tab => {
           const Icon = tab.icon;
           const badge = tab.id === 'suggestions' ? state.counts.pending + state.counts.observed : undefined;
@@ -300,7 +356,7 @@ export const AIControlCenter = () => {
       {activeTab === 'control' && (
         <div className="space-y-5">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
-            <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <section data-ai-tour="guardrails" className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
                 <div><h2 className="text-sm font-semibold text-slate-950 dark:text-white">Operating guardrails</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Server-enforced policy for analysis and review.</p></div>
                 <Pill className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">No execution</Pill>
@@ -345,7 +401,7 @@ export const AIControlCenter = () => {
             </section>
 
             <div className="space-y-5">
-              <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+              <section data-ai-tour="provider" className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                 <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800"><h2 className="text-sm font-semibold text-slate-950 dark:text-white">Provider connection</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Credential state from Firebase Secret Manager.</p></div>
                 <div className="space-y-4 p-4">
                   <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900 dark:text-white">{state.provider.name}</p><p className="text-xs text-slate-500 dark:text-slate-400">Last test: {formatDateTime(state.provider.lastTestAt)}</p></div><Pill className={state.provider.configured ? statusClass('APPROVED') : riskClass('MEDIUM')}>{state.provider.configured ? 'Connected' : state.provider.lastTestStatus.replaceAll('_', ' ')}</Pill></div>
@@ -363,7 +419,7 @@ export const AIControlCenter = () => {
             </div>
           </div>
 
-          <section className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <section data-ai-tour="review" className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold text-slate-950 dark:text-white">Review console</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">On-demand, read-only operational analysis.</p></div><Button icon={Play} isLoading={running} onClick={() => void runReview()} disabled={draft.mode === 'OFF'}>Run {selectedScope.toLowerCase()} review</Button></div>
             <div className="grid gap-px bg-slate-200 dark:bg-slate-800 sm:grid-cols-2 xl:grid-cols-6">
               {reviewScopes.map(scope => <button key={scope.id} type="button" onClick={() => setSelectedScope(scope.id)} className={`min-h-24 bg-white p-4 text-left transition-colors dark:bg-slate-900 ${selectedScope === scope.id ? 'shadow-[inset_0_-3px_0_#2563eb] bg-blue-50/50 dark:bg-blue-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}><span className="text-xs font-bold text-slate-900 dark:text-white">{scope.label}</span><span className="mt-1 block text-xs leading-4 text-slate-500 dark:text-slate-400">{scope.detail}</span></button>)}
@@ -378,7 +434,7 @@ export const AIControlCenter = () => {
       )}
 
       {activeTab === 'suggestions' && (
-        <section className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <section data-ai-tour="suggestions" className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="grid gap-2 border-b border-slate-200 p-3 dark:border-slate-800 sm:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_160px_140px_150px]">
             <label className="relative"><Search size={16} className="absolute left-3 top-3 text-slate-400" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search finding or record" className="h-10 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></label>
             <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="ALL">All statuses</option><option value="PENDING">Pending</option><option value="OBSERVED">Observed</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="DISMISSED">Dismissed</option></select>
@@ -401,14 +457,14 @@ export const AIControlCenter = () => {
       )}
 
       {activeTab === 'runs' && (
-        <section className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <section data-ai-tour="runs" className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="overflow-x-auto"><table className="min-w-full divide-y divide-slate-200 text-left dark:divide-slate-800"><thead className="bg-slate-50 dark:bg-slate-950/60"><tr><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Started</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Scope</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Mode</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Provider</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Findings</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Result</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">{state.runs.map(run => <tr key={run.id}><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{formatDateTime(run.createdAt)}</td><td className="px-4 py-3 text-xs font-semibold text-slate-900 dark:text-white">{run.scope}</td><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{run.mode.replaceAll('_', ' ')}</td><td className="px-4 py-3"><Pill className={run.providerStatus === 'CONNECTED' ? statusClass('APPROVED') : run.providerStatus === 'ERROR' ? riskClass('HIGH') : statusClass('OBSERVED')}>{(run.providerStatus || 'PENDING').replaceAll('_', ' ')}</Pill></td><td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{Number(run.createdSuggestionCount || 0) + Number(run.promotedSuggestionCount || 0)}</td><td className="px-4 py-3"><Pill className={run.status === 'COMPLETED' ? statusClass('APPROVED') : run.status === 'FAILED' ? riskClass('HIGH') : statusClass('PENDING')}>{run.status}</Pill></td></tr>)}</tbody></table></div>
           {state.runs.length === 0 && <div className="px-6 py-16 text-center text-sm text-slate-500">No AI reviews have run yet.</div>}
         </section>
       )}
 
       {activeTab === 'audit' && (
-        <section className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <section data-ai-tour="audit" className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="overflow-x-auto"><table className="min-w-full divide-y divide-slate-200 text-left dark:divide-slate-800"><thead className="bg-slate-50 dark:bg-slate-950/60"><tr><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Timestamp</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Event</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Scope</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Role</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Approval</th><th className="px-4 py-2.5 text-[10px] font-bold uppercase text-slate-500">Result</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">{state.auditEvents.map(event => <tr key={event.id}><td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{formatDateTime(event.createdAt)}</td><td className="px-4 py-3"><p className="whitespace-nowrap text-xs font-semibold text-slate-900 dark:text-white">{event.eventType.replaceAll('_', ' ')}</p><p className="mt-0.5 text-[10px] text-slate-400">No execution · no external communication</p></td><td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{event.scope || 'SYSTEM'}</td><td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{event.actorRole}</td><td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">{event.approvalStatus.replaceAll('_', ' ')}</td><td className="px-4 py-3"><Pill className={event.result === 'ERROR' ? riskClass('HIGH') : statusClass('APPROVED')}>{event.result}</Pill></td></tr>)}</tbody></table></div>
           {state.auditEvents.length === 0 && <div className="px-6 py-16 text-center text-sm text-slate-500">No AI audit events have been recorded.</div>}
         </section>
@@ -431,6 +487,16 @@ export const AIControlCenter = () => {
           </div>
         </div>
       )}
+
+      <AIControlManual open={manualOpen && tourStep === null} onClose={() => setManualOpen(false)} onStartTour={startTour} />
+      <AIControlTour
+        stepIndex={tourStep}
+        activeTab={activeTab as AIControlGuideTab}
+        onTabChange={setTab}
+        onBack={() => setTourStep(current => current === null ? null : Math.max(0, current - 1))}
+        onNext={advanceTour}
+        onClose={() => closeTour(false)}
+      />
     </div>
   );
 };
