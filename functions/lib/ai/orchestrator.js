@@ -13,6 +13,10 @@ const actionScopes = {
     REVIEW_SYNC_CONFLICT: ['SYNC', 'PLATFORM'],
     REVIEW_COST_ANOMALY: ['COST', 'BILLING', 'PLATFORM'],
     CREATE_PROCESS_IMPROVEMENT: ['JOBS', 'ALLOCATION', 'BILLING', 'SYNC', 'COST', 'PLATFORM'],
+    CREATE_INTERNAL_ALERT: ['JOBS', 'ALLOCATION', 'BILLING', 'SYNC', 'COST', 'PLATFORM'],
+    PLACE_JOB_ON_HOLD: ['JOBS', 'PLATFORM'],
+    OFFER_INTERPRETER: ['ALLOCATION', 'JOBS', 'PLATFORM'],
+    CREATE_CLIENT_INVOICE_DRAFT: ['BILLING', 'PLATFORM'],
 };
 const safeText = (value, max) => String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -90,7 +94,7 @@ const runAIOrchestrator = async (input) => {
     const unique = new Map();
     for (const suggestion of [...localSuggestions, ...providerDrafts]) {
         const definition = policy_1.AI_ACTION_REGISTRY[suggestion.action];
-        if (definition.executionAvailable || definition.externalCommunication)
+        if (suggestion.source === 'DEEPSEEK' && definition.handler !== 'CREATE_OPERATION_TASK')
             continue;
         if (suggestion.confidence < input.config.minimumConfidence)
             continue;

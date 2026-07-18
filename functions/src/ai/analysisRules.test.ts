@@ -56,6 +56,27 @@ describe('AI deterministic operational analysis', () => {
     }), now);
     expect(findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ action: 'REVIEW_BILLING_GAP', entityId: 'job-1' }),
+      expect.objectContaining({ action: 'CREATE_CLIENT_INVOICE_DRAFT', entityId: 'job-1', proposedParameters: { invoiceState: 'DRAFT', sendAfterCreation: false } }),
+    ]));
+  });
+
+  it('proposes a deterministic offer for a future unassigned job', () => {
+    const findings = analyseOperationalContext(context({
+      scope: 'ALLOCATION',
+      jobs: [job({ date: '2026-07-20' })],
+    }), now);
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'OFFER_INTERPRETER', entityId: 'job-1', source: 'RULE_ENGINE' }),
+    ]));
+  });
+
+  it('places a contradictory booked job into the reversible hold proposal', () => {
+    const findings = analyseOperationalContext(context({
+      scope: 'JOBS',
+      jobs: [job({ status: 'BOOKED', assigned: false })],
+    }), now);
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'PLACE_JOB_ON_HOLD', entityId: 'job-1', confidence: 98 }),
     ]));
   });
 

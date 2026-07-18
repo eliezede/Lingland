@@ -33,12 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitAISuggestionFeedback = exports.reviewAISuggestion = exports.runAIReview = exports.testDeepSeekConnection = exports.updateAIControlSettings = exports.getAIControlState = void 0;
+exports.submitAISuggestionFeedback = exports.verifyAIOutcomes = exports.rollbackAIAction = exports.executeAIAction = exports.reviewAISuggestion = exports.runScheduledAIReviews = exports.runAIReview = exports.testDeepSeekConnection = exports.updateAIControlSettings = exports.getAIControlState = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const contextBuilder_1 = require("./contextBuilder");
 const deepSeekClient_1 = require("./deepSeekClient");
 const orchestrator_1 = require("./orchestrator");
+const actionEngine_1 = require("./actionEngine");
 const policy_1 = require("./policy");
 const types_1 = require("./types");
 const auditWriter_1 = require("../audit/auditWriter");
@@ -101,8 +102,8 @@ const writeAIAudit = async (input) => {
         approvalStatus: input.approvalStatus || 'NOT_APPLICABLE',
         result: input.result,
         rollbackAvailable: false,
-        executionAttempted: false,
-        externalCommunicationAttempted: false,
+        executionAttempted: input.executionAttempted === true,
+        externalCommunicationAttempted: input.externalCommunicationAttempted === true,
         inputSummary: input.summary,
     }));
     return ref.id;
@@ -142,22 +143,32 @@ const countQuery = async (query) => {
     return result.data().count;
 };
 const serializeDocs = (snapshot) => snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+const SYSTEM_AI_ACTOR = {
+    uid: 'AI_AUTOPILOT_SYSTEM',
+    role: 'SUPER_ADMIN',
+    organizationId: 'lingland-main',
+};
+const advancedMode = (mode) => ['ASSISTED', 'CONTROLLED_AUTOPILOT', 'FULL_AUTOPILOT'].includes(mode);
 exports.getAIControlState = functions.https.onCall(async (data, context) => {
     const actor = await assertActiveAdmin(context.auth?.uid);
     const requestedLimit = Math.max(20, Math.min(200, Number(data?.limit) || 100));
     const suggestionCollection = db.collection('aiSuggestions');
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const [config, suggestions, runs, auditEvents, pendingCount, observedCount, approvedCount, rejectedCount, dismissedCount, reviewedLast30Days, goLive] = await Promise.all([
+    const [config, suggestions, runs, executions, auditEvents, pendingCount, observedCount, approvedCount, executedCount, failedCount, rejectedCount, dismissedCount, reviewedLast30Days, openTaskCount, goLive] = await Promise.all([
         loadConfig(),
         suggestionCollection.orderBy('createdAt', 'desc').limit(requestedLimit).get(),
         db.collection('aiRuns').orderBy('createdAt', 'desc').limit(30).get(),
+        db.collection('aiActionExecutions').orderBy('createdAt', 'desc').limit(100).get(),
         db.collection('aiAuditEvents').orderBy('createdAt', 'desc').limit(50).get(),
         countQuery(suggestionCollection.where('status', '==', 'PENDING')),
         countQuery(suggestionCollection.where('status', '==', 'OBSERVED')),
         countQuery(suggestionCollection.where('status', '==', 'APPROVED')),
+        countQuery(suggestionCollection.where('status', '==', 'EXECUTED')),
+        countQuery(suggestionCollection.where('status', '==', 'FAILED')),
         countQuery(suggestionCollection.where('status', '==', 'REJECTED')),
         countQuery(suggestionCollection.where('status', '==', 'DISMISSED')),
         countQuery(suggestionCollection.where('reviewedAt', '>=', thirtyDaysAgo)),
+        countQuery(db.collection('aiOperationalTasks').where('status', '==', 'OPEN')),
         db.collection('goLiveControl').doc('current').get(),
     ]);
     const goLiveData = goLive.data() || {};
@@ -175,31 +186,40 @@ exports.getAIControlState = functions.https.onCall(async (data, context) => {
             apiKeyExposed: false,
         },
         capabilities: {
-            implementationStage: 'SUGGESTIONS_ONLY',
+            implementationStage: 'AUTOPILOT_ENGINE',
             readOnlyAnalysis: true,
             suggestions: true,
             humanReview: true,
             structuredFeedback: true,
-            execution: false,
-            externalCommunication: false,
-            advancedModesLocked: true,
+            execution: true,
+            rollback: true,
+            outcomeVerification: true,
+            scheduledReviews: true,
+            externalCommunication: true,
+            advancedModesLocked: false,
             unlockRequirements: [
                 { id: 'go_live', label: 'Production go-live controls signed off', satisfied: manualGoLiveSignedOff },
-                { id: 'review_history', label: 'At least 30 days of reviewed AI suggestions', satisfied: false },
-                { id: 'execution_tools', label: 'Validated reversible action tools', satisfied: false },
+                { id: 'review_history', label: 'Reviewed AI evidence is available', satisfied: reviewedLast30Days >= 30 },
+                { id: 'execution_tools', label: 'Validated reversible action tools', satisfied: true },
+                { id: 'activation_ack', label: 'Super admin accepted the automation boundary', satisfied: Boolean(config.automationAcknowledgedAt) },
+                { id: 'live_execution_ack', label: 'Super admin accepted the live-write boundary', satisfied: Boolean(config.liveExecutionAcknowledgedAt) },
             ],
         },
         counts: {
             pending: pendingCount,
             observed: observedCount,
             approved: approvedCount,
+            executed: executedCount,
+            failed: failedCount,
             rejected: rejectedCount,
             dismissed: dismissedCount,
             reviewedLast30Days,
+            openTasks: openTaskCount,
         },
         actionRegistry: Object.values(policy_1.AI_ACTION_REGISTRY),
         suggestions: serializeDocs(suggestions),
         runs: serializeDocs(runs),
+        executions: serializeDocs(executions),
         auditEvents: serializeDocs(auditEvents),
         viewer: { role: actor.role, canManageSettings: actor.role === 'SUPER_ADMIN' },
     });
@@ -215,6 +235,47 @@ exports.updateAIControlSettings = functions.https.onCall(async (data, context) =
     catch (error) {
         throw new functions.https.HttpsError('failed-precondition', error instanceof Error ? error.message : 'Invalid AI settings.');
     }
+    const requestedMode = String(patch.mode || before.mode);
+    if (advancedMode(requestedMode) && !before.automationAcknowledgedAt) {
+        if (String(data?.activationConfirmation || '') !== 'ENABLE LINGLAND AUTOPILOT') {
+            throw new functions.https.HttpsError('failed-precondition', 'Type ENABLE LINGLAND AUTOPILOT to acknowledge the automation boundary.');
+        }
+        patch.automationAcknowledgedAt = nowIso();
+        patch.automationAcknowledgedBy = actor.uid;
+    }
+    if (patch.executionEnabled === true && !advancedMode(requestedMode)) {
+        throw new functions.https.HttpsError('failed-precondition', 'Execution can only be enabled in Assisted or Autopilot mode.');
+    }
+    const enablingLiveExecution = patch.executionEnabled === true
+        && patch.simulationOnly === false
+        && (!before.executionEnabled || before.simulationOnly)
+        && !before.liveExecutionAcknowledgedAt;
+    if (enablingLiveExecution) {
+        if (String(data?.liveExecutionConfirmation || '') !== 'ENABLE LIVE EXECUTION') {
+            throw new functions.https.HttpsError('failed-precondition', 'Type ENABLE LIVE EXECUTION to acknowledge platform writes.');
+        }
+        patch.liveExecutionAcknowledgedAt = nowIso();
+        patch.liveExecutionAcknowledgedBy = actor.uid;
+    }
+    if (patch.autoExecuteHighRisk === true && requestedMode !== 'FULL_AUTOPILOT') {
+        throw new functions.https.HttpsError('failed-precondition', 'High-risk automatic execution is available only in Full Autopilot.');
+    }
+    if (patch.externalCommunicationEnabled === true && !before.externalCommunicationEnabled) {
+        if (requestedMode !== 'FULL_AUTOPILOT' || String(data?.externalCommunicationConfirmation || '') !== 'ENABLE EXTERNAL COMMUNICATION') {
+            throw new functions.https.HttpsError('failed-precondition', 'External communication requires Full Autopilot and explicit confirmation.');
+        }
+    }
+    if (patch.scheduledReviewsEnabled === true && requestedMode === 'OFF') {
+        throw new functions.https.HttpsError('failed-precondition', 'Scheduled reviews cannot run while AI Control is off.');
+    }
+    const requestedScheduledScopes = patch.scheduledScopes || before.scheduledScopes;
+    if (patch.scheduledReviewsEnabled === true && requestedScheduledScopes.length === 0) {
+        throw new functions.https.HttpsError('failed-precondition', 'Select at least one scheduled review scope.');
+    }
+    if (!advancedMode(requestedMode)) {
+        patch.executionEnabled = false;
+        patch.externalCommunicationEnabled = false;
+    }
     if (Object.keys(patch).length === 0) {
         throw new functions.https.HttpsError('invalid-argument', 'No supported AI settings were supplied.');
     }
@@ -222,8 +283,6 @@ exports.updateAIControlSettings = functions.https.onCall(async (data, context) =
     const next = (0, policy_1.mergeAIControlConfig)({
         ...before,
         ...patch,
-        executionEnabled: false,
-        externalCommunicationEnabled: false,
         updatedAt: nowIso(),
         updatedBy: actor.uid,
     });
@@ -236,7 +295,13 @@ exports.updateAIControlSettings = functions.https.onCall(async (data, context) =
             entityId: 'system/aiControl',
             mode: next.mode,
             result: 'SUCCESS',
-            summary: { changedFields, executionEnabled: false, externalCommunicationEnabled: false },
+            summary: {
+                changedFields,
+                executionEnabled: next.executionEnabled,
+                simulationOnly: next.simulationOnly,
+                externalCommunicationEnabled: next.externalCommunicationEnabled,
+                emergencyPaused: next.emergencyPaused,
+            },
         }),
         writeCoreAIEvent({
             actor,
@@ -299,16 +364,10 @@ exports.testDeepSeekConnection = functions.runWith(SAFE_RUNTIME).https.onCall(as
         throw asCallableError(error, 'DeepSeek connection test failed.');
     }
 });
-exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, context) => {
-    const actor = await assertActiveAdmin(context.auth?.uid);
-    const scope = String(data?.scope || '').toUpperCase();
-    if (!types_1.AI_REVIEW_SCOPES.includes(scope)) {
-        throw new functions.https.HttpsError('invalid-argument', 'A supported review scope is required.');
-    }
-    const config = await loadConfig();
-    if (config.mode === 'OFF') {
-        throw new functions.https.HttpsError('failed-precondition', 'Set AI Control to Read-only audit or Suggest before running a review.');
-    }
+const runReviewForActor = async (input) => {
+    const { actor, scope, config } = input;
+    if (config.mode === 'OFF')
+        throw new functions.https.HttpsError('failed-precondition', 'AI Control is off.');
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
     const runsToday = await countQuery(db.collection('aiRuns').where('createdAt', '>=', startOfDay.toISOString()));
@@ -323,6 +382,7 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
         mode: config.mode,
         model: config.model,
         status: 'RUNNING',
+        trigger: input.trigger,
         createdAt,
         createdBy: actor.uid,
         executionAttempted: false,
@@ -348,11 +408,12 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
         let createdCount = 0;
         let promotedCount = 0;
         let duplicateCount = 0;
+        const executionCandidateIds = [];
         for (const draft of result.suggestions) {
             const fingerprint = (0, policy_1.suggestionFingerprint)(draft);
             const previous = existing.get(fingerprint);
             if (previous) {
-                if (config.mode === 'SUGGEST' && previous.status === 'OBSERVED') {
+                if (config.mode !== 'READ_ONLY_AUDIT' && previous.status === 'OBSERVED') {
                     batch.set(previous.ref, {
                         status: 'PENDING',
                         promotedAt: nowIso(),
@@ -361,6 +422,7 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
                         updatedAt: nowIso(),
                     }, { merge: true });
                     promotedCount += 1;
+                    executionCandidateIds.push(previous.ref.id);
                 }
                 else {
                     duplicateCount += 1;
@@ -369,6 +431,7 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
             }
             const suggestionRef = db.collection('aiSuggestions').doc();
             const definition = policy_1.AI_ACTION_REGISTRY[draft.action];
+            const suggestionStatus = config.mode === 'READ_ONLY_AUDIT' ? 'OBSERVED' : 'PENDING';
             batch.set(suggestionRef, clean({
                 id: suggestionRef.id,
                 schemaVersion: 1,
@@ -376,7 +439,7 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
                 latestRunId: runRef.id,
                 scope,
                 mode: config.mode,
-                status: config.mode === 'READ_ONLY_AUDIT' ? 'OBSERVED' : 'PENDING',
+                status: suggestionStatus,
                 action: draft.action,
                 category: draft.category,
                 risk: definition.risk,
@@ -391,19 +454,38 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
                 dataUsed: draft.dataUsed,
                 source: draft.source,
                 fingerprint,
-                executionAvailable: false,
-                approvalExecutesAction: false,
-                externalCommunication: false,
+                executionAvailable: definition.executionAvailable,
+                approvalExecutesAction: (0, policy_1.isExecutionMode)(config.mode),
+                externalCommunication: definition.externalCommunication,
+                rollbackAvailable: definition.reversible,
+                executionHandler: definition.handler,
+                proposedParameters: draft.proposedParameters || {},
                 createdAt: nowIso(),
                 createdBy: actor.uid,
             }));
             existing.set(fingerprint, {
                 ref: suggestionRef,
-                status: config.mode === 'READ_ONLY_AUDIT' ? 'OBSERVED' : 'PENDING',
+                status: suggestionStatus,
             });
+            if (suggestionStatus === 'PENDING')
+                executionCandidateIds.push(suggestionRef.id);
             createdCount += 1;
         }
         await batch.commit();
+        const automaticResults = (0, policy_1.isExecutionMode)(config.mode)
+            ? await (0, actionEngine_1.executeAutomaticSuggestions)({
+                db,
+                suggestionIds: executionCandidateIds,
+                actor,
+                config,
+                trigger: input.trigger,
+            })
+            : [];
+        const succeededActions = automaticResults.filter(item => ['SUCCEEDED', 'SIMULATED'].includes(item.status)).length;
+        const failedActions = automaticResults.filter(item => item.status === 'FAILED').length;
+        const blockedActions = automaticResults.filter(item => item.status === 'BLOCKED').length;
+        const executionAttempted = automaticResults.some(item => item.status === 'SUCCEEDED');
+        const externalCommunicationAttempted = automaticResults.some(item => item.externalCommunicationAttempted === true);
         const completedAt = nowIso();
         await runRef.set(clean({
             status: 'COMPLETED',
@@ -416,8 +498,12 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
             createdSuggestionCount: createdCount,
             promotedSuggestionCount: promotedCount,
             duplicateSuggestionCount: duplicateCount,
-            executionAttempted: false,
-            externalCommunicationAttempted: false,
+            automaticExecutionCandidateCount: executionCandidateIds.length,
+            automaticExecutionSucceededCount: succeededActions,
+            automaticExecutionFailedCount: failedActions,
+            automaticExecutionBlockedCount: blockedActions,
+            executionAttempted,
+            externalCommunicationAttempted,
         }), { merge: true });
         if (result.providerStatus === 'CONNECTED') {
             await AI_CONFIG_REF.set({ providerConfigured: true }, { merge: true });
@@ -436,8 +522,15 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
                 promotedCount,
                 duplicateCount,
                 providerStatus: result.providerStatus,
-                executionAttempted: false,
+                executionCandidateCount: executionCandidateIds.length,
+                succeededActions,
+                failedActions,
+                blockedActions,
+                executionAttempted,
+                externalCommunicationAttempted,
             },
+            executionAttempted,
+            externalCommunicationAttempted,
         });
         return {
             success: true,
@@ -449,8 +542,9 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
             promotedCount,
             duplicateCount,
             dataSummary: reviewContext.dataSummary,
-            executionAttempted: false,
-            externalCommunicationAttempted: false,
+            automaticExecution: { candidates: executionCandidateIds.length, succeeded: succeededActions, failed: failedActions, blocked: blockedActions },
+            executionAttempted,
+            externalCommunicationAttempted,
         };
     }
     catch (error) {
@@ -467,12 +561,57 @@ exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, 
         });
         throw asCallableError(error, 'AI review could not be completed.');
     }
+};
+exports.runAIReview = functions.runWith(SAFE_RUNTIME).https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    const scope = String(data?.scope || '').toUpperCase();
+    if (!types_1.AI_REVIEW_SCOPES.includes(scope)) {
+        throw new functions.https.HttpsError('invalid-argument', 'A supported review scope is required.');
+    }
+    const config = await loadConfig();
+    return runReviewForActor({ actor, scope, config, trigger: 'AUTO_REVIEW' });
+});
+exports.runScheduledAIReviews = functions.runWith(SAFE_RUNTIME).pubsub
+    .schedule('every 30 minutes')
+    .timeZone('Europe/London')
+    .onRun(async () => {
+    const config = await loadConfig();
+    if (!config.scheduledReviewsEnabled || config.mode === 'OFF' || config.emergencyPaused) {
+        return { skipped: true, reason: config.emergencyPaused ? 'EMERGENCY_PAUSED' : 'SCHEDULE_DISABLED' };
+    }
+    const lastRunAt = config.lastScheduledRunAt ? new Date(config.lastScheduledRunAt).getTime() : 0;
+    if (lastRunAt && Date.now() - lastRunAt < config.scheduleIntervalMinutes * 60 * 1000 - 60000) {
+        return { skipped: true, reason: 'NOT_DUE' };
+    }
+    const results = [];
+    for (const scope of config.scheduledScopes) {
+        try {
+            results.push(clean(await runReviewForActor({ actor: SYSTEM_AI_ACTOR, scope, config, trigger: 'SCHEDULED_REVIEW' })));
+        }
+        catch (error) {
+            results.push({ scope, error: error instanceof Error ? boundedString(error.message, 180) : 'Scheduled review failed.' });
+        }
+    }
+    const outcomeVerification = await (0, actionEngine_1.verifyAIExecutionOutcomes)({ db, actor: SYSTEM_AI_ACTOR, limit: 50 });
+    const completedAt = nowIso();
+    await AI_CONFIG_REF.set({ lastScheduledRunAt: completedAt }, { merge: true });
+    await writeAIAudit({
+        actor: SYSTEM_AI_ACTOR,
+        eventType: 'SCHEDULED_AUTOPILOT_CYCLE_COMPLETED',
+        entityType: 'AI_SCHEDULE',
+        entityId: completedAt,
+        mode: config.mode,
+        result: 'SUCCESS',
+        summary: { scopes: config.scheduledScopes, results, outcomeVerification },
+    });
+    return { skipped: false, completedAt, scopes: results.length, outcomeVerification };
 });
 exports.reviewAISuggestion = functions.https.onCall(async (data, context) => {
     const actor = await assertActiveAdmin(context.auth?.uid);
     const suggestionId = boundedString(data?.suggestionId, 160);
     const decision = String(data?.decision || '').toUpperCase();
     const note = boundedString(data?.note, 500);
+    const executeNow = data?.executeNow !== false;
     const statusByDecision = { APPROVE: 'APPROVED', REJECT: 'REJECTED', DISMISS: 'DISMISSED' };
     if (!suggestionId || !statusByDecision[decision]) {
         throw new functions.https.HttpsError('invalid-argument', 'A suggestion and supported review decision are required.');
@@ -495,7 +634,7 @@ exports.reviewAISuggestion = functions.https.onCall(async (data, context) => {
             reviewedAt,
             reviewedBy: actor.uid,
             executionAttempted: false,
-            executionResult: 'NOT_AVAILABLE_IN_CURRENT_STAGE',
+            executionResult: decision === 'APPROVE' ? 'PENDING_POLICY_EVALUATION' : 'NOT_APPLICABLE',
             updatedAt: reviewedAt,
         }, { merge: true });
     });
@@ -510,19 +649,75 @@ exports.reviewAISuggestion = functions.https.onCall(async (data, context) => {
             risk: String(before.risk || 'LOW'),
             confidence: Number(before.confidence) || 0,
             approvalStatus: statusByDecision[decision],
-            result: 'RECORDED_NO_EXECUTION',
-            summary: { decision, executionAttempted: false, noteProvided: Boolean(note) },
+            result: 'DECISION_RECORDED',
+            summary: { decision, executeNow, noteProvided: Boolean(note) },
         }),
         writeCoreAIEvent({
             actor,
             action: 'AI_SUGGESTION_REVIEWED',
             entityId: suggestionId,
             before: { status: before.status },
-            after: { status: statusByDecision[decision], executionAttempted: false },
+            after: { status: statusByDecision[decision], executeNow },
             changedFields: ['status', 'reviewDecision', 'reviewedAt', 'reviewedBy'],
         }),
     ]);
-    return { success: true, suggestionId, status: statusByDecision[decision], executionAttempted: false };
+    let execution = null;
+    if (decision === 'APPROVE' && executeNow) {
+        try {
+            execution = clean(await (0, actionEngine_1.executeAISuggestionAction)({
+                db,
+                suggestionId,
+                actor,
+                humanApproved: true,
+                trigger: 'HUMAN_APPROVAL',
+            }));
+        }
+        catch (error) {
+            execution = { success: false, status: 'FAILED', reason: error instanceof Error ? boundedString(error.message, 240) : 'Execution failed.' };
+        }
+    }
+    return {
+        success: true,
+        suggestionId,
+        status: statusByDecision[decision],
+        executionAttempted: Boolean(execution && execution.status === 'SUCCEEDED'),
+        execution,
+    };
+});
+exports.executeAIAction = functions.https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    const suggestionId = boundedString(data?.suggestionId, 160);
+    if (!suggestionId)
+        throw new functions.https.HttpsError('invalid-argument', 'suggestionId is required.');
+    const suggestion = await db.collection('aiSuggestions').doc(suggestionId).get();
+    if (!suggestion.exists)
+        throw new functions.https.HttpsError('not-found', 'AI suggestion not found.');
+    if (!['APPROVED', 'FAILED'].includes(String(suggestion.data()?.status || ''))) {
+        throw new functions.https.HttpsError('failed-precondition', 'Approve the suggestion before executing it manually.');
+    }
+    try {
+        return await (0, actionEngine_1.executeAISuggestionAction)({ db, suggestionId, actor, humanApproved: true, trigger: 'MANUAL_EXECUTION' });
+    }
+    catch (error) {
+        throw new functions.https.HttpsError('failed-precondition', error instanceof Error ? error.message : 'AI action failed.');
+    }
+});
+exports.rollbackAIAction = functions.https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    requireSuperAdmin(actor);
+    const executionId = boundedString(data?.executionId, 160);
+    if (!executionId)
+        throw new functions.https.HttpsError('invalid-argument', 'executionId is required.');
+    try {
+        return await (0, actionEngine_1.rollbackAIExecution)({ db, executionId, actor });
+    }
+    catch (error) {
+        throw new functions.https.HttpsError('failed-precondition', error instanceof Error ? error.message : 'Rollback failed.');
+    }
+});
+exports.verifyAIOutcomes = functions.https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    return (0, actionEngine_1.verifyAIExecutionOutcomes)({ db, actor, limit: Number(data?.limit) || 50 });
 });
 exports.submitAISuggestionFeedback = functions.https.onCall(async (data, context) => {
     const actor = await assertActiveAdmin(context.auth?.uid);

@@ -300,6 +300,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /aiActionExecutions/{executionId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiOperationalTasks/{taskId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /goLiveControl/{documentId} {
       allow read, write: if isAdmin();
     }

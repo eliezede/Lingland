@@ -9,7 +9,7 @@ exports.AI_MODE_VALUES = [
     'CONTROLLED_AUTOPILOT',
     'FULL_AUTOPILOT',
 ];
-exports.SAFE_AI_MODES = ['OFF', 'READ_ONLY_AUDIT', 'SUGGEST'];
+exports.SAFE_AI_MODES = [...exports.AI_MODE_VALUES];
 exports.DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 exports.AI_REVIEW_SCOPES = [
     'JOBS',
@@ -28,6 +28,10 @@ exports.AI_ACTIONS = [
     'REVIEW_SYNC_CONFLICT',
     'REVIEW_COST_ANOMALY',
     'CREATE_PROCESS_IMPROVEMENT',
+    'CREATE_INTERNAL_ALERT',
+    'PLACE_JOB_ON_HOLD',
+    'OFFER_INTERPRETER',
+    'CREATE_CLIENT_INVOICE_DRAFT',
 ];
 exports.DEFAULT_AI_CONTROL_CONFIG = {
     mode: 'OFF',
@@ -36,6 +40,17 @@ exports.DEFAULT_AI_CONTROL_CONFIG = {
     emergencyPaused: true,
     executionEnabled: false,
     externalCommunicationEnabled: false,
+    simulationOnly: true,
+    autoExecuteLowRisk: false,
+    autoExecuteMediumRisk: false,
+    autoExecuteHighRisk: false,
+    requireApprovalForMediumRisk: true,
+    requireApprovalForHighRisk: true,
+    maxActionsPerRun: 5,
+    dailyActionLimit: 20,
+    scheduledReviewsEnabled: false,
+    scheduledScopes: ['JOBS', 'ALLOCATION', 'BILLING', 'SYNC', 'COST'],
+    scheduleIntervalMinutes: 60,
     piiPolicy: 'MINIMIZED',
     minimumConfidence: 65,
     maxSuggestionsPerRun: 25,

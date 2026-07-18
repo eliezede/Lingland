@@ -2,28 +2,35 @@
 
 Bookmark: AI_AUTOPILOT_PROGRESSIVE_LEARNING_FUTURE_PHASE
 
-## Implementation Status - 16 July 2026
+## Implementation Status - 17 July 2026
 
-The first safe release is implemented as an operational auditor. It is not an autonomous operator.
+The governed Autopilot engine is implemented. Production activation remains deliberately off, paused and simulation-first until Lingland completes its operational readiness checks.
 
 ### Completed And Verified
 
-- [x] Admin AI Control Center with Control, Suggestions, Runs and Audit workspaces.
-- [x] Server-enforced modes: `OFF`, `READ_ONLY_AUDIT` and `SUGGEST`.
-- [x] `ASSISTED`, `CONTROLLED_AUTOPILOT` and `FULL_AUTOPILOT` remain hard-locked.
-- [x] Execution and external communication remain false regardless of browser input.
+- [x] Admin AI Control Center with Control, Suggestions, Executions, Runs and Audit workspaces.
+- [x] Server-enforced modes: `OFF`, `READ_ONLY_AUDIT`, `SUGGEST`, `ASSISTED`, `CONTROLLED_AUTOPILOT` and `FULL_AUTOPILOT`.
+- [x] First advanced-mode activation requires exact Super Admin acknowledgement.
+- [x] Moving from simulation to live platform writes requires a separate exact acknowledgement.
+- [x] External communication is independently disabled by default and requires Full Autopilot plus exact confirmation.
 - [x] DeepSeek adapter uses Firebase Secret Manager and never returns the key to the browser.
 - [x] Provider context excludes names, emails, phones, addresses, notes and patient data.
 - [x] Structured provider output is validated against known entities and a closed action registry.
 - [x] Deterministic local rules work when DeepSeek is not configured.
-- [x] Read-only findings cover assignment, overdue jobs, status consistency, billing gaps, invoice integrity, mirror conflicts and cost anomalies.
+- [x] Findings cover assignment, overdue jobs, status consistency, billing gaps, invoice integrity, mirror conflicts, cost anomalies and process improvements.
 - [x] Suggestion deduplication, human decision records, feedback reason codes and learning-memory aggregation.
+- [x] Closed server action registry with risk, communication and reversibility metadata.
+- [x] Deterministic tools for internal work tasks, internal alerts, reversible job hold, interpreter offer and draft client invoice creation.
+- [x] Deterministic interpreter matcher rechecks language, service type, account state, availability, DBS evidence and schedule conflicts.
+- [x] Execution policy revalidates mode, pause, confidence, approval, risk and limits immediately before acquiring the action lock.
+- [x] Idempotent execution ledger, simulation plans, stale-execution recovery, outcome verification and audited rollback.
+- [x] Scheduled review cycle with configurable scopes and interval, daily limits and emergency-pause enforcement.
 - [x] Immutable AI run and audit trails with explicit execution and communication flags.
 - [x] Firestore access restricted to administrators; writes are performed only by callable functions.
 - [x] Contextual `?` manual documents daily workflow, modes, scopes, findings, safety and troubleshooting.
-- [x] Seven-step guided tour highlights Safety, Guardrails, Provider, Review, Suggestions, Runs and Audit; it runs on first visit and can be restarted from the manual.
-- [x] Desktop, mobile, dark and light UI verified in the browser without page-level horizontal overflow.
-- [x] Production callable functions and Firestore rules deployed.
+- [x] Eight-step guided tour covers Safety, Guardrails, Provider, Review, Suggestions, Executions, Runs and Audit.
+- [x] Re-verify desktop, mobile, dark and light UI after the Autopilot control expansion.
+- [x] Deploy the Autopilot functions, scheduler, hosting bundle and updated Firestore rules.
 
 Deployed callables:
 
@@ -32,18 +39,27 @@ Deployed callables:
 - `testDeepSeekConnection`
 - `runAIReview`
 - `reviewAISuggestion`
+- `executeAIAction`
+- `rollbackAIAction`
+- `verifyAIOutcomes`
 - `submitAISuggestionFeedback`
+- scheduled `runScheduledAIReviews`
 
-Current production boundary:
+Required initial production boundary after deployment:
 
-- mode: `READ_ONLY_AUDIT`;
+- mode: `OFF` or `READ_ONLY_AUDIT` while validation continues;
 - execution: disabled;
+- simulation: enabled before any live-write trial;
+- emergency pause: enabled;
 - external communication: blocked;
 - DeepSeek secret: configured in Firebase Secret Manager and verified as connected;
-- approval of a suggestion records the human decision but does not execute an operational action.
+- no setting migration automatically activates Autopilot.
 
 ### Live Validation Evidence
 
+- Desktop and 390 px mobile browser QA passed without page-level horizontal overflow; mobile findings use dedicated compact records.
+- Light and dark themes were verified with the manual, eight-step tour and every workspace tab.
+- Legacy callable payloads are normalized at the client boundary so missing Autopilot collections cannot crash the Control Center during a rolling deployment.
 - A real Jobs review generated 25 read-only observations without changing jobs or sending communication.
 - The observations exposed imported jobs with a financial status but no linked client invoice identifier.
 - A second review completed with provider status `NOT_CONFIGURED` and created no duplicates.
@@ -55,11 +71,12 @@ Current production boundary:
 - [x] Replace the sentinel with a real DeepSeek key and pass the provider connection test.
 - [ ] Validate provider-generated findings against a controlled non-production dataset.
 - [ ] Accumulate at least 30 days of reviewed suggestions and outcome feedback.
-- [ ] Implement reversible platform tools before enabling any execution.
-- [ ] Add outcome and cost-impact measurement for approved suggestions.
-- [ ] Add scheduled reviews only after manual review quality is proven.
+- [x] Implement reversible platform tools before enabling any execution.
+- [x] Add action outcome verification and drift detection.
+- [x] Implement scheduled reviews behind an off-by-default policy.
+- [ ] Add quantified cost/time impact measurement beyond execution outcome state.
 - [ ] Upgrade the Firebase Functions runtime from deprecated Node.js 20 before 30 October 2026.
-- [ ] Keep Assisted and Autopilot modes locked until all Go/No-Go criteria pass.
+- [ ] Keep execution, scheduling and external communication disabled until all Go/No-Go criteria pass.
 
 ## Executive Position
 
@@ -173,7 +190,7 @@ Examples:
 
 ### 6. Full Autopilot
 
-Future phase only. Requires a long history of successful assisted operation, audit confidence, and rollback strategy.
+The engine and policy controls are implemented, but operational activation remains a future decision. It requires a long history of successful assisted operation, audit confidence and verified rollback evidence.
 
 ## Progressive Learning Strategy
 
@@ -443,7 +460,7 @@ Exit criteria:
 - billing flow is traceable;
 - UI does not block operations.
 
-### Phase 1: AI Read-Only Auditor
+### Phase 1: AI Read-Only Auditor - Implemented
 
 Build:
 
@@ -455,7 +472,7 @@ Build:
 
 No automatic execution.
 
-### Phase 2: Suggestion Engine
+### Phase 2: Suggestion Engine - Implemented For Current Registry
 
 Build:
 
@@ -467,7 +484,7 @@ Build:
 
 Admin approves all actions.
 
-### Phase 3: Learning Feedback
+### Phase 3: Learning Feedback - Core Implemented
 
 Build:
 
@@ -477,7 +494,7 @@ Build:
 - AI learning memory;
 - weekly operational insight report.
 
-### Phase 4: Assisted Automation
+### Phase 4: Assisted Automation - Engine Implemented, Activation Gated
 
 Allow low-risk actions:
 
@@ -489,7 +506,7 @@ Allow low-risk actions:
 
 Still require approval for assignment, external email and billing state changes.
 
-### Phase 5: Controlled Autopilot
+### Phase 5: Controlled Autopilot - Engine Implemented, Activation Gated
 
 Allow scoped automation:
 
@@ -499,7 +516,7 @@ Allow scoped automation:
 - invoice drafts automatic;
 - external communication only if enabled by admin policy.
 
-### Phase 6: Continuous Optimization
+### Phase 6: Continuous Optimization - Pending
 
 AI generates:
 

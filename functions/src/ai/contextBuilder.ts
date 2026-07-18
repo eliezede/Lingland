@@ -278,11 +278,29 @@ export const analyseOperationalContext = (
         source: 'RULE_ENGINE',
         dataUsed: ['job status', 'schedule', 'assignment presence'],
       });
+
+      if (!overdue && daysUntil !== null && daysUntil <= 14) {
+        suggestions.push({
+          action: 'OFFER_INTERPRETER',
+          category: 'ALLOCATION',
+          entityType: 'BOOKING',
+          entityId: job.localId,
+          entityLabel: job.entityLabel,
+          title: 'Offer job to the highest-ranked eligible professional',
+          reason: 'The job is approaching and has no assigned professional. The server-side matcher will recheck language, status, availability, DBS evidence and schedule conflicts before creating an offer.',
+          expectedBenefit: 'Reduce assignment delay while preserving the normal accept or decline workflow.',
+          confidence: daysUntil <= 2 ? 94 : 86,
+          evidence: [`Status: ${job.status}`, 'Professional assigned: no', `Scheduled in ${Math.max(0, Math.ceil(daysUntil))} day(s)`],
+          source: 'RULE_ENGINE',
+          dataUsed: ['job language', 'schedule', 'professional eligibility', 'availability', 'DBS evidence', 'schedule conflicts'],
+          proposedParameters: { matchingPolicy: 'DETERMINISTIC_V1', minimumScore: 60 },
+        });
+      }
     }
 
     if (scopeAllows(context.scope, ['JOBS']) && job.status === 'BOOKED' && !job.assigned) {
       suggestions.push({
-        action: 'REVIEW_STATUS_CONSISTENCY',
+        action: 'PLACE_JOB_ON_HOLD',
         category: 'JOBS',
         entityType: 'BOOKING',
         entityId: job.localId,
@@ -294,6 +312,7 @@ export const analyseOperationalContext = (
         evidence: ['Status: BOOKED', 'Professional assigned: no'],
         source: 'RULE_ENGINE',
         dataUsed: ['job status', 'assignment presence'],
+        proposedParameters: { expectedStatus: 'ADMIN_HOLD', reasonCode: 'BOOKED_WITHOUT_PROFESSIONAL' },
       });
     }
 
@@ -312,6 +331,24 @@ export const analyseOperationalContext = (
         source: 'RULE_ENGINE',
         dataUsed: ['job status', 'timesheet state', 'client invoice presence'],
       });
+
+      if (job.status === 'READY_FOR_INVOICE' || job.timesheetStatus === 'APPROVED' || job.timesheetStatus === 'TIMESHEET_VERIFIED') {
+        suggestions.push({
+          action: 'CREATE_CLIENT_INVOICE_DRAFT',
+          category: 'BILLING',
+          entityType: 'BOOKING',
+          entityId: job.localId,
+          entityLabel: job.entityLabel,
+          title: 'Create a client invoice draft',
+          reason: 'The job is financially ready and has no linked client invoice. The execution tool will only claim approved timesheets with a positive client amount.',
+          expectedBenefit: 'Move verified work into a reviewable draft without sending it to the client.',
+          confidence: job.status === 'READY_FOR_INVOICE' ? 97 : 90,
+          evidence: [`Status: ${job.status}`, `Timesheet: ${job.timesheetStatus}`, 'Client invoice linked: no'],
+          source: 'RULE_ENGINE',
+          dataUsed: ['job status', 'timesheet approval', 'approved client amount', 'invoice link'],
+          proposedParameters: { invoiceState: 'DRAFT', sendAfterCreation: false },
+        });
+      }
     }
 
     if (

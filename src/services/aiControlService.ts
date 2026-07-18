@@ -1,17 +1,29 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebaseConfig';
+import { normalizeAIControlState } from './aiControlStateNormalizer';
 
 export type AIMode = 'OFF' | 'READ_ONLY_AUDIT' | 'SUGGEST' | 'ASSISTED' | 'CONTROLLED_AUTOPILOT' | 'FULL_AUTOPILOT';
 export type AIReviewScope = 'JOBS' | 'ALLOCATION' | 'BILLING' | 'SYNC' | 'COST' | 'PLATFORM';
-export type AISuggestionStatus = 'OBSERVED' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISMISSED';
+export type AISuggestionStatus = 'OBSERVED' | 'PENDING' | 'APPROVED' | 'QUEUED' | 'EXECUTING' | 'EXECUTED' | 'FAILED' | 'ROLLED_BACK' | 'REJECTED' | 'DISMISSED';
 
 export interface AIControlConfig {
   mode: AIMode;
   provider: 'DEEPSEEK';
   model: 'deepseek-v4-flash' | 'deepseek-v4-pro';
   emergencyPaused: boolean;
-  executionEnabled: false;
-  externalCommunicationEnabled: false;
+  executionEnabled: boolean;
+  externalCommunicationEnabled: boolean;
+  simulationOnly: boolean;
+  autoExecuteLowRisk: boolean;
+  autoExecuteMediumRisk: boolean;
+  autoExecuteHighRisk: boolean;
+  requireApprovalForMediumRisk: boolean;
+  requireApprovalForHighRisk: boolean;
+  maxActionsPerRun: number;
+  dailyActionLimit: number;
+  scheduledReviewsEnabled: boolean;
+  scheduledScopes: AIReviewScope[];
+  scheduleIntervalMinutes: number;
   piiPolicy: 'MINIMIZED';
   minimumConfidence: number;
   maxSuggestionsPerRun: number;
@@ -19,6 +31,11 @@ export interface AIControlConfig {
   providerConfigured?: boolean;
   lastConnectionTestAt?: string;
   lastConnectionTestStatus?: 'CONNECTED' | 'ERROR' | 'NOT_TESTED';
+  automationAcknowledgedAt?: string;
+  automationAcknowledgedBy?: string;
+  liveExecutionAcknowledgedAt?: string;
+  liveExecutionAcknowledgedBy?: string;
+  lastScheduledRunAt?: string;
   updatedAt?: string;
   updatedBy?: string;
 }
@@ -42,8 +59,15 @@ export interface AISuggestion {
   evidence: string[];
   dataUsed: string[];
   source: 'RULE_ENGINE' | 'DEEPSEEK';
-  executionAvailable: false;
-  approvalExecutesAction: false;
+  executionAvailable: boolean;
+  approvalExecutesAction: boolean;
+  rollbackAvailable?: boolean;
+  executionHandler?: string;
+  proposedParameters?: Record<string, unknown>;
+  lastExecutionId?: string;
+  lastExecutionStatus?: string;
+  simulationPlan?: Record<string, unknown>;
+  executionError?: string;
   createdAt: string;
   reviewedAt?: string;
   reviewDecision?: string;
@@ -82,8 +106,33 @@ export interface AIAuditEvent {
   entityType: string;
   entityId: string;
   inputSummary?: Record<string, unknown>;
-  executionAttempted: false;
-  externalCommunicationAttempted: false;
+  executionAttempted: boolean;
+  externalCommunicationAttempted: boolean;
+}
+
+export interface AIExecution {
+  id: string;
+  suggestionId: string;
+  runId: string;
+  action: string;
+  risk: 'LOW' | 'MEDIUM' | 'HIGH';
+  entityType: string;
+  entityId: string;
+  mode: AIMode;
+  status: 'QUEUED' | 'EXECUTING' | 'SIMULATED' | 'SUCCEEDED' | 'FAILED' | 'ROLLING_BACK' | 'ROLLED_BACK' | 'ROLLBACK_FAILED';
+  outcomeStatus: 'PENDING' | 'VERIFIED' | 'DRIFTED' | 'NOT_APPLICABLE';
+  simulationOnly: boolean;
+  parameters: Record<string, unknown>;
+  beforeSnapshot?: Record<string, unknown> | null;
+  afterSnapshot?: Record<string, unknown> | null;
+  resultSummary?: Record<string, unknown>;
+  rollbackAvailable: boolean;
+  externalCommunicationAttempted: boolean;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  rolledBackAt?: string;
+  error?: string;
 }
 
 export interface AIControlState {
@@ -96,33 +145,42 @@ export interface AIControlState {
     apiKeyExposed: false;
   };
   capabilities: {
-    implementationStage: 'SUGGESTIONS_ONLY';
-    readOnlyAnalysis: true;
-    suggestions: true;
-    humanReview: true;
-    structuredFeedback: true;
-    execution: false;
-    externalCommunication: false;
-    advancedModesLocked: true;
+    implementationStage: 'AUTOPILOT_ENGINE';
+    readOnlyAnalysis: boolean;
+    suggestions: boolean;
+    humanReview: boolean;
+    structuredFeedback: boolean;
+    execution: boolean;
+    rollback: boolean;
+    outcomeVerification: boolean;
+    scheduledReviews: boolean;
+    externalCommunication: boolean;
+    advancedModesLocked: boolean;
     unlockRequirements: Array<{ id: string; label: string; satisfied: boolean }>;
   };
   counts: {
     pending: number;
     observed: number;
     approved: number;
+    executed: number;
+    failed: number;
     rejected: number;
     dismissed: number;
     reviewedLast30Days: number;
+    openTasks: number;
   };
   actionRegistry: Array<{
     action: string;
     risk: 'LOW' | 'MEDIUM' | 'HIGH';
     description: string;
-    executionAvailable: false;
-    externalCommunication: false;
+    executionAvailable: boolean;
+    externalCommunication: boolean;
+    reversible: boolean;
+    handler: string;
   }>;
   suggestions: AISuggestion[];
   runs: AIRun[];
+  executions: AIExecution[];
   auditEvents: AIAuditEvent[];
   viewer: { role: 'ADMIN' | 'SUPER_ADMIN'; canManageSettings: boolean };
 }
@@ -132,11 +190,14 @@ const callable = <Request, Response>(name: string) => httpsCallable<Request, Res
 export const AIControlService = {
   getState: async (limit = 100) => {
     const response = await callable<{ limit: number }, AIControlState>('getAIControlState')({ limit });
-    return response.data;
+    return normalizeAIControlState(response.data);
   },
 
-  updateSettings: async (settings: Partial<AIControlConfig>) => {
-    const response = await callable<{ settings: Partial<AIControlConfig> }, { success: true; config: AIControlConfig }>('updateAIControlSettings')({ settings });
+  updateSettings: async (settings: Partial<AIControlConfig>, confirmations: { activationConfirmation?: string; liveExecutionConfirmation?: string; externalCommunicationConfirmation?: string } = {}) => {
+    const response = await callable<
+      { settings: Partial<AIControlConfig>; activationConfirmation?: string; liveExecutionConfirmation?: string; externalCommunicationConfirmation?: string },
+      { success: true; config: AIControlConfig }
+    >('updateAIControlSettings')({ settings, ...confirmations });
     return response.data;
   },
 
@@ -156,17 +217,33 @@ export const AIControlService = {
       promotedCount: number;
       duplicateCount: number;
       dataSummary: Record<string, number>;
-      executionAttempted: false;
-      externalCommunicationAttempted: false;
+      executionAttempted: boolean;
+      externalCommunicationAttempted: boolean;
+      automaticExecution: { candidates: number; succeeded: number; failed: number; blocked: number };
     }>('runAIReview')({ scope });
     return response.data;
   },
 
-  reviewSuggestion: async (suggestionId: string, decision: 'APPROVE' | 'REJECT' | 'DISMISS', note = '') => {
+  reviewSuggestion: async (suggestionId: string, decision: 'APPROVE' | 'REJECT' | 'DISMISS', note = '', executeNow = true) => {
     const response = await callable<
-      { suggestionId: string; decision: string; note: string },
-      { success: true; suggestionId: string; status: AISuggestionStatus; executionAttempted: false }
-    >('reviewAISuggestion')({ suggestionId, decision, note });
+      { suggestionId: string; decision: string; note: string; executeNow: boolean },
+      { success: true; suggestionId: string; status: AISuggestionStatus; executionAttempted: boolean; execution: Record<string, unknown> | null }
+    >('reviewAISuggestion')({ suggestionId, decision, note, executeNow });
+    return response.data;
+  },
+
+  executeAction: async (suggestionId: string) => {
+    const response = await callable<{ suggestionId: string }, { success: boolean; executionId?: string; status: string; reason?: string }>('executeAIAction')({ suggestionId });
+    return response.data;
+  },
+
+  rollbackAction: async (executionId: string) => {
+    const response = await callable<{ executionId: string }, { success: true; executionId: string; status: 'ROLLED_BACK' }>('rollbackAIAction')({ executionId });
+    return response.data;
+  },
+
+  verifyOutcomes: async (limit = 50) => {
+    const response = await callable<{ limit: number }, { checked: number; verified: number; drifted: number }>('verifyAIOutcomes')({ limit });
     return response.data;
   },
 

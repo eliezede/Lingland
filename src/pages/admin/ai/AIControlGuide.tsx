@@ -11,15 +11,17 @@ import {
   ListChecks,
   LockKeyhole,
   Play,
+  RotateCcw,
   ShieldCheck,
   Sparkles,
+  Workflow,
   Wrench,
   X,
 } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { AI_CONTROL_TOUR_STEPS, AIControlGuideTab } from './aiControlGuideData';
 
-type ManualSection = 'quick-start' | 'modes' | 'reviews' | 'suggestions' | 'safety' | 'troubleshooting';
+type ManualSection = 'quick-start' | 'modes' | 'reviews' | 'suggestions' | 'executions' | 'safety' | 'troubleshooting';
 
 
 const manualSections: Array<{ id: ManualSection; label: string; icon: React.ElementType }> = [
@@ -27,6 +29,7 @@ const manualSections: Array<{ id: ManualSection; label: string; icon: React.Elem
   { id: 'modes', label: 'Modes and limits', icon: Gauge },
   { id: 'reviews', label: 'Review scopes', icon: ListChecks },
   { id: 'suggestions', label: 'Findings and feedback', icon: Sparkles },
+  { id: 'executions', label: 'Execution and rollback', icon: Workflow },
   { id: 'safety', label: 'Safety and privacy', icon: ShieldCheck },
   { id: 'troubleshooting', label: 'Troubleshooting', icon: Wrench },
 ];
@@ -41,11 +44,12 @@ const SectionTitle = ({ eyebrow, title, description }: { eyebrow: string; title:
 
 const DailyWorkflow = () => {
   const steps = [
-    ['Check the safety strip', 'Confirm the mode is expected, DeepSeek is connected, execution is disabled and external communication is blocked.'],
+    ['Check the safety strip', 'Confirm the mode, provider, execution state and external communication boundary before running a review.'],
     ['Choose a review scope', 'Run the smallest relevant scope instead of scanning the whole platform without a specific operational question.'],
     ['Run the review', 'The server builds a minimized context, applies local rules and, when configured, asks DeepSeek for structured findings.'],
     ['Inspect Suggestions', 'Open each finding and verify the record, evidence, confidence, risk and expected operational benefit.'],
-    ['Record the human decision', 'In Suggest mode, approve, reject or dismiss. Approval is a review record only and does not execute an action in this release.'],
+    ['Record the human decision', 'Approve, reject or dismiss. In an execution mode, approval can execute an allowlisted tool after a fresh server policy check.'],
+    ['Verify the execution', 'Use the execution ledger to confirm the result, outcome verification and rollback availability.'],
     ['Add learning feedback', 'Mark the finding useful, wrong, too risky, missing context, good but not now, or suitable for a future rule.'],
     ['Check Runs and Audit', 'Confirm the provider result and preserve the decision trail before closing the review session.'],
   ];
@@ -66,19 +70,19 @@ const DailyWorkflow = () => {
 
 const ModesGuide = () => {
   const modes = [
-    ['OFF', 'No review can be started.'],
-    ['READ ONLY AUDIT', 'Creates OBSERVED findings. There is no approval queue and no execution.'],
-    ['SUGGEST', 'Creates PENDING findings for human review. Approval records a decision only.'],
-    ['ASSISTED', 'Locked. Future low-risk tools require readiness evidence and reversible actions.'],
-    ['CONTROLLED AUTOPILOT', 'Locked. Future scoped automation requires explicit policy and production proof.'],
-    ['FULL AUTOPILOT', 'Locked. Not a current production capability.'],
+    ['OFF', 'No review or action can be started.'],
+    ['READ ONLY AUDIT', 'Creates OBSERVED findings. There is no approval queue or execution.'],
+    ['SUGGEST', 'Creates PENDING findings for human review without execution.'],
+    ['ASSISTED', 'Allowlisted tools run only after explicit human approval.'],
+    ['CONTROLLED AUTOPILOT', 'Low and medium-risk actions can run under the configured risk and approval policy.'],
+    ['FULL AUTOPILOT', 'Adds configurable high-risk automation and an independently confirmed external communication boundary.'],
   ];
   return (
     <div className="space-y-6">
-      <SectionTitle eyebrow="Control" title="Modes, thresholds and limits" description="The browser cannot unlock advanced modes or enable execution. The server is the source of truth for every guardrail." />
+      <SectionTitle eyebrow="Control" title="Modes, thresholds and limits" description="The browser edits policy, but the server is the source of truth and validates every guardrail again at execution time." />
       <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-800">
         <div className="divide-y divide-slate-200 dark:divide-slate-800">
-          {modes.map(([mode, detail], index) => <div key={mode} className="grid gap-1 px-4 py-3 sm:grid-cols-[190px_1fr]"><p className="font-mono text-xs font-semibold text-slate-900 dark:text-white">{mode}</p><p className="text-sm text-slate-600 dark:text-slate-300">{detail}</p>{index > 2 && <span className="sr-only">Locked mode</span>}</div>)}
+          {modes.map(([mode, detail]) => <div key={mode} className="grid gap-1 px-4 py-3 sm:grid-cols-[190px_1fr]"><p className="font-mono text-xs font-semibold text-slate-900 dark:text-white">{mode}</p><p className="text-sm text-slate-600 dark:text-slate-300">{detail}</p></div>)}
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -113,7 +117,11 @@ const SuggestionsGuide = () => {
   const statuses = [
     ['OBSERVED', 'Read-only finding. It is visible for audit and feedback.'],
     ['PENDING', 'Waiting for a human decision in Suggest mode.'],
-    ['APPROVED', 'Human agrees with the finding. No action is executed in this release.'],
+    ['APPROVED', 'Human agrees with the finding; an executable action can now enter the policy engine.'],
+    ['QUEUED / EXECUTING', 'The server owns an idempotent execution lock for the action.'],
+    ['EXECUTED', 'The tool completed and the execution ledger contains its result.'],
+    ['FAILED', 'The tool failed safely and can be retried after the cause is resolved.'],
+    ['ROLLED BACK', 'A Super Admin reversed a supported action and preserved both events.'],
     ['REJECTED', 'Human disagrees with the recommendation.'],
     ['DISMISSED', 'Valid or low-value finding removed from the active review queue.'],
   ];
@@ -128,13 +136,34 @@ const SuggestionsGuide = () => {
   );
 };
 
+const ExecutionsGuide = () => {
+  const protections = [
+    ['Fresh policy check', 'Mode, pause, confidence, risk approvals and daily limits are read again immediately before execution.'],
+    ['Idempotency', 'The same suggestion cannot create the same side effect twice, even after a retry or timeout.'],
+    ['Simulation', 'The engine records the exact tool plan without writing business records. Use this before enabling live execution.'],
+    ['Outcome verification', 'The verifier compares the expected result with current platform state and marks it verified or drifted.'],
+    ['Rollback', 'Reversible tools restore their recorded before-state only when later changes do not make that unsafe.'],
+    ['Communication boundary', 'Potentially external actions require both AI policy and the platform-wide communication mode to permit delivery.'],
+  ];
+  return (
+    <div className="space-y-6">
+      <SectionTitle eyebrow="Execution ledger" title="Operate Autopilot without losing control" description="Every action is a deterministic server tool with a risk tier, idempotency key, result record and explicit rollback capability." />
+      <div className="divide-y divide-slate-200 rounded-md border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+        {protections.map(([title, detail]) => <div key={title} className="grid gap-1 px-4 py-3 sm:grid-cols-[180px_1fr]"><p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p><p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{detail}</p></div>)}
+      </div>
+      <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"><RotateCcw size={17} className="mt-0.5 shrink-0" /><p>Rollback is not a substitute for review. Inspect the source record and execution result before reversing a live action.</p></div>
+    </div>
+  );
+};
+
 const SafetyGuide = () => {
   const protections = [
     'The API key is held in Firebase Secret Manager and is never returned to the browser.',
     'Provider context excludes names, emails, phone numbers, addresses, free-text notes and patient data.',
     'DeepSeek receives opaque identifiers and only the minimum structured fields needed for the selected review.',
     'Provider output is validated against known records and a closed server-owned action registry.',
-    'Execution and external communication are hard-disabled in the current release.',
+    'Execution is limited to a closed server-owned tool registry; DeepSeek cannot define actions or parameters for live tools.',
+    'External communication is separately disabled by default and requires Full Autopilot plus an exact Super Admin confirmation.',
     'Every settings change, run and human decision is written to the AI audit trail.',
   ];
   return (
@@ -144,7 +173,7 @@ const SafetyGuide = () => {
         {protections.map(item => <li key={item} className="flex gap-3 py-3 first:pt-0"><span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Check size={12} /></span><span className="text-sm leading-6 text-slate-600 dark:text-slate-300">{item}</span></li>)}
       </ul>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex gap-3 rounded-md border border-slate-200 p-4 dark:border-slate-800"><KeyRound size={18} className="shrink-0 text-blue-600" /><div><p className="text-sm font-semibold text-slate-900 dark:text-white">Credential change</p><p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">After creating a new secret version, redeploy the two DeepSeek functions and run Test connection.</p></div></div>
+        <div className="flex gap-3 rounded-md border border-slate-200 p-4 dark:border-slate-800"><KeyRound size={18} className="shrink-0 text-blue-600" /><div><p className="text-sm font-semibold text-slate-900 dark:text-white">Credential change</p><p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">After creating a new secret version, redeploy the AI functions that use DeepSeek and run Test connection.</p></div></div>
         <div className="flex gap-3 rounded-md border border-slate-200 p-4 dark:border-slate-800"><LockKeyhole size={18} className="shrink-0 text-blue-600" /><div><p className="text-sm font-semibold text-slate-900 dark:text-white">Emergency pause</p><p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">Keep it active whenever provider behaviour, policy or data quality requires investigation.</p></div></div>
       </div>
     </div>
@@ -158,7 +187,8 @@ const TroubleshootingGuide = () => {
     ['No new findings', 'Check filters and existing observations. Deduplication prevents the same active finding from being created repeatedly.'],
     ['Unexpected finding', 'Open the source record, verify the evidence, then submit Wrong or Missing context feedback with a concise reason.'],
     ['Review button disabled', 'The mode is OFF or the signed-in user does not have the required administrative permissions.'],
-    ['Need to undo an approval', 'Approval is currently a decision record only. Add corrective feedback and preserve both events in the audit trail.'],
+    ['Action blocked after approval', 'Check the current mode, emergency pause, confidence threshold, risk approval rule, daily limit and execution toggle. Approval never bypasses policy.'],
+    ['Need to undo an action', 'Open Executions, verify the source record has not drifted, then use Rollback when the tool is marked reversible.'],
   ];
   return (
     <div className="space-y-6">
@@ -211,13 +241,14 @@ export const AIControlManual = ({
             {section === 'modes' && <ModesGuide />}
             {section === 'reviews' && <ReviewsGuide />}
             {section === 'suggestions' && <SuggestionsGuide />}
+            {section === 'executions' && <ExecutionsGuide />}
             {section === 'safety' && <SafetyGuide />}
             {section === 'troubleshooting' && <TroubleshootingGuide />}
           </div>
         </div>
 
         <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">The manual documents the current safe release. Locked modes are not available.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Start in simulation, verify outcomes, then expand one risk tier at a time.</p>
           <div className="flex gap-2"><Button variant="secondary" onClick={onClose}>Close</Button><Button icon={Play} onClick={onStartTour}>Start guided tour</Button></div>
         </footer>
       </div>

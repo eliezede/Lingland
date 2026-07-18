@@ -1,4 +1,4 @@
-export type AIControlGuideTab = 'control' | 'suggestions' | 'runs' | 'audit';
+export type AIControlGuideTab = 'control' | 'suggestions' | 'executions' | 'runs' | 'audit';
 
 export type AIControlTourStep = {
   id: string;
@@ -9,7 +9,7 @@ export type AIControlTourStep = {
   detail: string;
 };
 
-export const AI_CONTROL_TOUR_STORAGE_KEY = 'lingland.ai-control-tour.v1';
+export const AI_CONTROL_TOUR_STORAGE_KEY = 'lingland.ai-control-tour.v2';
 
 export const AI_CONTROL_TOUR_STEPS: AIControlTourStep[] = [
   {
@@ -26,7 +26,7 @@ export const AI_CONTROL_TOUR_STEPS: AIControlTourStep[] = [
     tab: 'control',
     title: 'Set the operating guardrails',
     description: 'Control what the AI may analyse.',
-    detail: 'Choose the safe mode, model, confidence threshold and daily limits. Assisted and autopilot modes remain locked by the server.',
+    detail: 'Choose the mode, simulation boundary, risk approvals, action limits and emergency pause. The server validates every combination again when it is saved and executed.',
   },
   {
     id: 'provider',
@@ -42,7 +42,7 @@ export const AI_CONTROL_TOUR_STEPS: AIControlTourStep[] = [
     tab: 'control',
     title: 'Run a focused review',
     description: 'Analyse one operational scope at a time.',
-    detail: 'Select Jobs, Allocation, Billing, Mirror sync, Cost or Platform, then start the review. No platform record is modified by this release.',
+    detail: 'Select Jobs, Allocation, Billing, Mirror sync, Cost or Platform. In an execution mode, eligible rule-engine findings can continue through the configured approval policy.',
   },
   {
     id: 'suggestions',
@@ -51,6 +51,14 @@ export const AI_CONTROL_TOUR_STEPS: AIControlTourStep[] = [
     title: 'Review every finding',
     description: 'Evidence comes before action.',
     detail: 'Filter the queue, open a finding and inspect its reason, evidence, data used, confidence and risk. Add structured feedback to improve future reviews.',
+  },
+  {
+    id: 'executions',
+    target: 'executions',
+    tab: 'executions',
+    title: 'Verify every action',
+    description: 'Execution is a ledger, not a black box.',
+    detail: 'Inspect simulations and live actions, confirm their outcome state, and roll back reversible successful actions when the source record has not drifted.',
   },
   {
     id: 'runs',
@@ -66,6 +74,6 @@ export const AI_CONTROL_TOUR_STEPS: AIControlTourStep[] = [
     tab: 'audit',
     title: 'Close the audit loop',
     description: 'Every important decision remains traceable.',
-    detail: 'Audit records settings changes, reviews and human decisions together with role, scope and result. Execution and communication stay explicitly recorded as blocked.',
+    detail: 'Audit records settings changes, reviews, approvals, executions, rollbacks and communication attempts together with role, scope and result.',
   },
 ];
