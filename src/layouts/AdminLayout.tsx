@@ -6,7 +6,7 @@ import {
   LogOut, Globe2, Menu, FileText, PoundSterling,
   UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -16,6 +16,7 @@ import { ChatService } from '../services/chatService';
 import { StaffService } from '../services/staffService';
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { SystemModule } from '../types';
+import { AIStatusIndicator } from '../components/ai/AIStatusIndicator';
 
 interface NavItemProps {
   to: string;
@@ -77,7 +78,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: 'NET', label: 'Network', icon: Users, rootPath: '/admin/interpreters', modules: [SystemModule.INTERPRETERS, SystemModule.CLIENTS, SystemModule.RECRUITMENT] },
     { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/billing', module: SystemModule.FINANCE },
     { id: 'REPORTS', label: 'Reports', icon: BarChart3, rootPath: '/admin/reports', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.INTERPRETERS, SystemModule.CLIENTS] },
-    { id: 'AI', label: 'AI Control', icon: BrainCircuit, rootPath: '/admin/ai-control', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
+    { id: 'AI', label: 'AI Command', icon: Bot, rootPath: '/admin/ai-command', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
     { id: 'COMMS', label: 'Comms', icon: MessageSquare, rootPath: '/admin/messages', modules: [SystemModule.MESSAGES] },
     { id: 'ADMIN', label: 'Administration', icon: Settings, rootPath: '/admin/users', modules: [SystemModule.STAFF_MGMT, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
   ];
@@ -125,6 +126,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
       '/admin/billing/reports': 'REPORTS',
       '/admin/finance/reports': 'REPORTS',
       '/admin/reports': 'REPORTS',
+      '/admin/ai-command': 'AI',
       '/admin/ai-control': 'AI',
       '/admin/billing': 'FIN',
       '/admin/finance': 'FIN',
@@ -355,11 +357,11 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
 
               {activeCategory === 'AI' && (
                 <div className="space-y-4">
-                  {!isSecondarySlim && <div className="sidebar-group-label">AI operations</div>}
-                  <NavItem to="/admin/ai-control" icon={BrainCircuit} label="Control Center" active={location.pathname === '/admin/ai-control' && !new URLSearchParams(location.search).get('tab')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/ai-control?tab=suggestions" icon={Sparkles} label="Suggestions" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'suggestions'} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/ai-control?tab=runs" icon={Activity} label="Review Runs" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'runs'} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/admin/ai-control?tab=audit" icon={History} label="AI Audit" active={location.pathname === '/admin/ai-control' && new URLSearchParams(location.search).get('tab') === 'audit'} isCollapsed={isSecondarySlim} />
+                  {!isSecondarySlim && <div className="sidebar-group-label">Operational workspace</div>}
+                  <NavItem to="/admin/ai-command" icon={Bot} label="Now" active={location.pathname === '/admin/ai-command'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-command/attention" icon={ShieldAlert} label="Human Attention" active={location.pathname === '/admin/ai-command/attention'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-command/activity" icon={Activity} label="Activity" active={location.pathname === '/admin/ai-command/activity'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/ai-command/insights" icon={Sparkles} label="Insights" active={location.pathname === '/admin/ai-command/insights'} isCollapsed={isSecondarySlim} />
                 </div>
               )}
 
@@ -380,6 +382,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   {!isSecondarySlim && <div className="sidebar-group-label">System</div>}
                   <NavItem to="/admin/users" icon={UserCog} label="Users & Roles" active={isActive('/admin/users')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/settings" icon={Settings} label="System Config" active={location.pathname === '/admin/settings'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/administration/ai" icon={BrainCircuit} label="AI Governance" active={isActive('/admin/administration/ai')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/migration" icon={Database} label="Airtable Migration" active={isActive('/admin/administration/migration')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/data" icon={Database} label="Data Center" active={isActive('/admin/administration/data')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/go-live" icon={ShieldCheck} label="Go-Live Control" active={isActive('/admin/administration/go-live')} isCollapsed={isSecondarySlim} />
@@ -404,6 +407,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
             </div>
 
             <div className="flex items-center space-x-2 border-l border-slate-100 pl-2 dark:border-slate-800 sm:pl-6">
+              <AIStatusIndicator />
               <ThemeToggle className="!p-2" />
               <NotificationCenter />
             </div>

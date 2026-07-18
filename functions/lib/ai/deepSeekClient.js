@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.requestDeepSeekSuggestions = exports.testDeepSeekConnection = exports.DeepSeekClientError = void 0;
+exports.requestDeepSeekSuggestions = exports.testDeepSeekConnection = exports.parseDeepSeekCompletion = exports.parseDeepSeekJsonObject = exports.DeepSeekClientError = void 0;
 const axios_1 = __importDefault(require("axios"));
 const crypto_1 = require("crypto");
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
@@ -28,6 +28,8 @@ class DeepSeekClientError extends Error {
 exports.DeepSeekClientError = DeepSeekClientError;
 const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 const providerError = (error) => {
+    if (error instanceof DeepSeekClientError)
+        return error;
     if (axios_1.default.isAxiosError(error)) {
         const status = error.response?.status;
         if (status === 401)
@@ -65,21 +67,62 @@ const authHeaders = (apiKey) => ({
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
 });
-const parseJsonObject = (content) => {
+const parseDeepSeekJsonObject = (content) => {
     if (typeof content !== 'string' || !content.trim()) {
         throw new DeepSeekClientError('DeepSeek returned an empty structured response.', { retryable: true });
     }
-    const cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    try {
-        const parsed = JSON.parse(cleaned);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-            throw new Error('not an object');
-        return parsed;
+    const raw = content.trim();
+    const candidates = [raw];
+    const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1];
+    if (fenced)
+        candidates.push(fenced.trim());
+    const objectStart = raw.indexOf('{');
+    const objectEnd = raw.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart)
+        candidates.push(raw.slice(objectStart, objectEnd + 1));
+    for (const candidate of [...new Set(candidates)]) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+        catch {
+            // Try the next transport-safe candidate before rejecting the response.
+        }
     }
-    catch {
-        throw new DeepSeekClientError('DeepSeek returned invalid structured JSON.', { retryable: true });
-    }
+    throw new DeepSeekClientError('DeepSeek returned invalid structured JSON.', { retryable: true });
 };
+exports.parseDeepSeekJsonObject = parseDeepSeekJsonObject;
+const parseDeepSeekCompletion = (data) => {
+    const response = data && typeof data === 'object' ? data : {};
+    const choices = Array.isArray(response.choices) ? response.choices : [];
+    const choice = choices[0] && typeof choices[0] === 'object'
+        ? choices[0]
+        : null;
+    if (!choice) {
+        throw new DeepSeekClientError('DeepSeek returned no completion choice.', { retryable: true });
+    }
+    const finishReason = String(choice.finish_reason || '');
+    if (finishReason === 'length') {
+        throw new DeepSeekClientError('DeepSeek truncated the structured review before the JSON was complete.', { retryable: true });
+    }
+    if (finishReason === 'insufficient_system_resource') {
+        throw new DeepSeekClientError('DeepSeek could not complete the structured review due to temporary capacity.', { retryable: true });
+    }
+    if (finishReason === 'content_filter') {
+        throw new DeepSeekClientError('DeepSeek omitted the structured review after a provider safety check.');
+    }
+    const message = choice.message && typeof choice.message === 'object'
+        ? choice.message
+        : {};
+    const parsed = (0, exports.parseDeepSeekJsonObject)(message.content);
+    if (!Array.isArray(parsed.suggestions)) {
+        throw new DeepSeekClientError('DeepSeek returned JSON without the required suggestions array.', { retryable: true });
+    }
+    return parsed;
+};
+exports.parseDeepSeekCompletion = parseDeepSeekCompletion;
 const opaqueUserId = (uid) => (0, crypto_1.createHash)('sha256')
     .update(`lingland-ai-user-v1|${uid}`)
     .digest('hex')
@@ -116,6 +159,7 @@ const requestDeepSeekSuggestions = async (input) => {
         'Use only opaque entity IDs present in the input, or entityType SYSTEM with entityId SYSTEM for a process-level insight.',
         'Do not infer or request names, emails, phone numbers, addresses, patient details, or free-text notes.',
         `Return at most ${input.maxSuggestions} suggestions. Avoid duplicating obvious deterministic findings.`,
+        'Keep the JSON compact: title <= 100 characters, reason <= 240 characters, expectedBenefit <= 180 characters, and at most 3 evidence strings <= 100 characters each.',
         `The exact JSON shape is: ${JSON.stringify(schemaExample)}`,
     ].join('\n');
     const userPrompt = [
@@ -124,36 +168,53 @@ const requestDeepSeekSuggestions = async (input) => {
         'Confidence must be an integer from 0 to 100. Evidence must contain short factual signals.',
         `DATA:\n${JSON.stringify(input.context)}`,
     ].join('\n\n');
-    const response = await withTransientRetry(() => axios_1.default.post(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-        model: input.model,
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-        ],
-        response_format: { type: 'json_object' },
-        stream: false,
-        max_tokens: 3000,
-        user_id: opaqueUserId(input.actorUid),
-    }, {
-        headers: authHeaders(input.apiKey),
-        timeout: 90000,
-    }));
-    const parsed = parseJsonObject(response.data?.choices?.[0]?.message?.content);
-    if (!Array.isArray(parsed.suggestions))
-        return [];
-    return parsed.suggestions
-        .filter((item) => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-        .slice(0, input.maxSuggestions)
-        .map(item => ({
-        action: String(item.action || ''),
-        entityType: String(item.entityType || ''),
-        entityId: String(item.entityId || ''),
-        title: String(item.title || ''),
-        reason: String(item.reason || ''),
-        expectedBenefit: String(item.expectedBenefit || ''),
-        confidence: Number(item.confidence),
-        evidence: Array.isArray(item.evidence) ? item.evidence.map(value => String(value)) : [],
-    }));
+    let lastStructuredError = null;
+    for (let structuredAttempt = 0; structuredAttempt < 2; structuredAttempt += 1) {
+        const suggestionLimit = structuredAttempt === 0 ? input.maxSuggestions : Math.min(input.maxSuggestions, 6);
+        const retryInstruction = structuredAttempt === 0
+            ? ''
+            : '\nA previous response was empty, truncated, or malformed. Return one compact JSON object only and no surrounding text.';
+        const response = await withTransientRetry(() => axios_1.default.post(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+            model: input.model,
+            messages: [
+                { role: 'system', content: `${systemPrompt}${retryInstruction}` },
+                { role: 'user', content: `${userPrompt}\n\nReturn no more than ${suggestionLimit} suggestions in this response.` },
+            ],
+            thinking: { type: 'disabled' },
+            response_format: { type: 'json_object' },
+            stream: false,
+            temperature: 0,
+            max_tokens: 6000,
+            user_id: opaqueUserId(input.actorUid),
+        }, {
+            headers: authHeaders(input.apiKey),
+            timeout: 90000,
+        }));
+        try {
+            const parsed = (0, exports.parseDeepSeekCompletion)(response.data);
+            const suggestions = parsed.suggestions;
+            return suggestions
+                .filter((item) => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+                .slice(0, input.maxSuggestions)
+                .map(item => ({
+                action: String(item.action || ''),
+                entityType: String(item.entityType || ''),
+                entityId: String(item.entityId || ''),
+                title: String(item.title || ''),
+                reason: String(item.reason || ''),
+                expectedBenefit: String(item.expectedBenefit || ''),
+                confidence: Number(item.confidence),
+                evidence: Array.isArray(item.evidence) ? item.evidence.map(value => String(value)) : [],
+            }));
+        }
+        catch (error) {
+            lastStructuredError = providerError(error);
+            if (!lastStructuredError.retryable || structuredAttempt === 1)
+                throw lastStructuredError;
+            await sleep(750);
+        }
+    }
+    throw lastStructuredError || new DeepSeekClientError('DeepSeek structured review failed.');
 };
 exports.requestDeepSeekSuggestions = requestDeepSeekSuggestions;
 //# sourceMappingURL=deepSeekClient.js.map

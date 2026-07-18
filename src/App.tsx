@@ -1,5 +1,5 @@
 import React from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
@@ -12,6 +12,7 @@ import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { ScrollToTop } from './components/routing/ScrollToTop';
 import { CommandPalette } from './components/ui/CommandPalette';
 import { UserRole } from './types.ts';
+import { AIControlProvider } from './context/AIControlContext';
 
 const lazyNamed = (importer: () => Promise<any>, exportName: string) =>
   React.lazy(async () => {
@@ -65,6 +66,7 @@ const AdminMessages = lazyNamed(() => import('./pages/admin/AdminMessages'), 'Ad
 const StaffOnboarding = lazyNamed(() => import('./pages/admin/StaffOnboarding'), 'StaffOnboarding');
 const AdminMigration = lazyNamed(() => import('./pages/admin/AdminMigration'), 'AdminMigration');
 const AIControlCenter = lazyNamed(() => import('./pages/admin/ai/AIControlCenter'), 'AIControlCenter');
+const AICommandCenter = lazyNamed(() => import('./pages/admin/ai/AICommandCenter'), 'AICommandCenter');
 
 const InterpreterDashboard = lazyNamed(() => import('./pages/interpreter/InterpreterDashboard'), 'InterpreterDashboard');
 const InterpreterJobs = lazyNamed(() => import('./pages/interpreter/InterpreterJobs'), 'InterpreterJobs');
@@ -101,6 +103,19 @@ const RootRoute = () => {
     }
   }
   return <LandingPage />;
+};
+
+const LegacyAIControlRedirect = () => {
+  const location = useLocation();
+  const tab = new URLSearchParams(location.search).get('tab');
+  const target = tab === 'control' || tab === 'audit'
+    ? `/admin/administration/ai${tab === 'audit' ? '?tab=audit' : ''}`
+    : tab === 'executions' || tab === 'runs'
+      ? '/admin/ai-command/activity'
+      : tab === 'suggestions'
+        ? '/admin/ai-command/attention'
+        : '/admin/ai-command';
+  return <Navigate to={target} replace />;
 };
 
 const App = () => {
@@ -178,8 +193,9 @@ const App = () => {
                       {/* Admin Section */}
                       <Route path="/admin/*" element={
                         <ProtectedRoute allowedRoles={[UserRole.ADMIN, UserRole.SUPER_ADMIN]}>
-                          <AdminLayout>
-                            <Routes>
+                          <AIControlProvider>
+                            <AdminLayout>
+                              <Routes>
                               <Route path="dashboard" element={<Dashboard />} />
                               <Route path="operations" element={<Navigate to="/admin/bookings" replace />} />
                               <Route path="messages" element={<AdminMessages />} />
@@ -218,10 +234,16 @@ const App = () => {
                                <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
                                <Route path="onboarding" element={<StaffOnboarding />} />
                                <Route path="administration/migration" element={<AdminMigration />} />
-                               <Route path="ai-control" element={<AIControlCenter />} />
+                               <Route path="administration/ai" element={<AIControlCenter />} />
+                               <Route path="ai-command" element={<AICommandCenter />} />
+                               <Route path="ai-command/attention" element={<AICommandCenter />} />
+                               <Route path="ai-command/activity" element={<AICommandCenter />} />
+                               <Route path="ai-command/insights" element={<AICommandCenter />} />
+                               <Route path="ai-control" element={<LegacyAIControlRedirect />} />
                                <Route path="*" element={<NotFound />} />
-                            </Routes>
-                          </AdminLayout>
+                              </Routes>
+                            </AdminLayout>
+                          </AIControlProvider>
                         </ProtectedRoute>
                       } />
                       <Route path="*" element={<NotFound />} />

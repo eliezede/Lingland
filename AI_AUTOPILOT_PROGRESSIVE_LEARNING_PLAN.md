@@ -2,13 +2,16 @@
 
 Bookmark: AI_AUTOPILOT_PROGRESSIVE_LEARNING_FUTURE_PHASE
 
-## Implementation Status - 17 July 2026
+## Implementation Status - 18 July 2026
 
 The governed Autopilot engine is implemented. Production activation remains deliberately off, paused and simulation-first until Lingland completes its operational readiness checks.
 
 ### Completed And Verified
 
-- [x] Admin AI Control Center with Control, Suggestions, Executions, Runs and Audit workspaces.
+- [x] AI Command operational workspace with Now, Human Attention, Activity and Insights views.
+- [x] AI Governance workspace under Administration for provider setup, operating policy, safety boundaries and administrative audit.
+- [x] Persistent admin-wide AI status indicator with current mode, active work, attention count and recent activity.
+- [x] Legacy AI Control links redirect to the equivalent operational or governance destination.
 - [x] Server-enforced modes: `OFF`, `READ_ONLY_AUDIT`, `SUGGEST`, `ASSISTED`, `CONTROLLED_AUTOPILOT` and `FULL_AUTOPILOT`.
 - [x] First advanced-mode activation requires exact Super Admin acknowledgement.
 - [x] Moving from simulation to live platform writes requires a separate exact acknowledgement.
@@ -27,9 +30,9 @@ The governed Autopilot engine is implemented. Production activation remains deli
 - [x] Scheduled review cycle with configurable scopes and interval, daily limits and emergency-pause enforcement.
 - [x] Immutable AI run and audit trails with explicit execution and communication flags.
 - [x] Firestore access restricted to administrators; writes are performed only by callable functions.
-- [x] Contextual `?` manual documents daily workflow, modes, scopes, findings, safety and troubleshooting.
-- [x] Eight-step guided tour covers Safety, Guardrails, Provider, Review, Suggestions, Executions, Runs and Audit.
-- [x] Re-verify desktop, mobile, dark and light UI after the Autopilot control expansion.
+- [x] Contextual AI Command guide documents operational triage, human decisions, activity and structured feedback.
+- [x] Governance manual and guided tour cover safety, guardrails, provider setup and audit without mixing daily work into Administration.
+- [x] Re-verify desktop, 390 px mobile, dark and light UI after separating command and governance surfaces.
 - [x] Deploy the Autopilot functions, scheduler, hosting bundle and updated Firestore rules.
 
 Deployed callables:
@@ -58,7 +61,9 @@ Required initial production boundary after deployment:
 ### Live Validation Evidence
 
 - Desktop and 390 px mobile browser QA passed without page-level horizontal overflow; mobile findings use dedicated compact records.
-- Light and dark themes were verified with the manual, eight-step tour and every workspace tab.
+- Light and dark themes were verified for AI Command, the global activity drawer and AI Governance.
+- AI status remains visible from other admin workspaces, including the Jobs Board, so operators can see paused, working, attention and failure states without leaving their workflow.
+- Policy controls cannot be changed from the global activity drawer; resuming or changing automation remains an explicit AI Governance action.
 - Legacy callable payloads are normalized at the client boundary so missing Autopilot collections cannot crash the Control Center during a rolling deployment.
 - A real Jobs review generated 25 read-only observations without changing jobs or sending communication.
 - The observations exposed imported jobs with a financial status but no linked client invoice identifier.

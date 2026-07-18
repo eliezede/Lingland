@@ -40,7 +40,7 @@ const entityLink = (entityType: string, entityId: string) => {
   if (entityType === 'CLIENT_INVOICE') return `/admin/billing/client-invoices/${encodeURIComponent(entityId)}`;
   if (entityType === 'INTERPRETER_INVOICE') return `/admin/billing/interpreter-invoices/${encodeURIComponent(entityId)}`;
   if (entityType === 'SYNC_CONFLICT') return '/admin/administration/migration';
-  return '/admin/ai-control?tab=suggestions';
+  return '/admin/ai-command/attention';
 };
 
 const createOperationTask = async (input: AIActionToolInput): Promise<AIActionToolResult> => {

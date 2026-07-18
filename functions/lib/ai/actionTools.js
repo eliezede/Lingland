@@ -50,7 +50,7 @@ const entityLink = (entityType, entityId) => {
         return `/admin/billing/interpreter-invoices/${encodeURIComponent(entityId)}`;
     if (entityType === 'SYNC_CONFLICT')
         return '/admin/administration/migration';
-    return '/admin/ai-control?tab=suggestions';
+    return '/admin/ai-command/attention';
 };
 const createOperationTask = async (input) => {
     const ref = input.db.collection('aiOperationalTasks').doc(`task_${input.suggestionId}`);

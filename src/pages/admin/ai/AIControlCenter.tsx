@@ -56,11 +56,8 @@ import {
 type ControlTab = AIControlGuideTab;
 
 const tabs: Array<{ id: ControlTab; label: string; icon: React.ElementType }> = [
-  { id: 'control', label: 'Control', icon: Gauge },
-  { id: 'suggestions', label: 'Suggestions', icon: Sparkles },
-  { id: 'executions', label: 'Executions', icon: Workflow },
-  { id: 'runs', label: 'Runs', icon: Activity },
-  { id: 'audit', label: 'Audit', icon: History },
+  { id: 'control', label: 'Policy and setup', icon: Gauge },
+  { id: 'audit', label: 'Governance audit', icon: History },
 ];
 
 const reviewScopes: Array<{ id: AIReviewScope; label: string; detail: string }> = [
@@ -472,7 +469,7 @@ export const AIControlCenter = () => {
           : suggestion.entityType === 'SYNC_CONFLICT'
             ? '/admin/administration/migration'
             : '';
-    if (path) navigate(path, { state: { returnTo: `/admin/ai-control?tab=suggestions`, returnLabel: 'AI suggestions' } });
+    if (path) navigate(path, { state: { returnTo: '/admin/ai-command/insights', returnLabel: 'AI insights' } });
   };
 
   if (loading || !state || !draft) {
@@ -496,14 +493,14 @@ export const AIControlCenter = () => {
 
   return (
     <div className="min-w-0">
-      <PageHeader title="AI Control Center" subtitle="Governed operational automation with explicit policy, reversible tools and a complete decision trail.">
+      <PageHeader title="AI Governance" subtitle="Provider setup, operating policy, safety boundaries and administrative audit.">
         <AIControlHelpButton onClick={() => { setSelectedSuggestion(null); setTourStep(null); setManualOpen(true); }} />
         <Button variant="secondary" icon={RefreshCw} onClick={() => void loadState()} disabled={loading}>Refresh</Button>
       </PageHeader>
 
       <SafetyState state={state} />
 
-      <div data-ai-tour="sections" className="mb-5 flex overflow-x-auto border-b border-slate-200 dark:border-slate-800" role="tablist" aria-label="AI Control sections">
+      <div data-ai-tour="sections" className="mb-5 flex overflow-x-auto border-b border-slate-200 dark:border-slate-800" role="tablist" aria-label="AI Governance sections">
         {tabs.map(tab => {
           const Icon = tab.icon;
           const badge = tab.id === 'suggestions'
@@ -648,13 +645,6 @@ export const AIControlCenter = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400">Policy changes apply on the server before the next review or execution.</p>
             <Button icon={Save} isLoading={saving} onClick={() => void saveSettings()} disabled={!state.viewer.canManageSettings}>Save policy</Button>
           </div>
-
-          <section data-ai-tour="review" className="rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold text-slate-950 dark:text-white">Review console</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Rules create executable proposals; DeepSeek contributes analysis-only findings.</p></div><Button icon={Play} isLoading={running} onClick={() => void runReview()} disabled={draft.mode === 'OFF'}>Run {selectedScope.toLowerCase()} review</Button></div>
-            <div className="grid gap-px bg-slate-200 dark:bg-slate-800 sm:grid-cols-2 xl:grid-cols-6">
-              {reviewScopes.map(scope => <button key={scope.id} type="button" onClick={() => setSelectedScope(scope.id)} className={`min-h-24 bg-white p-4 text-left transition-colors dark:bg-slate-900 ${selectedScope === scope.id ? 'bg-blue-50/50 shadow-[inset_0_-3px_0_#2563eb] dark:bg-blue-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}><span className="text-xs font-bold text-slate-900 dark:text-white">{scope.label}</span><span className="mt-1 block text-xs leading-4 text-slate-500 dark:text-slate-400">{scope.detail}</span></button>)}
-            </div>
-          </section>
 
           <section className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800"><h2 className="text-sm font-semibold text-slate-950 dark:text-white">Action registry</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Closed server-owned allowlist. DeepSeek cannot add tools or change their risk.</p></div>

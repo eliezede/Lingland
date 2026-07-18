@@ -25,11 +25,7 @@ type ManualSection = 'quick-start' | 'modes' | 'reviews' | 'suggestions' | 'exec
 
 
 const manualSections: Array<{ id: ManualSection; label: string; icon: React.ElementType }> = [
-  { id: 'quick-start', label: 'Daily workflow', icon: Play },
   { id: 'modes', label: 'Modes and limits', icon: Gauge },
-  { id: 'reviews', label: 'Review scopes', icon: ListChecks },
-  { id: 'suggestions', label: 'Findings and feedback', icon: Sparkles },
-  { id: 'executions', label: 'Execution and rollback', icon: Workflow },
   { id: 'safety', label: 'Safety and privacy', icon: ShieldCheck },
   { id: 'troubleshooting', label: 'Troubleshooting', icon: Wrench },
 ];
@@ -209,7 +205,7 @@ export const AIControlManual = ({
   onClose: () => void;
   onStartTour: () => void;
 }) => {
-  const [section, setSection] = useState<ManualSection>('quick-start');
+  const [section, setSection] = useState<ManualSection>('modes');
 
   useEffect(() => {
     if (!open) return;
@@ -224,8 +220,8 @@ export const AIControlManual = ({
     <div className="fixed inset-0 z-[110] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div role="dialog" aria-modal="true" aria-labelledby="ai-manual-title" className="flex max-h-[96dvh] w-full flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:max-w-5xl sm:rounded-lg">
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 dark:border-slate-800 sm:px-5">
-          <div className="flex min-w-0 gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><BookOpen size={20} /></span><div><h2 id="ai-manual-title" className="text-lg font-semibold text-slate-950 dark:text-white">AI Control operating manual</h2><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Safe review workflow, decisions, learning and audit.</p></div></div>
-          <button type="button" aria-label="Close AI Control manual" title="Close" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={19} /></button>
+          <div className="flex min-w-0 gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><BookOpen size={20} /></span><div><h2 id="ai-manual-title" className="text-lg font-semibold text-slate-950 dark:text-white">AI Governance manual</h2><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Provider, policy, safety boundaries and audit.</p></div></div>
+          <button type="button" aria-label="Close AI Governance manual" title="Close" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><X size={19} /></button>
         </header>
 
         <div className="grid min-h-0 flex-1 md:grid-cols-[220px_minmax(0,1fr)]">
@@ -248,7 +244,7 @@ export const AIControlManual = ({
         </div>
 
         <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-xs text-slate-500 dark:text-slate-400">Start in simulation, verify outcomes, then expand one risk tier at a time.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Change one policy boundary at a time and preserve the audit trail.</p>
           <div className="flex gap-2"><Button variant="secondary" onClick={onClose}>Close</Button><Button icon={Play} onClick={onStartTour}>Start guided tour</Button></div>
         </footer>
       </div>
@@ -362,7 +358,7 @@ export const AIControlTour = ({
 };
 
 export const AIControlHelpButton = ({ onClick }: { onClick: () => void }) => (
-  <button type="button" aria-label="Open AI Control manual" title="AI Control help and guided tour" onClick={onClick} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-blue-300">
+  <button type="button" aria-label="Open AI Governance manual" title="AI Governance help and guided tour" onClick={onClick} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-blue-300">
     <CircleHelp size={19} />
   </button>
 );

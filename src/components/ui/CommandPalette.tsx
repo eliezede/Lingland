@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Search, Command, Zap, Users, Briefcase, FileText, Settings, ArrowRight,
-    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database, BrainCircuit
+    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database, BrainCircuit, Bot
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -42,6 +42,7 @@ export const CommandPalette = () => {
         { id: 'clients', title: 'Clients & Departments', subtitle: 'Manage client accounts', icon: Briefcase, category: 'Navigation', keywords: ['clients', 'departments', 'organisations'], onSelect: () => navigate('/admin/clients') },
         { id: 'applications', title: 'Onboarding Desk', subtitle: 'Review applications and compliance documents', icon: UserPlus, category: 'Navigation', keywords: ['applications', 'onboard', 'new interpreter', 'compliance'], onSelect: () => navigate('/admin/applications') },
         { id: 'messages', title: 'Direct Messages', subtitle: 'Team communications', icon: Globe, category: 'Navigation', keywords: ['messages', 'chat', 'communications'], onSelect: () => navigate('/admin/messages') },
+        { id: 'ai-command', title: 'AI Command', subtitle: 'Live AI work, approvals, activity and insights', icon: Bot, category: 'Navigation', keywords: ['ai', 'deepseek', 'autopilot', 'approvals', 'activity', 'suggestions'], onSelect: () => navigate('/admin/ai-command') },
         // Finance
         { id: 'finance-board', title: 'Finance Board', subtitle: 'Open the accounts workspace', icon: PoundSterling, category: 'Finance', keywords: ['finance', 'accounts', 'billing'], onSelect: () => navigate('/admin/billing') },
         { id: 'billing-queue', title: 'Billing Queue', subtitle: 'Work delivered jobs through billing', icon: PoundSterling, category: 'Finance', keywords: ['invoices', 'billing', 'clients', 'queue'], onSelect: () => navigate('/admin/billing?view=fin-billing-queue&lane=clientBilling') },
@@ -55,7 +56,7 @@ export const CommandPalette = () => {
         { id: 'data-center', title: 'Data Center', subtitle: 'Sync readiness, exports and platform data guardrails', icon: Database, category: 'Admin', keywords: ['data', 'database', 'import', 'export', 'system', 'sync', 'readiness'], onSelect: () => navigate('/admin/administration/data') },
         { id: 'audit-log', title: 'Audit & Event Control', subtitle: 'Immutable operations, finance, sync and communication events', icon: FileText, category: 'Admin', keywords: ['audit', 'logs', 'history', 'trail', 'events'], onSelect: () => navigate('/admin/system/audit-log') },
         { id: 'go-live', title: 'Go-Live Control', subtitle: 'Final reconciliation, sign-off and rollback', icon: ShieldCheck, category: 'Admin', keywords: ['go live', 'readiness', 'rollback', 'transition'], onSelect: () => navigate('/admin/administration/go-live') },
-        { id: 'ai-control', title: 'AI Control Center', subtitle: 'Read-only reviews, suggestions and AI audit', icon: BrainCircuit, category: 'Admin', keywords: ['ai', 'deepseek', 'suggestions', 'autopilot', 'audit'], onSelect: () => navigate('/admin/ai-control') },
+        { id: 'ai-governance', title: 'AI Governance', subtitle: 'Provider, operating policy, safety boundaries and audit', icon: BrainCircuit, category: 'Admin', keywords: ['ai', 'deepseek', 'settings', 'autopilot', 'policy', 'audit'], onSelect: () => navigate('/admin/administration/ai') },
     ];
 
     const filtered = query.trim() === ''
