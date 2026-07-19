@@ -331,6 +331,22 @@ export interface ClientInvoiceIdentityBlocker {
   clientName: string;
   invoiceNumber: string;
   status: string;
+  bookingIds: string[];
+  missingBookingIds: string[];
+  bookings: ClientFinanceBlockedBooking[];
+}
+
+export interface ClientFinanceBlockedBooking {
+  bookingId: string;
+  reference: string;
+  clientId: string;
+  clientName: string;
+  clientDepartmentId: string;
+  requestedByAgentId: string;
+  date: string;
+  serviceType: string;
+  issueCodes: Array<'CLIENT_INVALID' | 'DEPARTMENT_INVALID' | 'AGENT_MISSING' | 'AGENT_NOT_MEMBER'>;
+  hierarchyFingerprint: string;
 }
 
 export interface ClientFinanceHierarchyReconciliation {
@@ -350,6 +366,7 @@ export interface ClientFinanceHierarchyReconciliation {
   unlinkedInvoiceIds: string[];
   inferredClientAssignments: ClientInvoiceIdentityAssignment[];
   blockedInvoices: ClientInvoiceIdentityBlocker[];
+  blockerReasonCounts?: Record<ClientInvoiceIdentityBlocker['reason'], number>;
   invoicesWritten?: number;
   linesWritten?: number;
   manifestId?: string;
@@ -372,6 +389,32 @@ export interface ClientInvoiceIdentityResolutionResult {
   linesWritten: number;
 }
 
+export interface ClientBookingHierarchyRepairResult {
+  success: true;
+  idempotent?: boolean;
+  bookingId: string;
+  clientId?: string;
+  clientDepartmentId?: string;
+  requestedByAgentId?: string;
+  manifestId: string;
+  linkedInvoiceIds?: string[];
+  appliedFingerprint?: string;
+}
+
+export interface ClientBookingHierarchyRepairPreview {
+  success: true;
+  bookingId: string;
+  hierarchyFingerprint: string;
+  linkedInvoiceIds: string[];
+  requiresFinanceReview: boolean;
+  current: {
+    clientId: string;
+    clientDepartmentId: string;
+    requestedByAgentId: string;
+    requestedByUserId: string;
+  };
+}
+
 let pendingAudit: Promise<ClientIdentityAuditResult> | null = null;
 let cachedAudit: { value: ClientIdentityAuditResult; expiresAt: number } | null = null;
 
@@ -392,6 +435,33 @@ export const normalizeMergePreview = (value: ClientMergePreview): ClientMergePre
     approval: value.approval || null,
   };
 };
+
+const normalizeInvoiceBlocker = (blocker: ClientInvoiceIdentityBlocker): ClientInvoiceIdentityBlocker => ({
+  ...blocker,
+  candidateClientIds: Array.isArray(blocker.candidateClientIds) ? blocker.candidateClientIds : [],
+  evidence: Array.isArray(blocker.evidence) ? blocker.evidence : [],
+  bookingIds: Array.isArray(blocker.bookingIds) ? blocker.bookingIds : [],
+  missingBookingIds: Array.isArray(blocker.missingBookingIds) ? blocker.missingBookingIds : [],
+  bookings: Array.isArray(blocker.bookings) ? blocker.bookings.map(booking => ({
+    ...booking,
+    issueCodes: Array.isArray(booking.issueCodes) ? booking.issueCodes : [],
+    hierarchyFingerprint: booking.hierarchyFingerprint || '',
+  })) : [],
+});
+
+export const normalizeFinanceReconciliation = (value: ClientFinanceHierarchyReconciliation): ClientFinanceHierarchyReconciliation => ({
+  ...value,
+  blockedInvoiceIds: Array.isArray(value.blockedInvoiceIds) ? value.blockedInvoiceIds : [],
+  unlinkedInvoiceIds: Array.isArray(value.unlinkedInvoiceIds) ? value.unlinkedInvoiceIds : [],
+  inferredClientAssignments: Array.isArray(value.inferredClientAssignments) ? value.inferredClientAssignments : [],
+  blockedInvoices: Array.isArray(value.blockedInvoices) ? value.blockedInvoices.map(normalizeInvoiceBlocker) : [],
+  blockerReasonCounts: value.blockerReasonCounts || {
+    MULTIPLE_CLIENTS: 0,
+    BOOKING_LINK_MISSING: 0,
+    INVALID_BOOKING_SCOPE: 0,
+    CLIENT_IDENTITY_UNRESOLVED: 0,
+  },
+});
 
 const requestAudit = async () => {
   const callable = httpsCallable<Record<string, never>, ClientIdentityAuditResult>(
@@ -502,7 +572,17 @@ export const ClientIdentityAuditService = {
       'getClientHierarchyIntegrityAudit',
       { timeout: 300000 },
     );
-    return (await callable({})).data;
+    const value = (await callable({})).data;
+    return {
+      ...value,
+      financeBackfill: {
+        ...value.financeBackfill,
+        blockedInvoiceIds: Array.isArray(value.financeBackfill?.blockedInvoiceIds) ? value.financeBackfill.blockedInvoiceIds : [],
+        unlinkedInvoiceIds: Array.isArray(value.financeBackfill?.unlinkedInvoiceIds) ? value.financeBackfill.unlinkedInvoiceIds : [],
+        inferredClientAssignments: Array.isArray(value.financeBackfill?.inferredClientAssignments) ? value.financeBackfill.inferredClientAssignments : [],
+        blockedInvoices: Array.isArray(value.financeBackfill?.blockedInvoices) ? value.financeBackfill.blockedInvoices.map(normalizeInvoiceBlocker) : [],
+      },
+    };
   },
   previewFinanceHierarchyReconciliation: async (): Promise<ClientFinanceHierarchyReconciliation> => {
     const callable = httpsCallable<{ dryRun: true }, ClientFinanceHierarchyReconciliation>(
@@ -510,7 +590,7 @@ export const ClientIdentityAuditService = {
       'reconcileClientFinanceHierarchy',
       { timeout: 300000 },
     );
-    return (await callable({ dryRun: true })).data;
+    return normalizeFinanceReconciliation((await callable({ dryRun: true })).data);
   },
   applyFinanceHierarchyReconciliation: async (
     expectedFingerprint: string,
@@ -525,7 +605,7 @@ export const ClientIdentityAuditService = {
       'reconcileClientFinanceHierarchy',
       { timeout: 300000 },
     );
-    return (await callable({ dryRun: false, expectedFingerprint, confirmation })).data;
+    return normalizeFinanceReconciliation((await callable({ dryRun: false, expectedFingerprint, confirmation })).data);
   },
   resolveClientInvoiceIdentity: async (input: {
     invoiceId: string;
@@ -547,6 +627,42 @@ export const ClientIdentityAuditService = {
     const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientFinanceHierarchyRollback>(
       functions,
       'rollbackClientFinanceHierarchyReconciliation',
+      { timeout: 300000 },
+    );
+    return (await callable({ manifestId, confirmation })).data;
+  },
+  repairClientBookingHierarchy: async (input: {
+    bookingId: string;
+    clientId: string;
+    clientDepartmentId?: string;
+    requestedByAgentId?: string;
+    expectedBookingFingerprint: string;
+    expectedFinanceFingerprint?: string;
+    confirmation?: string;
+    reason: string;
+  }): Promise<ClientBookingHierarchyRepairResult> => {
+    const callable = httpsCallable<typeof input, ClientBookingHierarchyRepairResult>(
+      functions,
+      'repairClientBookingHierarchy',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  getClientBookingHierarchyRepairPreview: async (bookingId: string): Promise<ClientBookingHierarchyRepairPreview> => {
+    const callable = httpsCallable<{ bookingId: string }, ClientBookingHierarchyRepairPreview>(
+      functions,
+      'getClientBookingHierarchyRepairPreview',
+      { timeout: 120000 },
+    );
+    return (await callable({ bookingId })).data;
+  },
+  rollbackClientBookingHierarchyRepair: async (
+    manifestId: string,
+    confirmation: string,
+  ): Promise<ClientBookingHierarchyRepairResult> => {
+    const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientBookingHierarchyRepairResult>(
+      functions,
+      'rollbackClientBookingHierarchyRepair',
       { timeout: 300000 },
     );
     return (await callable({ manifestId, confirmation })).data;

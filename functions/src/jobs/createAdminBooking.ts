@@ -75,13 +75,31 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
 
   const requestedByAgentId = text(data?.requestedByAgentId, 160);
   const requesterAgent = requestedByAgentId ? await db.collection('clientAgents').doc(requestedByAgentId).get() : null;
+  let requesterMembershipData: Record<string, unknown> = {};
   if (requestedByAgentId && !requesterAgent?.exists) {
     throw new functions.https.HttpsError('invalid-argument', 'Selected requester identity was not found.');
   }
   if (requestedByAgentId) {
+    const requesterData = requesterAgent?.data() || {};
+    if (text(requesterData.status).toUpperCase() === 'INACTIVE' || text(requesterData.agentType).toUpperCase() === 'SHARED_MAILBOX') {
+      throw new functions.https.HttpsError('invalid-argument', 'Selected requester must be an active person, not a shared mailbox.');
+    }
     const memberships = await db.collection('clientMemberships').where('clientId', '==', clientId).get();
-    if (!memberships.docs.some(document => text(document.data().agentId) === requestedByAgentId)) {
+    const requesterMembership = memberships.docs.find(document => (
+      text(document.data().agentId) === requestedByAgentId
+      && text(document.data().status).toUpperCase() !== 'INACTIVE'
+    ));
+    if (!requesterMembership) {
       throw new functions.https.HttpsError('invalid-argument', 'Selected requester does not belong to this client.');
+    }
+    requesterMembershipData = requesterMembership.data();
+    const departmentIds = Array.isArray(requesterMembershipData.departmentIds)
+      ? requesterMembershipData.departmentIds.map(value => text(value)).filter(Boolean)
+      : [];
+    if (clientDepartmentId && departmentIds.length > 0
+      && !departmentIds.includes(clientDepartmentId)
+      && text(requesterMembershipData.accessLevel).toUpperCase() !== 'CLIENT_MASTER') {
+      throw new functions.https.HttpsError('invalid-argument', 'Selected requester is outside the chosen department scope.');
     }
   }
   const interpreterId = text(data?.interpreterId, 160);
@@ -157,7 +175,11 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
     bookingRef: numbering.base,
     displayRef: numbering.display,
     legacyRef: numbering.display,
-    requestedByUserId: actorUid,
+    requestedByUserId: requestedByAgentId
+      ? text(requesterMembershipData.userId || requesterData.userId, 160) || null
+      : null,
+    requesterIdentityStatus: requestedByAgentId ? 'RESOLVED' : null,
+    submittedByUid: actorUid,
     sourceSystem: 'STAFF_MANUAL',
     syncStatus: 'LOCAL_ONLY',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),

@@ -22,6 +22,7 @@ import {
   Undo2,
   UserRoundSearch,
   Users,
+  Wrench,
 } from 'lucide-react';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { Button } from '../../../components/ui/Button';
@@ -40,15 +41,19 @@ import {
   ClientIdentityDecisionType,
   ClientHierarchyIntegrityResult,
   ClientFinanceHierarchyReconciliation,
+  ClientFinanceBlockedBooking,
+  ClientBookingHierarchyRepairResult,
   ClientInvoiceIdentityBlocker,
   ClientInvoiceIdentityResolutionResult,
 } from '../../../services/clientIdentityAuditService';
+import { ClientHierarchyBundle, ClientHierarchyService } from '../../../services/clientHierarchyService';
 import { ClientService } from '../../../services/clientService';
 import { Client } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 
 type AuditTab = 'ORGANIZATIONS' | 'AGENTS';
 type RiskFilter = 'ALL' | ClientIdentityRisk;
+type FinanceBlockerFilter = 'ALL' | ClientInvoiceIdentityBlocker['reason'];
 
 const confidenceClasses: Record<ClientIdentityConfidence, string> = {
   HIGH: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
@@ -141,6 +146,7 @@ export const ClientIdentityAudit = () => {
   const [financeError, setFinanceError] = useState('');
   const [financeConfirmation, setFinanceConfirmation] = useState('');
   const [financeRollbackConfirmation, setFinanceRollbackConfirmation] = useState('');
+  const [financeBlockerFilter, setFinanceBlockerFilter] = useState<FinanceBlockerFilter>('ALL');
   const [identityBlocker, setIdentityBlocker] = useState<ClientInvoiceIdentityBlocker | null>(null);
   const [identityClients, setIdentityClients] = useState<Client[]>([]);
   const [identityClientQuery, setIdentityClientQuery] = useState('');
@@ -151,6 +157,20 @@ export const ClientIdentityAudit = () => {
   const [identityResolverOpen, setIdentityResolverOpen] = useState(false);
   const [identityResolverLoading, setIdentityResolverLoading] = useState(false);
   const [identityResolverError, setIdentityResolverError] = useState('');
+  const [bookingRepairBlocker, setBookingRepairBlocker] = useState<ClientInvoiceIdentityBlocker | null>(null);
+  const [bookingRepairBooking, setBookingRepairBooking] = useState<ClientFinanceBlockedBooking | null>(null);
+  const [bookingRepairOpen, setBookingRepairOpen] = useState(false);
+  const [bookingRepairLoading, setBookingRepairLoading] = useState(false);
+  const [bookingRepairError, setBookingRepairError] = useState('');
+  const [bookingRepairClientQuery, setBookingRepairClientQuery] = useState('');
+  const [bookingRepairClientId, setBookingRepairClientId] = useState('');
+  const [bookingRepairHierarchy, setBookingRepairHierarchy] = useState<ClientHierarchyBundle | null>(null);
+  const [bookingRepairDepartmentId, setBookingRepairDepartmentId] = useState('');
+  const [bookingRepairAgentId, setBookingRepairAgentId] = useState('');
+  const [bookingRepairReason, setBookingRepairReason] = useState('');
+  const [bookingRepairConfirmation, setBookingRepairConfirmation] = useState('');
+  const [bookingRepairRollbackConfirmation, setBookingRepairRollbackConfirmation] = useState('');
+  const [bookingRepairResult, setBookingRepairResult] = useState<ClientBookingHierarchyRepairResult | null>(null);
   const [decisionMode, setDecisionMode] = useState<ClientIdentityDecisionType | null>(null);
   const [decisionReason, setDecisionReason] = useState('');
   const [decisionNotes, setDecisionNotes] = useState('');
@@ -200,6 +220,7 @@ export const ClientIdentityAudit = () => {
     setFinancePreview(null);
     setFinanceConfirmation('');
     setFinanceRollbackConfirmation('');
+    setFinanceBlockerFilter('ALL');
     try {
       setFinancePreview(await ClientIdentityAuditService.previewFinanceHierarchyReconciliation());
     } catch (previewError) {
@@ -323,6 +344,123 @@ export const ClientIdentityAudit = () => {
     }
   };
 
+  const chooseBookingRepairClient = async (clientId: string, booking = bookingRepairBooking) => {
+    setBookingRepairClientId(clientId);
+    setBookingRepairHierarchy(null);
+    setBookingRepairDepartmentId('');
+    setBookingRepairAgentId('');
+    setBookingRepairConfirmation('');
+    setBookingRepairError('');
+    if (!clientId) return;
+    setBookingRepairLoading(true);
+    try {
+      const hierarchy = await ClientHierarchyService.getForClient(clientId);
+      setBookingRepairHierarchy(hierarchy);
+      if (booking?.clientId === clientId) {
+        const departmentExists = hierarchy.departments.some(item => item.id === booking.clientDepartmentId && item.status === 'ACTIVE');
+        const agentExists = hierarchy.agents.some(item => item.id === booking.requestedByAgentId && item.status === 'ACTIVE' && item.agentType === 'PERSON')
+          && hierarchy.memberships.some(item => item.clientId === clientId && item.agentId === booking.requestedByAgentId && item.status === 'ACTIVE');
+        if (departmentExists) setBookingRepairDepartmentId(booking.clientDepartmentId);
+        if (agentExists) setBookingRepairAgentId(booking.requestedByAgentId);
+      }
+    } catch (hierarchyError) {
+      console.error('Failed to load client hierarchy for booking repair', hierarchyError);
+      setBookingRepairError(hierarchyError instanceof Error ? hierarchyError.message : 'The client hierarchy could not be loaded.');
+    } finally {
+      setBookingRepairLoading(false);
+    }
+  };
+
+  const openBookingHierarchyRepair = async (blocker: ClientInvoiceIdentityBlocker, booking: ClientFinanceBlockedBooking) => {
+    setFinanceModalOpen(false);
+    setBookingRepairBlocker(blocker);
+    setBookingRepairBooking(booking);
+    setBookingRepairOpen(true);
+    setBookingRepairError('');
+    setBookingRepairClientQuery('');
+    setBookingRepairReason('');
+    setBookingRepairConfirmation('');
+    setBookingRepairRollbackConfirmation('');
+    setBookingRepairResult(null);
+    setBookingRepairHierarchy(null);
+    setBookingRepairDepartmentId('');
+    setBookingRepairAgentId('');
+    setBookingRepairLoading(true);
+    try {
+      let clients = identityClients;
+      if (clients.length === 0) {
+        clients = (await ClientService.getAll()).sort((left, right) => left.companyName.localeCompare(right.companyName));
+        setIdentityClients(clients);
+      }
+      const currentClientIsUsable = !booking.issueCodes.includes('CLIENT_INVALID')
+        && clients.some(client => client.id === booking.clientId && client.recordState !== 'MERGED');
+      const suggestedClientId = currentClientIsUsable
+        ? booking.clientId
+        : blocker.candidateClientIds.length === 1
+          ? blocker.candidateClientIds[0]
+          : '';
+      setBookingRepairLoading(false);
+      if (suggestedClientId) await chooseBookingRepairClient(suggestedClientId, booking);
+    } catch (clientError) {
+      console.error('Failed to prepare booking hierarchy repair', clientError);
+      setBookingRepairError(clientError instanceof Error ? clientError.message : 'The repair case could not be prepared.');
+      setBookingRepairLoading(false);
+    }
+  };
+
+  const applyBookingHierarchyRepair = async () => {
+    if (!financePreview || !bookingRepairBooking || !bookingRepairClientId) return;
+    setBookingRepairLoading(true);
+    setBookingRepairError('');
+    try {
+      const result = await ClientIdentityAuditService.repairClientBookingHierarchy({
+        bookingId: bookingRepairBooking.bookingId,
+        clientId: bookingRepairClientId,
+        clientDepartmentId: bookingRepairDepartmentId || undefined,
+        requestedByAgentId: bookingRepairAgentId || undefined,
+        expectedBookingFingerprint: bookingRepairBooking.hierarchyFingerprint,
+        expectedFinanceFingerprint: financePreview.fingerprint,
+        confirmation: bookingRepairConfirmation,
+        reason: bookingRepairReason,
+      });
+      setBookingRepairResult(result);
+      setBookingRepairConfirmation('');
+      await loadIntegrity();
+    } catch (repairError) {
+      console.error('Failed to repair booking hierarchy', repairError);
+      setBookingRepairError(repairError instanceof Error ? repairError.message : 'The job hierarchy could not be repaired.');
+    } finally {
+      setBookingRepairLoading(false);
+    }
+  };
+
+  const rollbackBookingHierarchyRepair = async () => {
+    if (!bookingRepairResult?.manifestId) return;
+    setBookingRepairLoading(true);
+    setBookingRepairError('');
+    try {
+      await ClientIdentityAuditService.rollbackClientBookingHierarchyRepair(
+        bookingRepairResult.manifestId,
+        bookingRepairRollbackConfirmation,
+      );
+      setBookingRepairOpen(false);
+      setBookingRepairResult(null);
+      await loadIntegrity();
+      await previewFinanceReconciliation();
+    } catch (rollbackError) {
+      console.error('Failed to restore booking hierarchy repair', rollbackError);
+      setBookingRepairError(rollbackError instanceof Error ? rollbackError.message : 'The previous job hierarchy could not be restored.');
+    } finally {
+      setBookingRepairLoading(false);
+    }
+  };
+
+  const refreshFinanceAfterBookingRepair = async () => {
+    setBookingRepairOpen(false);
+    setBookingRepairResult(null);
+    await previewFinanceReconciliation();
+  };
+
   const candidates = useMemo(() => {
     const source = tab === 'ORGANIZATIONS' ? audit?.organizationCandidates || [] : audit?.agentCandidates || [];
     const needle = query.trim().toLowerCase();
@@ -361,6 +499,56 @@ export const ClientIdentityAudit = () => {
       })
       .slice(0, 30);
   }, [identityBlocker, identityClientQuery, identityClients]);
+
+  const visibleBookingRepairClients = useMemo(() => {
+    const needle = bookingRepairClientQuery.trim().toLowerCase();
+    const suggestedIds = new Set(bookingRepairBlocker?.candidateClientIds || []);
+    return identityClients
+      .filter(client => {
+        const companyName = client.companyName.trim().toLowerCase();
+        if (client.recordState === 'MERGED' || ['airtable client', 'translation client', 'unknown client', 'client'].includes(companyName)) return false;
+        if (!needle) return true;
+        return [client.companyName, client.id, client.sageAccountRef, client.airtableClientKey, client.invoiceEmail, client.email]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(needle);
+      })
+      .sort((left, right) => {
+        const leftSuggested = suggestedIds.has(left.id) ? 1 : 0;
+        const rightSuggested = suggestedIds.has(right.id) ? 1 : 0;
+        return rightSuggested - leftSuggested || left.companyName.localeCompare(right.companyName);
+      })
+      .slice(0, 30);
+  }, [bookingRepairBlocker, bookingRepairClientQuery, identityClients]);
+
+  const bookingRepairAgentOptions = useMemo(() => {
+    if (!bookingRepairHierarchy) return [];
+    const membershipByAgent = new Map(bookingRepairHierarchy.memberships
+      .filter(membership => membership.status === 'ACTIVE')
+      .map(membership => [membership.agentId, membership]));
+    return bookingRepairHierarchy.agents
+      .filter(agent => agent.status === 'ACTIVE' && agent.agentType === 'PERSON')
+      .filter(agent => {
+        const membership = membershipByAgent.get(agent.id);
+        if (!membership) return false;
+        if (!bookingRepairDepartmentId || !membership.departmentIds?.length || membership.accessLevel === 'CLIENT_MASTER') return true;
+        return membership.departmentIds.includes(bookingRepairDepartmentId);
+      })
+      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }, [bookingRepairDepartmentId, bookingRepairHierarchy]);
+
+  const bookingRepairSelectedClient = useMemo(
+    () => identityClients.find(client => client.id === bookingRepairClientId) || null,
+    [bookingRepairClientId, identityClients],
+  );
+
+  const visibleFinanceBlockers = useMemo(() => {
+    const blockers = financePreview?.blockedInvoices || [];
+    return financeBlockerFilter === 'ALL'
+      ? blockers
+      : blockers.filter(blocker => blocker.reason === financeBlockerFilter);
+  }, [financeBlockerFilter, financePreview?.blockedInvoices]);
 
   const inspectedAt = audit?.generatedAt
     ? new Date(audit.generatedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
@@ -1421,23 +1609,54 @@ export const ClientIdentityAudit = () => {
               {financePreview.blockedInvoiceCount > 0 && (
                 <div className="border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
                   <p className="font-semibold">{financePreview.blockedInvoiceCount} invoice(s) have unsafe job or client relationships and block the entire repair</p>
-                  <div className="mt-2 max-h-44 divide-y divide-red-200 overflow-y-auto border-t border-red-200 dark:divide-red-900/60 dark:border-red-900/60">
-                    {(financePreview.blockedInvoices || []).map(blocker => (
-                      <div key={blocker.invoiceId} className="flex items-start justify-between gap-3 py-2">
-                        <div className="min-w-0">
-                          <p className="break-all font-mono text-[10px]">{blocker.invoiceId}</p>
-                          <p className="font-semibold">{blocker.clientName || blocker.invoiceNumber || 'Client identity missing'} - {blocker.reason.replaceAll('_', ' ')}</p>
-                          {blocker.candidateClientIds.length > 0 && <p className="break-all text-[10px]">Candidates: {blocker.candidateClientIds.join(', ')}</p>}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button type="button" aria-pressed={financeBlockerFilter === 'ALL'} onClick={() => setFinanceBlockerFilter('ALL')} className={`rounded-full border px-2 py-0.5 font-semibold ${financeBlockerFilter === 'ALL' ? 'border-red-500 bg-red-700 text-white dark:bg-red-300 dark:text-red-950' : 'border-red-200 bg-white dark:border-red-900 dark:bg-slate-950'}`}>All {financePreview.blockedInvoiceCount}</button>
+                    {([
+                      ['CLIENT_IDENTITY_UNRESOLVED', 'Client unresolved', financePreview.blockerReasonCounts?.CLIENT_IDENTITY_UNRESOLVED || 0],
+                      ['INVALID_BOOKING_SCOPE', 'Invalid job scope', financePreview.blockerReasonCounts?.INVALID_BOOKING_SCOPE || 0],
+                      ['MULTIPLE_CLIENTS', 'Multiple clients', financePreview.blockerReasonCounts?.MULTIPLE_CLIENTS || 0],
+                      ['BOOKING_LINK_MISSING', 'Missing job', financePreview.blockerReasonCounts?.BOOKING_LINK_MISSING || 0],
+                    ] as const).filter(([, , count]) => count > 0).map(([filter, label, count]) => (
+                      <button key={filter} type="button" aria-pressed={financeBlockerFilter === filter} onClick={() => setFinanceBlockerFilter(filter)} className={`rounded-full border px-2 py-0.5 font-semibold ${financeBlockerFilter === filter ? 'border-red-500 bg-red-700 text-white dark:bg-red-300 dark:text-red-950' : 'border-red-200 bg-white dark:border-red-900 dark:bg-slate-950'}`}>{label} {count}</button>
+                    ))}
+                  </div>
+                  <div className="mt-2 max-h-[45vh] divide-y divide-red-200 overflow-y-auto border-t border-red-200 dark:divide-red-900/60 dark:border-red-900/60">
+                    {visibleFinanceBlockers.map(blocker => (
+                      <div key={blocker.invoiceId} className="py-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-all font-mono text-[10px]">{blocker.invoiceId}</p>
+                            <p className="font-semibold">{blocker.clientName || blocker.invoiceNumber || 'Client identity missing'} - {blocker.reason.replaceAll('_', ' ')}</p>
+                            {blocker.candidateClientIds.length > 0 && <p className="break-all text-[10px]">Candidates: {blocker.candidateClientIds.join(', ')}</p>}
+                          </div>
+                          {blocker.reason === 'CLIENT_IDENTITY_UNRESOLVED' && blocker.bookings.length === 0 && (
+                            <button type="button" onClick={() => void openInvoiceIdentityResolver(blocker)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
+                              Resolve invoice
+                            </button>
+                          )}
                         </div>
-                        {blocker.reason === 'CLIENT_IDENTITY_UNRESOLVED' && (
-                          <button type="button" onClick={() => void openInvoiceIdentityResolver(blocker)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
-                            Resolve
-                          </button>
+                        {blocker.bookings.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {blocker.bookings.map(booking => (
+                              <div key={booking.bookingId} className="flex items-center justify-between gap-3 border border-red-200 bg-white px-2 py-1.5 dark:border-red-900/60 dark:bg-slate-950/70">
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-slate-900 dark:text-white">{booking.reference}</p>
+                                  <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{booking.date || 'No date'} - {booking.issueCodes.length > 0 ? booking.issueCodes.join(', ').replaceAll('_', ' ') : 'Conflicting invoice client scope'}</p>
+                                </div>
+                                <button type="button" onClick={() => void openBookingHierarchyRepair(blocker, booking)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
+                                  Repair job
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {blocker.missingBookingIds.length > 0 && (
+                          <p className="mt-2 break-all border border-red-200 bg-white px-2 py-1.5 text-[10px] dark:border-red-900/60 dark:bg-slate-950/70">Missing job IDs: {blocker.missingBookingIds.join(', ')}</p>
                         )}
                       </div>
                     ))}
                   </div>
-                  {financePreview.blockedInvoiceCount > financePreview.blockedInvoiceIds.length && <p className="mt-1">Showing the first {financePreview.blockedInvoiceIds.length} IDs.</p>}
+                  <p className="mt-1">Showing {visibleFinanceBlockers.length} of {financePreview.blockedInvoiceCount} repair cases{financePreview.blockedInvoiceCount > financePreview.blockedInvoices.length ? `; the response includes the first ${financePreview.blockedInvoices.length}` : ''}.</p>
                 </div>
               )}
               {financePreview.unlinkedInvoiceCount > 0 && (
@@ -1561,6 +1780,155 @@ export const ClientIdentityAudit = () => {
                 Final confirmation
                 <span id="invoice-client-confirmation-help" className="mt-1 block font-normal leading-5 text-slate-500 dark:text-slate-400">Type <strong>LINK INVOICE TO CLIENT</strong>. The current global fingerprint is rechecked before writing.</span>
                 <input id="invoice-client-confirmation" aria-describedby="invoice-client-confirmation-help" autoComplete="off" value={identityConfirmation} onChange={event => setIdentityConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              </label>
+            </>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bookingRepairOpen}
+        onClose={() => { if (!bookingRepairLoading) setBookingRepairOpen(false); }}
+        title="Repair blocked job hierarchy"
+        maxWidth="2xl"
+        footer={(
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" disabled={bookingRepairLoading} onClick={() => setBookingRepairOpen(false)}>Close</Button>
+            {!bookingRepairResult ? (
+              <Button
+                icon={Wrench}
+                isLoading={bookingRepairLoading}
+                disabled={!isSuperAdmin
+                  || !bookingRepairClientId
+                  || bookingRepairReason.trim().length < 5
+                  || bookingRepairConfirmation.toUpperCase() !== 'REPAIR BOOKING HIERARCHY'}
+                onClick={() => void applyBookingHierarchyRepair()}
+              >Apply reviewed job repair</Button>
+            ) : (
+              <>
+                <Button variant="secondary" icon={RefreshCw} disabled={bookingRepairLoading} onClick={() => void refreshFinanceAfterBookingRepair()}>Re-run dry run</Button>
+                <Button
+                  variant="danger"
+                  icon={Undo2}
+                  isLoading={bookingRepairLoading}
+                  disabled={bookingRepairRollbackConfirmation.toUpperCase() !== 'ROLLBACK BOOKING HIERARCHY'}
+                  onClick={() => void rollbackBookingHierarchyRepair()}
+                >Restore previous job scope</Button>
+              </>
+            )}
+          </div>
+        )}
+      >
+        <div className="space-y-4">
+          {bookingRepairBooking && bookingRepairBlocker && (
+            <div className="border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-950 dark:text-white">{bookingRepairBooking.reference}</p>
+                  <p className="mt-1 text-slate-600 dark:text-slate-300">Invoice {bookingRepairBlocker.invoiceNumber || bookingRepairBlocker.invoiceId}</p>
+                </div>
+                <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{bookingRepairBlocker.reason.replaceAll('_', ' ')}</span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <p><span className="text-slate-500">Current client:</span> <span className="break-all font-mono text-[10px]">{bookingRepairBooking.clientId || 'none'}</span></p>
+                <p><span className="text-slate-500">Current department:</span> <span className="break-all font-mono text-[10px]">{bookingRepairBooking.clientDepartmentId || 'none'}</span></p>
+                <p><span className="text-slate-500">Current requester:</span> <span className="break-all font-mono text-[10px]">{bookingRepairBooking.requestedByAgentId || 'none'}</span></p>
+                <p><span className="text-slate-500">Issues:</span> {bookingRepairBooking.issueCodes.length > 0 ? bookingRepairBooking.issueCodes.join(', ').replaceAll('_', ' ') : 'Conflicting invoice client scope'}</p>
+              </div>
+            </div>
+          )}
+
+          {bookingRepairError && (
+            <div className="flex items-start gap-2 border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{bookingRepairError}
+            </div>
+          )}
+
+          {bookingRepairResult ? (
+            <>
+              <div className="border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <p className="font-semibold">Job hierarchy repaired</p>
+                <p className="mt-1">The invoice was not changed. Re-run the dry run to recalculate the remaining blocker queue and financial backfill.</p>
+              </div>
+              <div className="grid gap-2 border border-slate-200 p-3 text-xs dark:border-slate-800 sm:grid-cols-2">
+                <p><span className="text-slate-500">Job:</span> <span className="font-semibold">{bookingRepairResult.bookingId}</span></p>
+                <p><span className="text-slate-500">Client:</span> <span className="font-semibold">{bookingRepairResult.clientId}</span></p>
+                <p><span className="text-slate-500">Department:</span> <span className="font-semibold">{bookingRepairResult.clientDepartmentId || 'Organisation-wide'}</span></p>
+                <p><span className="text-slate-500">Requester:</span> <span className="font-semibold">{bookingRepairResult.requestedByAgentId || 'Unassigned'}</span></p>
+              </div>
+              <label className="block text-xs font-semibold text-red-800 dark:text-red-200">
+                Emergency restoration
+                <span className="mt-1 block font-normal leading-5 text-slate-500 dark:text-slate-400">Type <strong>ROLLBACK BOOKING HIERARCHY</strong>. Rollback stops if a newer hierarchy edit has been made.</span>
+                <input value={bookingRepairRollbackConfirmation} onChange={event => setBookingRepairRollbackConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-red-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-red-600 dark:border-red-900 dark:bg-slate-950 dark:text-white" />
+              </label>
+              <p className="break-all font-mono text-[10px] text-slate-400">Manifest {bookingRepairResult.manifestId}</p>
+            </>
+          ) : (
+            <>
+              {!isSuperAdmin && (
+                <div className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">A Super Admin must complete repairs that affect invoiced jobs.</div>
+              )}
+              <div>
+                <label htmlFor="booking-repair-client-search" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Canonical client</label>
+                <div className="relative mt-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input id="booking-repair-client-search" value={bookingRepairClientQuery} onChange={event => setBookingRepairClientQuery(event.target.value)} placeholder="Search company, Sage code or client ID" className="h-10 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </div>
+              </div>
+              <div role="group" aria-label="Booking repair client choices" className="max-h-44 divide-y divide-slate-200 overflow-y-auto border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {visibleBookingRepairClients.map(client => {
+                  const selectedClient = client.id === bookingRepairClientId;
+                  const suggested = bookingRepairBlocker?.candidateClientIds.includes(client.id);
+                  return (
+                    <button key={client.id} type="button" aria-pressed={selectedClient} onClick={() => void chooseBookingRepairClient(client.id)} className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors ${selectedClient ? 'bg-blue-50 text-blue-900 dark:bg-blue-950/40 dark:text-blue-100' : 'bg-white text-slate-800 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'}`}>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2 text-sm font-semibold"><span className="truncate">{client.companyName}</span>{suggested && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 text-[9px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Suggested</span>}</span>
+                        <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">{[client.sageAccountRef, client.invoiceEmail || client.email].filter(Boolean).join(' - ') || 'No account code or email'}</span>
+                      </span>
+                      <span className="max-w-[42%] truncate font-mono text-[9px] text-slate-400">{client.id}</span>
+                    </button>
+                  );
+                })}
+                {visibleBookingRepairClients.length === 0 && <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No canonical clients match this search.</p>}
+              </div>
+
+              {bookingRepairClientId && (
+                <div className="space-y-3 border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/60 dark:bg-blue-950/20">
+                  <div>
+                    <p className="text-xs font-semibold text-blue-900 dark:text-blue-100">{bookingRepairSelectedClient?.companyName || bookingRepairClientId}</p>
+                    <p className="mt-0.5 break-all font-mono text-[9px] text-blue-600 dark:text-blue-300">{bookingRepairClientId}</p>
+                  </div>
+                  {bookingRepairLoading && !bookingRepairHierarchy ? (
+                    <div className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-200"><Spinner size="sm" />Loading departments and agents...</div>
+                  ) : bookingRepairHierarchy ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Department
+                        <select value={bookingRepairDepartmentId} onChange={event => { setBookingRepairDepartmentId(event.target.value); setBookingRepairAgentId(''); setBookingRepairConfirmation(''); }} className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+                          <option value="">Organisation-wide / not established</option>
+                          {bookingRepairHierarchy.departments.filter(item => item.status === 'ACTIVE').map(department => <option key={department.id} value={department.id}>{department.name}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Requesting agent
+                        <select value={bookingRepairAgentId} onChange={event => { setBookingRepairAgentId(event.target.value); setBookingRepairConfirmation(''); }} className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+                          <option value="">Unknown / not established</option>
+                          {bookingRepairAgentOptions.map(agent => <option key={agent.id} value={agent.id}>{agent.displayName} - {agent.email}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              <label htmlFor="booking-repair-reason" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Review reason
+                <textarea id="booking-repair-reason" value={bookingRepairReason} onChange={event => setBookingRepairReason(event.target.value)} placeholder="Evidence reviewed and reason for selecting this client scope" className="mt-2 min-h-20 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              </label>
+              <label htmlFor="booking-repair-confirmation" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Final confirmation
+                <span className="mt-1 block font-normal leading-5 text-slate-500 dark:text-slate-400">Type <strong>REPAIR BOOKING HIERARCHY</strong>. Both the global finance plan and this job fingerprint are checked again before writing.</span>
+                <input id="booking-repair-confirmation" autoComplete="off" value={bookingRepairConfirmation} onChange={event => setBookingRepairConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
               </label>
             </>
           )}

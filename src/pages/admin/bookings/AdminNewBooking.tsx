@@ -47,6 +47,9 @@ import {
     getBookingNavigationStateForReturn,
 } from '../../../components/bookings/BookingRecordShell';
 import { isInterpreterAvailableForStaffAssignment } from '../../../utils/interpreterFlow';
+import { ClientHierarchyBundle, ClientHierarchyService } from '../../../services/clientHierarchyService';
+import { ClientIdentityAuditService } from '../../../services/clientIdentityAuditService';
+import { ClientService } from '../../../services/clientService';
 
 type ClientSource = 'EXISTING' | 'GUEST';
 
@@ -116,7 +119,13 @@ export const AdminNewBooking = () => {
 
     const [loading, setLoading] = useState(false);
     const [initialLoading, setInitialLoading] = useState(isEditMode);
-    const clients = Object.values(clientsMap);
+    const [clientOptions, setClientOptions] = useState<Client[]>([]);
+    const clients = useMemo(() => {
+        const byId = new Map<string, Client>();
+        Object.values(clientsMap).forEach(client => byId.set(client.id, client));
+        clientOptions.forEach(client => byId.set(client.id, client));
+        return Array.from(byId.values()).sort((left, right) => left.companyName.localeCompare(right.companyName));
+    }, [clientOptions, clientsMap]);
     const [interpreters, setInterpreters] = useState<Interpreter[]>([]);
     const [searchingInterpreter, setSearchingInterpreter] = useState('');
     const [originalBooking, setOriginalBooking] = useState<Booking | null>(null);
@@ -127,6 +136,11 @@ export const AdminNewBooking = () => {
     const [clientSource, setClientSource] = useState<ClientSource>('GUEST');
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [selectedInterpreter, setSelectedInterpreter] = useState<Interpreter | null>(null);
+    const [clientHierarchy, setClientHierarchy] = useState<ClientHierarchyBundle | null>(null);
+    const [clientHierarchyLoading, setClientHierarchyLoading] = useState(false);
+    const [clientHierarchyError, setClientHierarchyError] = useState('');
+    const [selectedClientDepartmentId, setSelectedClientDepartmentId] = useState('');
+    const [selectedRequesterAgentId, setSelectedRequesterAgentId] = useState('');
     const [interpreterTouched, setInterpreterTouched] = useState(false);
     const [serviceTypeTouched, setServiceTypeTouched] = useState(false);
     const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -177,17 +191,54 @@ export const AdminNewBooking = () => {
 
     useEffect(() => {
         if (!originalBooking?.clientId || selectedClient) return;
-        const client = clientsMap[originalBooking.clientId];
+        const client = clients.find(item => item.id === originalBooking.clientId);
         if (client) setSelectedClient(client);
-    }, [clientsMap, originalBooking?.clientId, selectedClient]);
+    }, [clients, originalBooking?.clientId, selectedClient]);
+
+    useEffect(() => {
+        const clientId = selectedClient?.id;
+        if (!clientId) {
+            setClientHierarchy(null);
+            setClientHierarchyError('');
+            return;
+        }
+        let cancelled = false;
+        setClientHierarchyLoading(true);
+        setClientHierarchyError('');
+        ClientHierarchyService.getForClient(clientId)
+            .then(hierarchy => {
+                if (cancelled) return;
+                setClientHierarchy(hierarchy);
+                setSelectedClientDepartmentId(current => hierarchy.departments.some(item => item.id === current && item.status === 'ACTIVE') ? current : '');
+                setSelectedRequesterAgentId(current => {
+                    const activeAgent = hierarchy.agents.some(item => item.id === current && item.status === 'ACTIVE' && item.agentType === 'PERSON');
+                    const activeMembership = hierarchy.memberships.some(item => item.clientId === clientId && item.agentId === current && item.status === 'ACTIVE');
+                    return activeAgent && activeMembership ? current : '';
+                });
+            })
+            .catch(hierarchyError => {
+                if (cancelled) return;
+                console.error('Failed to load booking client hierarchy', hierarchyError);
+                setClientHierarchy(null);
+                setClientHierarchyError(hierarchyError instanceof Error ? hierarchyError.message : 'Departments and agents could not be loaded.');
+            })
+            .finally(() => {
+                if (!cancelled) setClientHierarchyLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [selectedClient?.id]);
 
     const loadInitialData = async () => {
         try {
-            const allInterpreters = await InterpreterService.getAll();
+            const [allInterpreters, allClients] = await Promise.all([
+                InterpreterService.getAll(),
+                ClientService.getAll(),
+            ]);
             const workforceInterpreters = allInterpreters.filter(int =>
                 ['ACTIVE', 'IMPORTED', 'ONLY_TRANSL'].includes(int.status)
             );
             setInterpreters(workforceInterpreters);
+            setClientOptions(allClients);
             setAvailableLanguages(Array.from(new Set(workforceInterpreters.flatMap(int => int.languages || []))).sort());
         } catch (error) {
             console.error('Failed to load booking editor data', error);
@@ -208,6 +259,8 @@ export const AdminNewBooking = () => {
             setOriginalBooking(booking);
             setInterpreterTouched(false);
             setServiceTypeTouched(false);
+            setSelectedClientDepartmentId(booking.clientDepartmentId || '');
+            setSelectedRequesterAgentId(booking.requestedByAgentId || '');
             setOrganizationId(booking.organizationId || '');
             setFormData({
                 costCode: booking.costCode || '',
@@ -255,7 +308,7 @@ export const AdminNewBooking = () => {
         }
     };
 
-    const filteredClientsForModal = useMemo(() => {
+    const matchingClientsForModal = useMemo(() => {
         const query = clientSearchQuery.toLowerCase();
         return clients.filter(c =>
             (c.companyName || '').toLowerCase().includes(query) ||
@@ -263,6 +316,29 @@ export const AdminNewBooking = () => {
             (c.email || '').toLowerCase().includes(query)
         );
     }, [clients, clientSearchQuery]);
+    const filteredClientsForModal = useMemo(() => matchingClientsForModal.slice(0, 80), [matchingClientsForModal]);
+
+    const requesterAgentOptions = useMemo(() => {
+        if (!clientHierarchy || !selectedClient) return [];
+        const membershipByAgent = new Map(clientHierarchy.memberships
+            .filter(membership => membership.clientId === selectedClient.id && membership.status === 'ACTIVE')
+            .map(membership => [membership.agentId, membership]));
+        return clientHierarchy.agents
+            .filter(agent => agent.status === 'ACTIVE' && agent.agentType === 'PERSON')
+            .filter(agent => {
+                const membership = membershipByAgent.get(agent.id);
+                if (!membership) return false;
+                if (!selectedClientDepartmentId || !membership.departmentIds?.length || membership.accessLevel === 'CLIENT_MASTER') return true;
+                return membership.departmentIds.includes(selectedClientDepartmentId);
+            })
+            .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    }, [clientHierarchy, selectedClient, selectedClientDepartmentId]);
+
+    const selectedRequesterMembership = useMemo(() => clientHierarchy?.memberships.find(membership => (
+        membership.clientId === selectedClient?.id
+        && membership.agentId === selectedRequesterAgentId
+        && membership.status === 'ACTIVE'
+    )), [clientHierarchy, selectedClient?.id, selectedRequesterAgentId]);
 
     const matchingInterpreters = useMemo(() => {
         const available = interpreters.filter(i =>
@@ -433,6 +509,13 @@ export const AdminNewBooking = () => {
             if (clientSource === 'EXISTING' && (selectedClient || originalBooking?.clientId)) {
                 bookingData.clientId = selectedClient?.id || originalBooking?.clientId;
                 bookingData.clientName = selectedClient?.companyName || originalBooking?.clientName || formData.organization || 'Registered Client';
+                bookingData.clientDepartmentId = selectedClientDepartmentId || null;
+                bookingData.clientDepartmentSource = selectedClientDepartmentId ? 'STAFF_MANUAL' : null;
+                bookingData.requestedByAgentId = selectedRequesterAgentId || null;
+                bookingData.requestedByAgentSource = selectedRequesterAgentId ? 'STAFF_MANUAL' : null;
+                bookingData.requestedByUserId = selectedRequesterAgentId
+                    ? selectedRequesterMembership?.userId || clientHierarchy?.agents.find(agent => agent.id === selectedRequesterAgentId)?.userId || null
+                    : null;
                 bookingData.guestContact = {
                     name: formData.contactName || selectedClient?.contactPerson || originalBooking?.guestContact?.name || '',
                     email: formData.contactEmail || selectedClient?.email || originalBooking?.guestContact?.email || '',
@@ -442,6 +525,8 @@ export const AdminNewBooking = () => {
             } else {
                 bookingData.clientName = formData.organization || 'Guest Client';
                 bookingData.clientId = '';
+                bookingData.clientDepartmentId = null;
+                bookingData.requestedByAgentId = null;
                 bookingData.guestContact = {
                     name: formData.contactName,
                     email: formData.contactEmail,
@@ -457,11 +542,49 @@ export const AdminNewBooking = () => {
             }
 
             if (isEditMode) {
+                const targetClientId = clientSource === 'EXISTING'
+                    ? selectedClient?.id || originalBooking?.clientId || ''
+                    : '';
+                const hierarchyChanged = targetClientId !== (originalBooking?.clientId || '')
+                    || selectedClientDepartmentId !== (originalBooking?.clientDepartmentId || '')
+                    || selectedRequesterAgentId !== (originalBooking?.requestedByAgentId || '');
+                if (hierarchyChanged) {
+                    if (!targetClientId) {
+                        showToast('Existing bookings must be linked to a canonical client. Use the public intake workflow for guest requests.', 'error');
+                        return;
+                    }
+                    const hierarchyPreview = await ClientIdentityAuditService.getClientBookingHierarchyRepairPreview(id!);
+                    if (hierarchyPreview.requiresFinanceReview) {
+                        showToast('This job is already linked to an invoice. Repair its client scope from Client Identity Audit so finance is revalidated.', 'error');
+                        return;
+                    }
+                    await ClientIdentityAuditService.repairClientBookingHierarchy({
+                        bookingId: id!,
+                        clientId: targetClientId,
+                        clientDepartmentId: selectedClientDepartmentId || undefined,
+                        requestedByAgentId: selectedRequesterAgentId || undefined,
+                        expectedBookingFingerprint: hierarchyPreview.hierarchyFingerprint,
+                        reason: 'Staff updated the booking hierarchy in the booking editor.',
+                    });
+                }
                 delete bookingData.id;
                 delete bookingData.interpreterId;
                 delete bookingData.interpreterName;
                 delete bookingData.interpreterPhotoUrl;
                 delete bookingData.offeredInterpreterIds;
+                if (clientSource === 'EXISTING') {
+                    delete bookingData.clientId;
+                    delete bookingData.clientName;
+                }
+                delete bookingData.clientDepartmentId;
+                delete bookingData.clientDepartmentSource;
+                delete bookingData.requestedByAgentId;
+                delete bookingData.requestedByAgentSource;
+                delete bookingData.requestedByUserId;
+                delete bookingData.clientSnapshot;
+                delete bookingData.clientIdentityStatus;
+                delete bookingData.requesterIdentityStatus;
+                delete bookingData.lastHierarchyRepairManifestId;
                 await BookingService.update(id!, bookingData);
 
                 const previousInterpreterId = originalBooking?.interpreterId || null;
@@ -567,7 +690,16 @@ export const AdminNewBooking = () => {
                             icon={Building2}
                             action={
                                 <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1 dark:bg-slate-950">
-                                    <SegmentedButton active={clientSource === 'GUEST'} onClick={() => { setClientSource('GUEST'); setSelectedClient(null); }}>
+                                    <SegmentedButton
+                                        active={clientSource === 'GUEST'}
+                                        disabled={isEditMode && Boolean(originalBooking?.clientId)}
+                                        onClick={() => {
+                                            setClientSource('GUEST');
+                                            setSelectedClient(null);
+                                            setSelectedClientDepartmentId('');
+                                            setSelectedRequesterAgentId('');
+                                        }}
+                                    >
                                         Guest
                                     </SegmentedButton>
                                     <SegmentedButton active={clientSource === 'EXISTING'} onClick={() => setClientSource('EXISTING')}>
@@ -581,12 +713,53 @@ export const AdminNewBooking = () => {
                                     {clientSource === 'EXISTING' ? (
                                         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                                             {selectedClient ? (
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                        <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{selectedClient.companyName}</p>
-                                                        <p className="truncate text-xs text-slate-500">{selectedClient.contactPerson} - {selectedClient.email}</p>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="min-w-0">
+                                                            <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{selectedClient.companyName}</p>
+                                                            <p className="truncate text-xs text-slate-500">{selectedClient.contactPerson} - {selectedClient.email}</p>
+                                                        </div>
+                                                        <Button type="button" size="sm" variant="outline" onClick={() => setClientModalOpen(true)}>Change</Button>
                                                     </div>
-                                                    <Button type="button" size="sm" variant="outline" onClick={() => setClientModalOpen(true)}>Change</Button>
+                                                    {clientHierarchyError && <p className="text-xs font-semibold text-red-600 dark:text-red-300">{clientHierarchyError}</p>}
+                                                    {clientHierarchyLoading && !clientHierarchy ? (
+                                                        <div className="flex h-10 items-center gap-2 text-xs text-slate-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />Loading departments and agents...</div>
+                                                    ) : clientHierarchy ? (
+                                                        <div className="grid gap-3 border-t border-slate-200 pt-3 dark:border-slate-800 md:grid-cols-2">
+                                                            <Field label="Department">
+                                                                <select
+                                                                    className={inputClass}
+                                                                    value={selectedClientDepartmentId}
+                                                                    onChange={event => {
+                                                                        setSelectedClientDepartmentId(event.target.value);
+                                                                        setSelectedRequesterAgentId('');
+                                                                    }}
+                                                                >
+                                                                    <option value="">Organisation-wide / not established</option>
+                                                                    {clientHierarchy.departments.filter(item => item.status === 'ACTIVE').map(department => (
+                                                                        <option key={department.id} value={department.id}>{department.name}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </Field>
+                                                            <Field label="Requesting agent">
+                                                                <select
+                                                                    className={inputClass}
+                                                                    value={selectedRequesterAgentId}
+                                                                    onChange={event => {
+                                                                        const agentId = event.target.value;
+                                                                        setSelectedRequesterAgentId(agentId);
+                                                                        const agent = clientHierarchy.agents.find(item => item.id === agentId);
+                                                                        if (agent) setFormData(previous => ({ ...previous, contactName: agent.displayName, contactEmail: agent.email }));
+                                                                    }}
+                                                                >
+                                                                    <option value="">Unknown / not established</option>
+                                                                    {requesterAgentOptions.map(agent => (
+                                                                        <option key={agent.id} value={agent.id}>{agent.displayName} - {agent.email}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </Field>
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                             ) : (
                                                 <button
@@ -965,7 +1138,12 @@ export const AdminNewBooking = () => {
                                 key={client.id}
                                 type="button"
                                 onClick={() => {
+                                    const clientChanged = selectedClient?.id !== client.id;
                                     setSelectedClient(client);
+                                    if (clientChanged) {
+                                        setSelectedClientDepartmentId('');
+                                        setSelectedRequesterAgentId('');
+                                    }
                                     setFormData(prev => ({
                                         ...prev,
                                         organization: client.companyName,
@@ -993,6 +1171,9 @@ export const AdminNewBooking = () => {
                             </div>
                         )}
                     </div>
+                    {matchingClientsForModal.length > filteredClientsForModal.length && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Showing the first {filteredClientsForModal.length} of {matchingClientsForModal.length} clients. Refine the search to find a specific account.</p>
+                    )}
                 </div>
             </Modal>
         </form>

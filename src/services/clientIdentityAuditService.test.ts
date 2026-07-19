@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ClientIdentityAuditResult,
+  ClientFinanceHierarchyReconciliation,
   ClientMergePreview,
   normalizeAuditResult,
+  normalizeFinanceReconciliation,
   normalizeMergePreview,
 } from './clientIdentityAuditService';
 
@@ -46,6 +48,35 @@ describe('client identity audit service compatibility', () => {
       requiresSecondApproval: false,
       secondApprovalReasons: [],
       approval: null,
+    });
+  });
+
+  it('normalizes finance blockers created before job-level repair details existed', () => {
+    const legacy = {
+      blockedInvoiceIds: ['invoice-1'],
+      unlinkedInvoiceIds: [],
+      inferredClientAssignments: [],
+      blockedInvoices: [{
+        invoiceId: 'invoice-1',
+        reason: 'INVALID_BOOKING_SCOPE',
+        candidateClientIds: undefined,
+        evidence: undefined,
+      }],
+    } as unknown as ClientFinanceHierarchyReconciliation;
+
+    const normalized = normalizeFinanceReconciliation(legacy);
+    expect(normalized.blockedInvoices[0]).toMatchObject({
+      bookingIds: [],
+      missingBookingIds: [],
+      bookings: [],
+      candidateClientIds: [],
+      evidence: [],
+    });
+    expect(normalized.blockerReasonCounts).toEqual({
+      MULTIPLE_CLIENTS: 0,
+      BOOKING_LINK_MISSING: 0,
+      INVALID_BOOKING_SCOPE: 0,
+      CLIENT_IDENTITY_UNRESOLVED: 0,
     });
   });
 });

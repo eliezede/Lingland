@@ -101,7 +101,7 @@ export const PostcodeLookup: React.FC<PostcodeLookupProps> = ({ onAddressSelecte
         </Button>
       </div>
       <p className="mt-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5 ml-1 animate-in fade-in slide-in-from-top-1 duration-500">
-        <div className="w-1 h-1 rounded-full bg-blue-500" />
+        <span className="w-1 h-1 shrink-0 rounded-full bg-blue-500" aria-hidden="true" />
         Tip: Include house number for exact matches (e.g. "10 SW1A 1AA")
       </p>
 

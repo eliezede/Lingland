@@ -89,7 +89,9 @@ Invoices continue to link to `clientId`; optional department and agent reference
 - [x] Extend department, agent, and membership relationships to invoices, chats, notifications, and users. New invoice paths and lifecycle notifications now persist hierarchy scope; historical finance repair remains an explicit reviewed backfill.
 - [x] Dual-read the legacy client contact and the new hierarchy in the admin Client CRM while backfilling.
 - [x] Write a merge manifest, source snapshots, dependency ledger, and audit event for every executed consolidation.
-- [ ] Reconcile counts and financial totals before enabling new access rules. The read-only integrity audit and fingerprinted finance backfill are implemented; the production dry run and reviewed application remain.
+- [x] Execute the production read-only finance dry run and record its fingerprint, deterministic updates, blockers, and unlinked records without applying writes.
+- [ ] Resolve every blocked invoice/job scope and re-run the dry run until the blocker count is zero.
+- [ ] Reconcile post-write counts and financial totals before enabling new access rules. The reviewed bulk application remains disabled while blockers exist.
 
 ### Phase 4 - Accounts and permissions
 
@@ -103,7 +105,7 @@ Invoices continue to link to `clientId`; optional department and agent reference
 
 - [ ] Update public and authenticated booking forms: Client -> Department -> Agent. The authenticated portal now resolves the signed-in membership and records canonical client, department, agent, user and immutable snapshots; public intake remains.
 - [ ] Allow authorised users to request a new client or department without creating duplicates automatically.
-- [ ] Give staff full manual control to select, create, or repair hierarchy links. Department and agent membership management is complete in Client CRM; booking and invoice repair controls remain.
+- [ ] Give staff full manual control to select, create, or repair hierarchy links. Department and agent membership management, booking editor selectors, invoice identity repair and blocked-job hierarchy repair are complete; inline creation requests and the final production repair pass remain.
 - [x] Update Airtable sync to resolve organisations deterministically and report unresolved client/invoice identities without creating finance-owned client records.
 - [ ] Preserve the manual/hybrid operating model when an agent has no active account.
 
@@ -160,6 +162,8 @@ The legacy Airtable form webhook is now compatibility-only. It authenticates and
 An agent email becomes immutable in Client CRM once the agent or membership is linked to a portal user. The UI directs staff to user administration and the callable enforces the same rule, preventing Firebase Auth, `users`, `clientAgents`, and `clientMemberships` from diverging.
 
 Production audit snapshot on 19 July 2026: 596 active client records, 138 organisation candidates, 30 repeated-agent candidates, 182 invoice headers and 201 invoice lines eligible for reviewed hierarchy backfill, 50 identity repairs, 87 blocked invoices, 508 critical links, and 66 warnings. No bulk finance reconciliation was applied during this validation cycle.
+
+The production finance dry run was re-executed on 19 July 2026 with fingerprint `105b9423dd3bfb8396e6b5fd7587b7d2ee3790a9408144488b6315d1e6d44000`. It scanned 269 client invoices and 325 invoice lines, proposed 182 invoice updates and 201 line updates, inferred 50 exact client assignments, identified 146 client-level invoices without linked jobs, and stopped on 87 blocked invoices: 33 unresolved client identities and 54 invalid job scopes. No production document was written. Reconciliation now joins invoice lines, invoice booking IDs, and direct `booking.clientInvoiceId` links so a financially linked job cannot bypass the review gate. The repair queue distinguishes unresolved invoice identity, invalid booking hierarchy, multiple-client scope and missing booking links. Job-level repairs are fingerprinted, require a Super Admin and explicit reason when finance is linked, write a rollback manifest and job/audit events, and never modify the invoice during the repair itself.
 
 ## Validated pilot consolidation
 

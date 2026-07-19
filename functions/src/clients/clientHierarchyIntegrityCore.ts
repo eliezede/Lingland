@@ -41,6 +41,25 @@ export interface ClientFinanceBackfillUpdate {
   clearFields: string[];
 }
 
+export type ClientBookingHierarchyIssueCode =
+  | 'CLIENT_INVALID'
+  | 'DEPARTMENT_INVALID'
+  | 'AGENT_MISSING'
+  | 'AGENT_NOT_MEMBER';
+
+export interface ClientFinanceBlockedBooking {
+  bookingId: string;
+  reference: string;
+  clientId: string;
+  clientName: string;
+  clientDepartmentId: string;
+  requestedByAgentId: string;
+  date: string;
+  serviceType: string;
+  issueCodes: ClientBookingHierarchyIssueCode[];
+  hierarchyFingerprint: string;
+}
+
 export interface ClientFinanceBackfillPlan {
   fingerprint: string;
   invoicesScanned: number;
@@ -65,6 +84,9 @@ export interface ClientFinanceBackfillPlan {
     clientName: string;
     invoiceNumber: string;
     status: string;
+    bookingIds: string[];
+    missingBookingIds: string[];
+    bookings: ClientFinanceBlockedBooking[];
   }>;
 }
 
@@ -73,6 +95,27 @@ const values = (value: unknown) => Array.isArray(value) ? value.map(text).filter
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 const sameStrings = (left: unknown, right: unknown) => JSON.stringify(unique(values(left))) === JSON.stringify(unique(values(right)));
 const sameValue = (left: unknown, right: unknown) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+export const createBookingHierarchyFingerprint = (bookingId: string, data: Record<string, unknown>) => {
+  const snapshot = data.clientSnapshot && typeof data.clientSnapshot === 'object'
+    ? data.clientSnapshot as Record<string, unknown>
+    : {};
+  return createHash('sha256')
+    .update(JSON.stringify({
+      bookingId,
+      clientId: text(data.clientId),
+      clientDepartmentId: text(data.clientDepartmentId),
+      requestedByAgentId: text(data.requestedByAgentId),
+      requestedByUserId: text(data.requestedByUserId),
+      clientSnapshot: {
+        organizationName: text(snapshot.organizationName),
+        departmentName: text(snapshot.departmentName),
+        requesterName: text(snapshot.requesterName),
+        requesterEmail: text(snapshot.requesterEmail),
+      },
+    }))
+    .digest('hex');
+};
 
 const clientResolver = (clients: IntegrityDocument[]) => {
   const byId = new Map(clients.map(client => [client.id, client]));
@@ -95,14 +138,20 @@ const buildFinancePlan = (input: ClientHierarchyIntegrityInput): ClientFinanceBa
   const bookingById = new Map(input.bookings.map(booking => [booking.id, booking]));
   const departments = new Map(input.departments.map(department => [department.id, department]));
   const agents = new Map(input.agents.map(agent => [agent.id, agent]));
-  const membershipKeys = new Set(input.memberships.map(membership => (
-    `${resolve(text(membership.data.clientId)).id}:${text(membership.data.agentId)}`
-  )));
+  const membershipKeys = new Set(input.memberships
+    .filter(membership => text(membership.data.status).toUpperCase() !== 'INACTIVE')
+    .map(membership => `${resolve(text(membership.data.clientId)).id}:${text(membership.data.agentId)}`));
   const linesByInvoice = new Map<string, IntegrityDocument[]>();
   input.invoiceLines.forEach(line => {
     const invoiceId = text(line.data.invoiceId || line.data.clientInvoiceId);
     if (!invoiceId) return;
     linesByInvoice.set(invoiceId, [...(linesByInvoice.get(invoiceId) || []), line]);
+  });
+  const bookingIdsByDirectInvoice = new Map<string, string[]>();
+  input.bookings.forEach(booking => {
+    const invoiceId = text(booking.data.clientInvoiceId);
+    if (!invoiceId) return;
+    bookingIdsByDirectInvoice.set(invoiceId, [...(bookingIdsByDirectInvoice.get(invoiceId) || []), booking.id]);
   });
 
   const invoiceUpdates: ClientFinanceBackfillUpdate[] = [];
@@ -114,8 +163,14 @@ const buildFinancePlan = (input: ClientHierarchyIntegrityInput): ClientFinanceBa
 
   input.invoices.forEach(invoice => {
     const lines = linesByInvoice.get(invoice.id) || [];
-    const bookingIds = unique(lines.map(line => text(line.data.bookingId)));
+    const bookingIds = unique([
+      ...lines.map(line => text(line.data.bookingId)),
+      ...values(invoice.data.bookingIds),
+      text(invoice.data.bookingId),
+      ...(bookingIdsByDirectInvoice.get(invoice.id) || []),
+    ]);
     const bookings = bookingIds.map(id => bookingById.get(id)).filter((booking): booking is IntegrityDocument => Boolean(booking));
+    const missingBookingIds = bookingIds.filter(id => !bookingById.has(id));
     const linkedClientIds = unique(bookings.map(booking => {
       const bookingClient = resolve(text(booking.data.clientId));
       return bookingClient.exists && !isPlaceholderClientIdentity(bookingClient.id, clients.get(bookingClient.id)?.data)
@@ -129,17 +184,35 @@ const buildFinancePlan = (input: ClientHierarchyIntegrityInput): ClientFinanceBa
     const inferredClientId = !currentClientValid && identityResolution.status === 'RESOLVED'
       ? text(identityResolution.clientId)
       : '';
-    const missingLinkedBooking = bookingIds.length !== bookings.length;
-    const invalidBookingScope = bookings.some(booking => {
+    const blockedBookings: ClientFinanceBlockedBooking[] = bookings.map(booking => {
       const bookingClient = resolve(text(booking.data.clientId));
-      if (!bookingClient.exists || !bookingClient.id || isPlaceholderClientIdentity(bookingClient.id, clients.get(bookingClient.id)?.data)) return true;
+      const issueCodes: ClientBookingHierarchyIssueCode[] = [];
+      if (!bookingClient.exists || !bookingClient.id || isPlaceholderClientIdentity(bookingClient.id, clients.get(bookingClient.id)?.data)) {
+        issueCodes.push('CLIENT_INVALID');
+      }
       const departmentId = text(booking.data.clientDepartmentId);
       const department = departmentId ? departments.get(departmentId) : undefined;
-      if (departmentId && (!department || resolve(text(department.data.clientId)).id !== bookingClient.id)) return true;
+      if (departmentId && (!department || resolve(text(department.data.clientId)).id !== bookingClient.id)) {
+        issueCodes.push('DEPARTMENT_INVALID');
+      }
       const agentId = text(booking.data.requestedByAgentId);
-      if (agentId && (!agents.has(agentId) || !membershipKeys.has(`${bookingClient.id}:${agentId}`))) return true;
-      return false;
+      if (agentId && !agents.has(agentId)) issueCodes.push('AGENT_MISSING');
+      else if (agentId && !membershipKeys.has(`${bookingClient.id}:${agentId}`)) issueCodes.push('AGENT_NOT_MEMBER');
+      return {
+        bookingId: booking.id,
+        reference: text(booking.data.displayRef || booking.data.jobNumber || booking.data.bookingRef || booking.data.legacyPlatformRef || booking.id),
+        clientId: text(booking.data.clientId),
+        clientName: text(booking.data.clientName || (booking.data.guestContact as Record<string, unknown> | undefined)?.organisation),
+        clientDepartmentId: departmentId,
+        requestedByAgentId: agentId,
+        date: text(booking.data.date),
+        serviceType: text(booking.data.serviceType || booking.data.serviceCategory),
+        issueCodes,
+        hierarchyFingerprint: createBookingHierarchyFingerprint(booking.id, booking.data),
+      };
     });
+    const missingLinkedBooking = missingBookingIds.length > 0;
+    const invalidBookingScope = blockedBookings.some(booking => booking.issueCodes.length > 0);
     const invalidUnlinkedClient = bookingIds.length === 0 && !currentClientValid && !inferredClientId;
     const blockedReason = linkedClientIds.length > 1
       ? 'MULTIPLE_CLIENTS'
@@ -155,12 +228,15 @@ const buildFinancePlan = (input: ClientHierarchyIntegrityInput): ClientFinanceBa
       blockedInvoices.push({
         invoiceId: invoice.id,
         reason: blockedReason,
-        candidateClientIds: identityResolution.candidateClientIds,
+        candidateClientIds: unique([...identityResolution.candidateClientIds, ...linkedClientIds]),
         evidence: identityResolution.evidence,
         currentClientId: text(invoice.data.clientId),
         clientName: text(invoice.data.clientName || invoice.data.companyName),
         invoiceNumber: text(invoice.data.invoiceNumber || invoice.data.reference || invoice.data.legacyRef),
         status: text(invoice.data.status),
+        bookingIds,
+        missingBookingIds,
+        bookings: blockedBookings,
       });
       return;
     }

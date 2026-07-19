@@ -3,6 +3,7 @@ import {
   buildClientFinanceBackfillPlan,
   buildClientHierarchyIntegrityAudit,
   ClientHierarchyIntegrityInput,
+  createBookingHierarchyFingerprint,
 } from './clientHierarchyIntegrityCore';
 
 const base = (): ClientHierarchyIntegrityInput => ({
@@ -17,6 +18,37 @@ const base = (): ClientHierarchyIntegrityInput => ({
 });
 
 describe('client hierarchy integrity audit', () => {
+  it('binds a job repair fingerprint to every hierarchy relationship', () => {
+    const baseFingerprint = createBookingHierarchyFingerprint('job-a', {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      requestedByAgentId: 'agent-a',
+      requestedByUserId: 'user-a',
+      clientSnapshot: { organizationName: 'Client A' },
+    });
+    expect(createBookingHierarchyFingerprint('job-a', {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-b',
+      requestedByAgentId: 'agent-a',
+      requestedByUserId: 'user-a',
+      clientSnapshot: { organizationName: 'Client A' },
+    })).not.toBe(baseFingerprint);
+    expect(createBookingHierarchyFingerprint('job-a', {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      requestedByAgentId: 'agent-a',
+      requestedByUserId: 'user-a',
+      clientSnapshot: { organizationName: 'Client B' },
+    })).not.toBe(baseFingerprint);
+    expect(createBookingHierarchyFingerprint('job-a', {
+      requestedByUserId: 'user-a',
+      requestedByAgentId: 'agent-a',
+      clientDepartmentId: 'dept-a',
+      clientId: 'client-a',
+      clientSnapshot: { requesterEmail: '', organizationName: 'Client A' },
+    })).toBe(baseFingerprint);
+  });
+
   it('plans deterministic invoice and line hierarchy backfill', () => {
     const plan = buildClientFinanceBackfillPlan(base());
     expect(plan.invoiceUpdates).toHaveLength(1);
@@ -29,6 +61,22 @@ describe('client hierarchy integrity audit', () => {
       hierarchyScopeStatus: 'COMPLETE',
     });
     expect(plan.blockedInvoiceIds).toEqual([]);
+  });
+
+  it('recognises a direct booking invoice link when legacy line records are absent', () => {
+    const input = base();
+    input.invoiceLines = [];
+    input.bookings[0].data.clientInvoiceId = 'invoice-a';
+    const plan = buildClientFinanceBackfillPlan(input);
+
+    expect(plan.unlinkedInvoiceIds).toEqual([]);
+    expect(plan.blockedInvoiceIds).toEqual([]);
+    expect(plan.invoiceUpdates[0].patch).toMatchObject({
+      clientId: 'client-a',
+      bookingIds: ['job-a'],
+      clientDepartmentIds: ['dept-a'],
+      requestedByAgentIds: ['agent-a'],
+    });
   });
 
   it('becomes cutover-ready after the projected fields are applied', () => {
@@ -50,6 +98,15 @@ describe('client hierarchy integrity audit', () => {
     const plan = buildClientFinanceBackfillPlan(input);
     expect(plan.blockedInvoiceIds).toEqual(['invoice-a']);
     expect(plan.invoiceUpdates).toEqual([]);
+    expect(plan.blockedInvoices[0]).toMatchObject({
+      reason: 'MULTIPLE_CLIENTS',
+      bookingIds: ['job-a', 'job-b'],
+      missingBookingIds: [],
+      bookings: [
+        expect.objectContaining({ bookingId: 'job-a', issueCodes: [] }),
+        expect.objectContaining({ bookingId: 'job-b', issueCodes: [] }),
+      ],
+    });
   });
 
   it('repairs an unlinked legacy invoice from a unique account key', () => {
@@ -121,5 +178,27 @@ describe('client hierarchy integrity audit', () => {
     expect(audit.issueCounts.INVOICE_LINE_ORPHAN).toBe(1);
     expect(audit.readyForMembershipCutover).toBe(false);
     expect(audit.financeBackfill.blockedInvoiceIds).toEqual(['invoice-a']);
+    expect(audit.financeBackfill.blockedInvoices[0].bookings[0]).toMatchObject({
+      bookingId: 'job-a',
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-missing',
+      requestedByAgentId: 'agent-missing',
+      issueCodes: ['DEPARTMENT_INVALID', 'AGENT_MISSING'],
+    });
+    expect(audit.financeBackfill.blockedInvoices[0].bookings[0].hierarchyFingerprint).toHaveLength(64);
+  });
+
+  it('reports missing linked booking IDs separately from repairable jobs', () => {
+    const input = base();
+    input.invoiceLines[0].data.bookingId = 'job-missing';
+
+    const plan = buildClientFinanceBackfillPlan(input);
+
+    expect(plan.blockedInvoices[0]).toMatchObject({
+      reason: 'BOOKING_LINK_MISSING',
+      bookingIds: ['job-missing'],
+      missingBookingIds: ['job-missing'],
+      bookings: [],
+    });
   });
 });
