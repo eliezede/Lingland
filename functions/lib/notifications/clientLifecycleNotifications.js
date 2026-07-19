@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.onClientInvoiceLifecycleNotification = exports.onClientBookingLifecycleNotification = void 0;
 const admin = __importStar(require("firebase-admin"));
-const functions = __importStar(require("firebase-functions/v1"));
+const firestore_1 = require("firebase-functions/v2/firestore");
 const clientNotificationPolicy_1 = require("./clientNotificationPolicy");
 const db = admin.firestore();
 const text = (value) => String(value ?? '').trim();
@@ -113,56 +113,59 @@ const BOOKING_EVENTS = {
     TIMESHEET_SUBMITTED: { title: 'Timesheet received', message: 'The timesheet for this job has been submitted for review.', purpose: 'BOOKING', type: 'INFO' },
     READY_FOR_INVOICE: { title: 'Job ready for billing', message: 'The verified job has moved to the client billing queue.', purpose: 'FINANCE', type: 'PAYMENT' },
 };
-exports.onClientBookingLifecycleNotification = functions.firestore
-    .document('bookings/{bookingId}')
-    .onUpdate(async (change, context) => {
-    const before = change.before.data() || {};
-    const after = change.after.data() || {};
+exports.onClientBookingLifecycleNotification = (0, firestore_1.onDocumentUpdated)({
+    document: 'bookings/{bookingId}',
+    region: 'europe-west1',
+}, async (event) => {
+    if (!event.data)
+        return;
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
     const previousStatus = text(before.status).toUpperCase();
     const nextStatus = text(after.status).toUpperCase();
     if (!nextStatus || previousStatus === nextStatus || !BOOKING_EVENTS[nextStatus])
         return null;
-    const event = BOOKING_EVENTS[nextStatus];
+    const lifecycleEvent = BOOKING_EVENTS[nextStatus];
     const clientId = text(after.clientId);
     const departmentIds = [text(after.clientDepartmentId)].filter(Boolean);
     const agentIds = [text(after.requestedByAgentId)].filter(Boolean);
     const directUserIds = [text(after.requestedByUserId)].filter(Boolean);
-    const userIds = await loadActiveClientRecipients({ clientId, departmentIds, agentIds, directUserIds, purpose: event.purpose });
-    const reference = text(after.displayRef || after.jobNumber || context.params.bookingId);
+    const userIds = await loadActiveClientRecipients({ clientId, departmentIds, agentIds, directUserIds, purpose: lifecycleEvent.purpose });
+    const reference = text(after.displayRef || after.jobNumber || event.params.bookingId);
     await writeNotifications({
-        eventKey: `client_job_${context.params.bookingId}_${nextStatus.toLowerCase()}`,
+        eventKey: `client_job_${event.params.bookingId}_${nextStatus.toLowerCase()}`,
         userIds,
-        title: event.title,
-        message: `${event.message} ${reference}`,
-        type: event.type,
-        link: `/client/bookings/${context.params.bookingId}`,
+        title: lifecycleEvent.title,
+        message: `${lifecycleEvent.message} ${reference}`,
+        type: lifecycleEvent.type,
+        link: `/client/bookings/${event.params.bookingId}`,
         metadata: {
-            bookingId: context.params.bookingId,
+            bookingId: event.params.bookingId,
             clientId,
             clientDepartmentIds: departmentIds,
             requestedByAgentIds: agentIds,
             lifecycleStatus: nextStatus,
         },
     });
-    return null;
 });
 const INVOICE_EVENTS = {
     SENT: { title: 'Invoice available', message: 'A new client invoice is available in the billing area.', type: 'PAYMENT' },
     APPROVED: { title: 'Invoice approved', message: 'A client invoice has been approved.', type: 'SUCCESS' },
     PAID: { title: 'Payment recorded', message: 'Payment has been recorded for a client invoice.', type: 'SUCCESS' },
 };
-exports.onClientInvoiceLifecycleNotification = functions.firestore
-    .document('clientInvoices/{invoiceId}')
-    .onWrite(async (change, context) => {
-    if (!change.after.exists)
-        return null;
-    const before = change.before.exists ? change.before.data() || {} : {};
-    const after = change.after.data() || {};
+exports.onClientInvoiceLifecycleNotification = (0, firestore_1.onDocumentWritten)({
+    document: 'clientInvoices/{invoiceId}',
+    region: 'europe-west1',
+}, async (event) => {
+    if (!event.data?.after.exists)
+        return;
+    const before = event.data.before.exists ? event.data.before.data() || {} : {};
+    const after = event.data.after.data() || {};
     const previousStatus = text(before.status).toUpperCase();
     const nextStatus = text(after.status).toUpperCase();
     if (!nextStatus || previousStatus === nextStatus || !INVOICE_EVENTS[nextStatus])
         return null;
-    const event = INVOICE_EVENTS[nextStatus];
+    const lifecycleEvent = INVOICE_EVENTS[nextStatus];
     const clientId = text(after.clientId);
     const departmentIds = Array.from(new Set([
         ...list(after.clientDepartmentIds),
@@ -173,22 +176,21 @@ exports.onClientInvoiceLifecycleNotification = functions.firestore
         text(after.requestedByAgentId),
     ].filter(Boolean)));
     const userIds = await loadActiveClientRecipients({ clientId, departmentIds, agentIds, directUserIds: [], purpose: 'FINANCE' });
-    const reference = text(after.invoiceNumber || after.reference || context.params.invoiceId);
+    const reference = text(after.invoiceNumber || after.reference || event.params.invoiceId);
     await writeNotifications({
-        eventKey: `client_invoice_${context.params.invoiceId}_${nextStatus.toLowerCase()}`,
+        eventKey: `client_invoice_${event.params.invoiceId}_${nextStatus.toLowerCase()}`,
         userIds,
-        title: event.title,
-        message: `${event.message} ${reference}`,
-        type: event.type,
-        link: `/client/invoices/${context.params.invoiceId}`,
+        title: lifecycleEvent.title,
+        message: `${lifecycleEvent.message} ${reference}`,
+        type: lifecycleEvent.type,
+        link: `/client/invoices/${event.params.invoiceId}`,
         metadata: {
-            invoiceId: context.params.invoiceId,
+            invoiceId: event.params.invoiceId,
             clientId,
             clientDepartmentIds: departmentIds,
             requestedByAgentIds: agentIds,
             lifecycleStatus: nextStatus,
         },
     });
-    return null;
 });
 //# sourceMappingURL=clientLifecycleNotifications.js.map
