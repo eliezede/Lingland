@@ -5,13 +5,19 @@ import { useClientBookings, useClientInvoices } from '../../hooks/useClientHooks
 import { CalendarDays, PlusCircle, AlertCircle, Clock, CheckCircle2, History } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Booking, BookingStatus, InvoiceStatus } from '../../types';
-import { BookingService, BillingService } from '../../services/api';
+import { BillingService } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useClientPortal } from '../../context/ClientPortalContext';
+import { ClientPortalService } from '../../services/clientPortalService';
 
 export const ClientDashboard = () => {
   const { user } = useAuth();
-  const { bookings, loading: bookingsLoading } = useClientBookings(user?.profileId);
-  const { invoices, loading: invoicesLoading } = useClientInvoices(user?.profileId);
+  const { access, loading: accessLoading } = useClientPortal();
+  const linkedClientId = user?.clientId || user?.profileId;
+  const canViewBookings = Boolean(access?.canViewBookings);
+  const canReadFinance = Boolean(access?.canReadFinance);
+  const { bookings, loading: bookingsLoading, refresh: refreshBookings } = useClientBookings(canViewBookings ? linkedClientId : undefined);
+  const { invoices, loading: invoicesLoading } = useClientInvoices(canReadFinance ? linkedClientId : undefined);
 
   const [stats, setStats] = useState({
     upcoming: 0,
@@ -29,12 +35,13 @@ export const ClientDashboard = () => {
 
   useEffect(() => {
     const scanHistory = async () => {
-      if (!user?.email || !user?.profileId) return;
+      if (!user?.email || !linkedClientId || !access?.legacyFallback) return;
       setIsScanning(true);
       try {
-        const linkedCount = await BookingService.linkOrphanedBookings(user.email, user.profileId);
-        if (linkedCount > 0) {
-          showToast(`Found and linked ${linkedCount} previous guest bookings to your profile!`, 'success');
+        const result = await ClientPortalService.linkLegacyBookings();
+        if (result.linked > 0) {
+          refreshBookings();
+          showToast(`Found and linked ${result.linked} previous guest bookings to your profile!`, 'success');
         }
       } catch (e) {
         console.error("History scan failed", e);
@@ -44,10 +51,10 @@ export const ClientDashboard = () => {
     };
 
     scanHistory();
-  }, [user, showToast]);
+  }, [access?.legacyFallback, linkedClientId, refreshBookings, showToast, user?.email]);
 
   useEffect(() => {
-    if (!bookingsLoading && !invoicesLoading) {
+    if (!accessLoading && (!canViewBookings || !bookingsLoading) && (!canReadFinance || !invoicesLoading)) {
       const upcoming = bookings.filter(b => getBookingStart(b) >= todayStart && b.status !== BookingStatus.CANCELLED).length;
       const completed = bookings.filter(b => [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status)).length;
       const unpaidInv = invoices.filter(i => [InvoiceStatus.SENT, InvoiceStatus.APPROVED].includes(i.status));
@@ -60,10 +67,10 @@ export const ClientDashboard = () => {
       });
 
       // Calculate estimated costs for completed bookings without invoices synchronously
-      const completedWithoutInvoices = bookings.filter(b =>
+      const completedWithoutInvoices = canReadFinance ? bookings.filter(b =>
         [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(b.status) &&
         !invoices.some(inv => inv.items?.some((item: any) => item.bookingId === b.id))
-      );
+      ) : [];
 
       if (completedWithoutInvoices.length > 0) {
         const newEstimatedCosts: Record<string, number> = {};
@@ -73,7 +80,7 @@ export const ClientDashboard = () => {
         setEstimatedCosts(prev => ({ ...prev, ...newEstimatedCosts }));
       }
     }
-  }, [bookings, invoices, bookingsLoading, invoicesLoading]);
+  }, [accessLoading, bookings, bookingsLoading, canReadFinance, canViewBookings, invoices, invoicesLoading]);
 
   // Get next 3 upcoming bookings
   const nextBookings = bookings
@@ -81,7 +88,9 @@ export const ClientDashboard = () => {
     .sort((a, b) => getBookingStart(a).getTime() - getBookingStart(b).getTime())
     .slice(0, 3);
 
-  if (bookingsLoading) return <div className="p-8">Loading dashboard...</div>;
+  if (accessLoading || (canViewBookings && bookingsLoading) || (canReadFinance && invoicesLoading)) {
+    return <div className="p-8">Loading dashboard...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -90,13 +99,16 @@ export const ClientDashboard = () => {
           <h1 className="text-2xl font-bold text-gray-900">Client Dashboard</h1>
           <p className="text-gray-500">Welcome back, {user?.displayName}</p>
         </div>
-        <Link to="/client/new-booking" className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 flex items-center">
-          <PlusCircle size={18} className="mr-2" /> New Booking
-        </Link>
+        {access?.canRequest && (
+          <Link to="/client/new-booking" className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 flex items-center">
+            <PlusCircle size={18} className="mr-2" /> New Booking
+          </Link>
+        )}
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {canViewBookings && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="flex justify-between items-start">
             <div>
@@ -108,7 +120,9 @@ export const ClientDashboard = () => {
             </div>
           </div>
         </div>
+        )}
 
+        {canReadFinance && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="flex justify-between items-start">
             <div>
@@ -121,7 +135,9 @@ export const ClientDashboard = () => {
             </div>
           </div>
         </div>
+        )}
 
+        {canViewBookings && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="flex justify-between items-start">
             <div>
@@ -133,9 +149,11 @@ export const ClientDashboard = () => {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Upcoming Bookings Preview */}
+      {canViewBookings && (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
           <h2 className="text-lg font-bold text-gray-900">Upcoming Bookings</h2>
@@ -166,7 +184,7 @@ export const ClientDashboard = () => {
                       ${booking.status === BookingStatus.BOOKED ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800'}`}>
                     {booking.status}
                   </span>
-                  {[BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(booking.status) && estimatedCosts[booking.id] && (
+                  {canReadFinance && [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICED, BookingStatus.PAID].includes(booking.status) && estimatedCosts[booking.id] && (
                     <div className="mt-1 text-[10px] font-bold text-slate-500 uppercase tracking-tight">
                       Est. Billing: £{estimatedCosts[booking.id].toFixed(2)}
                     </div>
@@ -182,6 +200,19 @@ export const ClientDashboard = () => {
           ))}
         </div>
       </div>
+      )}
+
+      {!canViewBookings && canReadFinance && (
+        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div>
+            <h2 className="font-bold text-slate-900 dark:text-white">Finance workspace</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review published invoices and outstanding balances for your organisation.</p>
+          </div>
+          <Link to="/client/invoices" className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            Open invoices
+          </Link>
+        </div>
+      )}
     </div>
   );
 };

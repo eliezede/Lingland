@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 
@@ -42,6 +42,7 @@ export const Modal: React.FC<ModalProps> = ({
   onSuccess,
 }) => {
   const [showUnsavedWarning, setShowUnsavedWarning] = React.useState(false);
+  const titleId = React.useId();
 
   const handleClose = () => {
     if (unsavedChanges) {
@@ -136,11 +137,14 @@ export const Modal: React.FC<ModalProps> = ({
           />
           <div
             className="pointer-events-auto absolute right-0 top-0 flex h-full w-full flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-300 dark:border-slate-800 dark:bg-slate-900 sm:w-[520px] xl:w-[680px]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
           >
             {/* Drawer Header */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5">
               <div>
-                <h3 className="text-base font-semibold tracking-normal text-slate-950 dark:text-white">{title}</h3>
+                <h3 id={titleId} className="text-base font-semibold tracking-normal text-slate-950 dark:text-white">{title}</h3>
               </div>
               <button onClick={handleClose} className="rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100" aria-label="Close">
                 <X size={20} />
@@ -170,11 +174,11 @@ export const Modal: React.FC<ModalProps> = ({
         {showUnsavedWarning && <UnsavedWarning />}
         <div className="fixed inset-0 z-[1200] flex items-center justify-center p-0">
           <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={handleClose} />
-          <div className="relative w-full h-full bg-slate-50 dark:bg-slate-950 flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+          <div className="relative w-full h-full bg-slate-50 dark:bg-slate-950 flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" role="dialog" aria-modal="true" aria-labelledby={titleId}>
             {/* Wizard Header */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-8 sm:py-4">
               <div className="flex min-w-0 items-center space-x-4 sm:space-x-6">
-                <h3 className="truncate text-lg font-semibold text-slate-950 dark:text-white sm:text-xl">{title}</h3>
+                <h3 id={titleId} className="truncate text-lg font-semibold text-slate-950 dark:text-white sm:text-xl">{title}</h3>
                 {steps && (
                   <div className="hidden items-center space-x-2 md:flex">
                     {steps.map((step, i) => (
@@ -248,9 +252,12 @@ export const Modal: React.FC<ModalProps> = ({
           />
           <div
             className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white text-left shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900 sm:rounded-lg ${maxWidthClasses[maxWidth]} animate-in zoom-in-95 duration-200`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
-                <h3 className="min-w-0 truncate pr-4 text-lg font-semibold text-slate-950 dark:text-white">
+                <h3 id={titleId} className="min-w-0 truncate pr-4 text-lg font-semibold text-slate-950 dark:text-white">
                   {title}
                 </h3>
                 <button

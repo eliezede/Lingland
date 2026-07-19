@@ -57,6 +57,10 @@ __exportStar(require("./jobs/createAdminBooking"), exports);
 __exportStar(require("./jobs/adminAssignmentActions"), exports);
 __exportStar(require("./jobs/adminUpdateBookingStatus"), exports);
 __exportStar(require("./admin/deletePlatformEntity"), exports);
+__exportStar(require("./clients/clientIdentityAuditFunctions"), exports);
+__exportStar(require("./clients/clientHierarchyFunctions"), exports);
+__exportStar(require("./clients/clientPortalAccess"), exports);
+__exportStar(require("./clients/clientHierarchyIntegrityFunctions"), exports);
 __exportStar(require("./notifications/onNotificationCreated"), exports);
 __exportStar(require("./notifications/onTimesheetSubmit"), exports); // NT-05: Notify admins + interpreter on timesheet creation
 __exportStar(require("./notifications/onBookingOffer"), exports);
@@ -64,6 +68,7 @@ __exportStar(require("./notifications/onAssignmentOffer"), exports);
 __exportStar(require("./notifications/onOfferDeclined"), exports);
 __exportStar(require("./notifications/createNotification"), exports);
 __exportStar(require("./notifications/onMessageCreated"), exports);
+__exportStar(require("./notifications/clientLifecycleNotifications"), exports);
 __exportStar(require("./communications/createSupportThread"), exports);
 __exportStar(require("./cron/dbsExpiryCheck"), exports); // ON-03: Daily cron for DBS expiry alerts
 __exportStar(require("./public/submitPublicIntake"), exports);

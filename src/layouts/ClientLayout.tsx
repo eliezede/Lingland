@@ -12,6 +12,7 @@ import { NotificationCenter } from '../components/notifications/NotificationCent
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { ChatService } from '../services/chatService';
 import { ChatSystem } from '../components/chat/ChatSystem';
+import { ClientPortalProvider, useClientPortal } from '../context/ClientPortalContext';
 
 interface NavItemProps {
   to: string;
@@ -45,8 +46,9 @@ const NavItem: React.FC<NavItemProps> = ({ to, icon: Icon, label, active, badge,
   </Link>
 );
 
-export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const ClientLayoutShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
+  const { access, loading: accessLoading, error: accessError, refresh: refreshAccess } = useClientPortal();
   const location = useLocation();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -60,8 +62,12 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
 
   const categories = [
     { id: 'CORE', label: 'Dashboard', icon: LayoutDashboard, rootPath: '/client/dashboard' },
-    { id: 'REQUESTS', label: 'Bookings', icon: CalendarDays, rootPath: '/client/bookings' },
-    { id: 'FIN', label: 'Billing', icon: CreditCard, rootPath: '/client/invoices' },
+    ...(access?.canViewBookings
+      ? [{ id: 'REQUESTS', label: 'Bookings', icon: CalendarDays, rootPath: '/client/bookings' }]
+      : []),
+    ...(access?.canReadFinance
+      ? [{ id: 'FIN', label: 'Billing', icon: CreditCard, rootPath: '/client/invoices' }]
+      : []),
     { id: 'COMMS', label: 'Messages', icon: MessageSquare, rootPath: '/client/messages' },
     { id: 'ACCOUNT', label: 'Account', icon: Settings, rootPath: '/client/profile' },
   ];
@@ -111,6 +117,22 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
     const categoryId = Object.entries(pathMap).find(([path]) => currentPath.startsWith(path))?.[1];
     if (categoryId) setActiveCategory(categoryId);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (accessLoading || accessError || !access) return;
+    const path = location.pathname;
+    if (path.startsWith('/client/invoices') && !access.canReadFinance) {
+      navigate('/client/dashboard', { replace: true });
+      return;
+    }
+    if (path === '/client/new-booking' && !access.canRequest) {
+      navigate(access.canViewBookings ? '/client/bookings' : '/client/dashboard', { replace: true });
+      return;
+    }
+    if (path.startsWith('/client/bookings') && !access.canViewBookings) {
+      navigate('/client/dashboard', { replace: true });
+    }
+  }, [access, accessError, accessLoading, location.pathname, navigate]);
 
   const isActive = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
 
@@ -180,7 +202,9 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
               {activeCategory === 'REQUESTS' && (
                 <div className="space-y-1">
                   <NavItem to="/client/bookings" icon={CalendarDays} label="My Bookings" active={isActive('/client/bookings')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/client/new-booking" icon={PlusCircle} label="New Request" active={isActive('/client/new-booking')} isCollapsed={isSecondarySlim} />
+                  {access?.canRequest && (
+                    <NavItem to="/client/new-booking" icon={PlusCircle} label="New Request" active={isActive('/client/new-booking')} isCollapsed={isSecondarySlim} />
+                  )}
                 </div>
               )}
               {activeCategory === 'FIN' && (
@@ -276,6 +300,14 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
 
         <main className="flex-1 overflow-auto bg-slate-100 p-3 dark:bg-slate-950 sm:p-5 lg:p-6">
           <div className="max-w-[1600px] mx-auto">
+            {accessError && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                <span>{accessError}</span>
+                <button type="button" onClick={() => void refreshAccess()} className="font-semibold underline underline-offset-4">
+                  Try again
+                </button>
+              </div>
+            )}
             {children}
           </div>
         </main>
@@ -283,3 +315,9 @@ export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children
     </div>
   );
 };
+
+export const ClientLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <ClientPortalProvider>
+    <ClientLayoutShell>{children}</ClientLayoutShell>
+  </ClientPortalProvider>
+);

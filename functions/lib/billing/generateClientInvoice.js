@@ -37,6 +37,7 @@ exports.generateClientInvoice = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const crypto_1 = require("crypto");
+const clientFinanceScope_1 = require("../clients/clientFinanceScope");
 const db = admin.firestore();
 const MAX_TIMESHEETS_PER_INVOICE = 150;
 const assertAdmin = async (uid) => {
@@ -81,13 +82,23 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
     const invoiceRef = db.collection('clientInvoices').doc(`client_${generationKey.slice(0, 32)}`);
     const settingsRef = db.collection('systemSettings').doc('main');
     const clientRef = db.collection('clients').doc(clientId);
+    const candidateBookingIds = Array.from(new Set(candidates
+        .map(item => String(item.data().bookingId || '').trim())
+        .filter(Boolean)));
+    const bookingRefs = candidateBookingIds.map(bookingId => db.collection('bookings').doc(bookingId));
     const result = await db.runTransaction(async (transaction) => {
-        const [existingInvoice, settingsSnap, clientSnap, ...freshTimesheets] = await Promise.all([
+        const reads = await Promise.all([
             transaction.get(invoiceRef),
             transaction.get(settingsRef),
             transaction.get(clientRef),
             ...candidates.map(item => transaction.get(item.ref)),
+            ...bookingRefs.map(ref => transaction.get(ref)),
         ]);
+        const existingInvoice = reads[0];
+        const settingsSnap = reads[1];
+        const clientSnap = reads[2];
+        const freshTimesheets = reads.slice(3, 3 + candidates.length);
+        const freshBookings = reads.slice(3 + candidates.length);
         if (existingInvoice.exists) {
             const value = existingInvoice.data() || {};
             return {
@@ -131,12 +142,21 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
         const paymentTermsDays = Number(client.paymentTermsDays ?? finance.paymentTermsDays ?? 30);
         const issueDate = new Date();
         const dueDate = new Date(issueDate.getTime() + paymentTermsDays * 86400000);
+        const bookingById = new Map(freshBookings
+            .filter(booking => booking.exists)
+            .map(booking => [booking.id, { id: booking.id, ...(booking.data() || {}) }]));
+        const invoiceBookings = timesheets
+            .map(timesheet => bookingById.get(String(timesheet.data()?.bookingId || '')))
+            .filter((booking) => Boolean(booking));
+        const hierarchy = (0, clientFinanceScope_1.projectClientFinanceHierarchy)(invoiceBookings);
         transaction.set(settingsRef, {
             finance: { ...finance, nextInvoiceNumber: nextNumber + 1 },
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         timesheets.forEach(timesheet => {
             const value = timesheet.data();
+            const booking = bookingById.get(String(value.bookingId || ''));
+            const lineHierarchy = (0, clientFinanceScope_1.projectClientInvoiceLineHierarchy)(booking);
             const lineAmount = Number(value.clientAmountCalculated);
             const units = Number(value.unitsBillableToClient || 0);
             const lineRef = db.collection('clientInvoiceLines').doc(`${invoiceRef.id}_${timesheet.id}`);
@@ -150,11 +170,15 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
                 rate: units > 0 ? Number((lineAmount / units).toFixed(4)) : lineAmount,
                 lineAmount,
                 total: lineAmount,
+                ...lineHierarchy,
             });
             transaction.update(timesheet.ref, {
                 clientInvoiceId: invoiceRef.id,
                 readyForClientInvoice: false,
                 status: 'INVOICING',
+                ...(booking?.clientDepartmentId ? { clientDepartmentId: booking.clientDepartmentId } : {}),
+                ...(booking?.requestedByAgentId ? { requestedByAgentId: booking.requestedByAgentId } : {}),
+                ...(booking?.requestedByUserId ? { requestedByUserId: booking.requestedByUserId } : {}),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             if (value.bookingId) {
@@ -191,6 +215,7 @@ exports.generateClientInvoice = functions.https.onCall(async (data, context) => 
             lineCount: timesheets.length,
             financialIntegrityStatus: 'VERIFIED',
             referenceIntegrityStatus: 'VERIFIED',
+            ...hierarchy,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             createdBy: context.auth.uid,
         });

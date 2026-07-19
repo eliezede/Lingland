@@ -38,6 +38,9 @@ export interface User {
   photoUrl?: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'PENDING' | 'IMPORTED';
   profileId?: string;
+  clientId?: string;
+  clientAgentId?: string;
+  clientMembershipId?: string;
   staffProfileId?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -177,6 +180,22 @@ export interface PlatformModeSettings {
 export interface Booking extends SourceTrackingFields {
   id: string;
   clientId: string;
+  clientDepartmentId?: string;
+  clientDepartmentSource?: 'CLIENT_PORTAL' | 'PUBLIC_INTAKE' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'CLIENT_IDENTITY_MIGRATION';
+  requestedByAgentId?: string;
+  requestedByAgentSource?: 'CLIENT_PORTAL' | 'PUBLIC_INTAKE' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'CLIENT_IDENTITY_MIGRATION';
+  clientIdentityStatus?: 'RESOLVED' | 'PROVISIONAL' | 'AMBIGUOUS';
+  clientIdentityCandidateIds?: string[];
+  requesterIdentityStatus?: 'RESOLVED' | 'PENDING_VERIFICATION' | 'AMBIGUOUS';
+  billingContactAgentId?: string;
+  financeIdentityStatus?: 'SAME_AS_REQUESTER' | 'RESOLVED' | 'PENDING_VERIFICATION' | 'AMBIGUOUS';
+  submittedByUid?: string;
+  clientSnapshot?: {
+    organizationName?: string;
+    departmentName?: string;
+    requesterName?: string;
+    requesterEmail?: string;
+  };
   clientName: string;
   requestedByUserId: string;
   organizationId: string;
@@ -317,6 +336,57 @@ export interface Client extends TenantScopedEntity, SourceTrackingFields {
   locationName?: string;
   accountAliases?: string[];
   clientTrade?: string;
+  recordState?: 'ACTIVE' | 'MERGED' | 'ARCHIVED';
+  mergedIntoClientId?: string;
+  mergedClientIds?: string[];
+  mergeManifestId?: string;
+  lastClientMergeManifestId?: string;
+  mergedAt?: string;
+  identityMergedAt?: string;
+}
+
+export type ClientAgentType = 'PERSON' | 'SHARED_MAILBOX';
+export type ClientAgentRole = 'REQUESTER' | 'FINANCE';
+export type ClientMembershipAccess = 'AGENT' | 'DEPARTMENT_MANAGER' | 'CLIENT_FINANCE' | 'CLIENT_MASTER';
+
+export interface ClientDepartment extends TenantScopedEntity, SourceTrackingFields {
+  clientId: string;
+  name: string;
+  normalizedName: string;
+  aliases?: string[];
+  locationName?: string;
+  billingAddress?: string;
+  postcode?: string;
+  defaultCostCodeType?: Client['defaultCostCodeType'];
+  status: 'ACTIVE' | 'ARCHIVED';
+  sourceClientIds?: string[];
+}
+
+export interface ClientAgent extends TenantScopedEntity, SourceTrackingFields {
+  displayName: string;
+  names?: string[];
+  email: string;
+  normalizedEmail: string;
+  phoneNumbers?: string[];
+  agentType: ClientAgentType;
+  roles: ClientAgentRole[];
+  status: 'ACTIVE' | 'INACTIVE';
+  userId?: string;
+  portalAccountStatus?: User['status'];
+  sourceClientIds?: string[];
+  lastClientMergeManifestId?: string;
+}
+
+export interface ClientMembership extends TenantScopedEntity, SourceTrackingFields {
+  clientId: string;
+  agentId: string;
+  userId?: string;
+  departmentIds?: string[];
+  accessLevel: ClientMembershipAccess;
+  roles: ClientAgentRole[];
+  status: 'ACTIVE' | 'INACTIVE';
+  sourceClientIds?: string[];
+  lastClientMergeManifestId?: string;
 }
 
 export interface LanguageProficiency {
@@ -469,6 +539,9 @@ export interface Timesheet extends TenantScopedEntity, SourceTrackingFields {
   bookingId: string;
   interpreterId: string;
   clientId: string;
+  clientDepartmentId?: string | null;
+  requestedByAgentId?: string | null;
+  requestedByUserId?: string | null;
   submittedAt: string;
   sessionMode: SessionMode;
   actualStart: string;
@@ -564,6 +637,20 @@ export interface ClientInvoice extends TenantScopedEntity, SourceTrackingFields 
   financialIntegrityStatus?: 'VERIFIED' | 'AMOUNT_MISSING' | 'LINK_MISSING' | 'REVIEW_REQUIRED';
   amountSourceField?: string;
   referenceIntegrityStatus?: 'VERIFIED' | 'MISSING';
+  bookingIds?: string[];
+  clientDepartmentId?: string;
+  clientDepartmentIds?: string[];
+  requestedByAgentId?: string;
+  requestedByAgentIds?: string[];
+  requestedByUserIds?: string[];
+  hierarchyScopeStatus?: 'COMPLETE' | 'PARTIAL' | 'CLIENT_ONLY' | 'UNLINKED';
+  hierarchyProjectionVersion?: number;
+  hierarchyCoverage?: {
+    bookingCount: number;
+    departmentLinkedBookings: number;
+    requesterLinkedBookings: number;
+    fullyScopedBookings: number;
+  };
 }
 
 export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFields {
@@ -697,7 +784,9 @@ export interface ChatThread {
   lastMessage?: string;
   lastMessageAt?: string;
   bookingId?: string;
+  clientId?: string;
   departmentId?: string;
+  requestedByAgentId?: string;
   type?: 'DIRECT' | 'BOOKING' | 'DEPARTMENT';
   unreadCount: Record<string, number>;
   metadata?: any;

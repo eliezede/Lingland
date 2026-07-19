@@ -1,59 +1,52 @@
 
-import { useState, useEffect } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDoc,
-  doc
-} from 'firebase/firestore';
+import { useState, useEffect, useCallback } from 'react';
+import { getDoc, doc } from 'firebase/firestore';
 import { db } from '../services/firebaseConfig';
 import { FirestoreClientService } from '../firebase/firestoreClient';
-import { BillingService } from '../services/billingService';
-import { ClientService } from '../services/clientService';
-import { BookingService } from '../services/bookingService';
+import { ClientPortalService } from '../services/clientPortalService';
 import { InterpreterService } from '../services/interpreterService';
-import { Booking, ClientInvoice, Client, InvoiceStatus } from '../types';
+import { Booking, ClientInvoice, Client } from '../types';
 
 export const useClientBookings = (clientId: string | undefined) => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
     if (!clientId) {
+      setBookings([]);
       setLoading(false);
       return;
     }
-    
-    // Real-time listener for bookings
-    const q = query(
-      collection(db, "bookings"), 
-      where("clientId", "==", clientId)
-    );
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const photoMap = await InterpreterService.getPhotoMap();
-      const data = snapshot.docs.map(doc => {
-        const booking = { id: doc.id, ...doc.data() } as Booking;
-        if (booking.interpreterId && !booking.interpreterPhotoUrl) {
-          booking.interpreterPhotoUrl = photoMap[booking.interpreterId];
-        }
-        return booking;
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      ClientPortalService.getBookings(),
+      InterpreterService.getPhotoMap(),
+    ])
+      .then(([data, photoMap]) => {
+        if (!active) return;
+        setBookings(data.map(booking => (
+          booking.interpreterId && !booking.interpreterPhotoUrl
+            ? { ...booking, interpreterPhotoUrl: photoMap[booking.interpreterId] }
+            : booking
+        )));
+      })
+      .catch(error => {
+        if (!active) return;
+        console.error('Error fetching scoped client bookings:', error);
+        setBookings([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
-      // Sort in memory to avoid index requirements during dev
-      data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setBookings(data);
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching client bookings:", error);
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
-  }, [clientId]);
+    return () => { active = false; };
+  }, [clientId, revision]);
 
-  return { bookings, loading };
+  return { bookings, loading, refresh };
 };
 
 export const useClientBookingById = (clientId: string | undefined, bookingId: string | undefined) => {
@@ -62,35 +55,33 @@ export const useClientBookingById = (clientId: string | undefined, bookingId: st
 
   useEffect(() => {
     if (!clientId || !bookingId) {
+      setBooking(null);
       setLoading(false);
       return;
     }
-    
-    const docRef = doc(db, "bookings", bookingId);
-    
-    const unsubscribe = onSnapshot(docRef, async (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as Booking;
-        // Security check: ensure booking belongs to client
-        if (data.clientId === clientId) {
-          if (data.interpreterId && !data.interpreterPhotoUrl) {
-            const photoMap = await InterpreterService.getPhotoMap();
-            data.interpreterPhotoUrl = photoMap[data.interpreterId];
-          }
-          setBooking(data);
-        } else {
-          setBooking(null);
-        }
-      } else {
-        setBooking(null);
-      }
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching booking:", error);
-      setLoading(false);
-    });
 
-    return () => unsubscribe();
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      ClientPortalService.getBooking(bookingId),
+      InterpreterService.getPhotoMap(),
+    ])
+      .then(([data, photoMap]) => {
+        if (!active) return;
+        setBooking(data.interpreterId && !data.interpreterPhotoUrl
+          ? { ...data, interpreterPhotoUrl: photoMap[data.interpreterId] }
+          : data);
+      })
+      .catch(error => {
+        if (!active) return;
+        console.error('Error fetching scoped client booking:', error);
+        setBooking(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
   }, [clientId, bookingId]);
 
   return { booking, loading };
@@ -111,19 +102,27 @@ export const useClientInvoices = (clientId: string | undefined) => {
 
   useEffect(() => {
     if (!clientId) {
+      setInvoices([]);
       setLoading(false);
       return;
     }
-    
+
+    let active = true;
     setLoading(true);
-    BillingService.getClientInvoices(clientId)
+    ClientPortalService.getInvoices()
       .then(data => {
-        const visibleStatuses = [InvoiceStatus.SENT, InvoiceStatus.APPROVED, InvoiceStatus.PAID];
-        const clientInvoices = data.filter(inv => inv.clientId === clientId && visibleStatuses.includes(inv.status));
-        setInvoices(clientInvoices);
+        if (active) setInvoices(data);
       })
-      .catch(err => console.error("Error fetching invoices:", err))
-      .finally(() => setLoading(false));
+      .catch(error => {
+        if (!active) return;
+        console.error('Error fetching scoped client invoices:', error);
+        setInvoices([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
   }, [clientId]);
 
   return { invoices, loading };
@@ -135,18 +134,27 @@ export const useClientInvoiceById = (clientId: string | undefined, invoiceId: st
 
   useEffect(() => {
     if (!clientId || !invoiceId) {
+      setInvoice(null);
       setLoading(false);
       return;
     }
-    
+
+    let active = true;
     setLoading(true);
-    BillingService.getClientInvoiceById(invoiceId)
+    ClientPortalService.getInvoice(invoiceId)
       .then(data => {
-        const visibleStatuses = [InvoiceStatus.SENT, InvoiceStatus.APPROVED, InvoiceStatus.PAID];
-        setInvoice(data?.clientId === clientId && visibleStatuses.includes(data.status) ? data : null);
+        if (active) setInvoice(data);
       })
-      .catch(err => console.error("Error fetching invoice:", err))
-      .finally(() => setLoading(false));
+      .catch(error => {
+        if (!active) return;
+        console.error('Error fetching scoped client invoice:', error);
+        setInvoice(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
   }, [clientId, invoiceId]);
 
   return { invoice, loading };

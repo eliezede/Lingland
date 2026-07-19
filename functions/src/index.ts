@@ -22,6 +22,10 @@ export * from './jobs/createAdminBooking';
 export * from './jobs/adminAssignmentActions';
 export * from './jobs/adminUpdateBookingStatus';
 export * from './admin/deletePlatformEntity';
+export * from './clients/clientIdentityAuditFunctions';
+export * from './clients/clientHierarchyFunctions';
+export * from './clients/clientPortalAccess';
+export * from './clients/clientHierarchyIntegrityFunctions';
 export * from './notifications/onNotificationCreated';
 export * from './notifications/onTimesheetSubmit'; // NT-05: Notify admins + interpreter on timesheet creation
 export * from './notifications/onBookingOffer';
@@ -29,6 +33,7 @@ export * from './notifications/onAssignmentOffer';
 export * from './notifications/onOfferDeclined';
 export * from './notifications/createNotification';
 export * from './notifications/onMessageCreated';
+export * from './notifications/clientLifecycleNotifications';
 export * from './communications/createSupportThread';
 export * from './cron/dbsExpiryCheck'; // ON-03: Daily cron for DBS expiry alerts
 export * from './public/submitPublicIntake';

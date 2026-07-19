@@ -12,7 +12,9 @@ const nonNegativeNumber = (value: unknown, max: number) => {
 const assertAdmin = async (uid?: string) => {
   if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Authentication is required');
   const user = await db.collection('users').doc(uid).get();
-  if (!user.exists || user.data()?.status !== 'ACTIVE' || !['ADMIN', 'SUPER_ADMIN'].includes(String(user.data()?.role || ''))) {
+  const data = user.data() || {};
+  const role = text(data.role, 40).toUpperCase();
+  if (!user.exists || text(data.status, 40).toUpperCase() !== 'ACTIVE' || !['ADMIN', 'SUPER_ADMIN'].includes(role)) {
     throw new functions.https.HttpsError('permission-denied', 'Only administrators can create staff bookings');
   }
 };
@@ -46,6 +48,7 @@ const allocateJobNumber = async (language: string) => db.runTransaction(async tr
 
 export const createAdminBooking = functions.https.onCall(async (data, context) => {
   await assertAdmin(context.auth?.uid);
+  const actorUid = context.auth!.uid;
   const languageTo = text(data?.languageTo, 120);
   const serviceType = text(data?.serviceType, 120);
   const date = text(data?.date, 20);
@@ -57,9 +60,29 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
   if (!clientId && !text(guest?.name, 200)) {
     throw new functions.https.HttpsError('invalid-argument', 'A registered client or guest contact is required');
   }
-  if (clientId) {
-    const client = await db.collection('clients').doc(clientId).get();
-    if (!client.exists) throw new functions.https.HttpsError('not-found', 'Selected client not found');
+  const client = clientId ? await db.collection('clients').doc(clientId).get() : null;
+  if (clientId && !client?.exists) throw new functions.https.HttpsError('not-found', 'Selected client not found');
+  const clientData = client?.data() || {};
+  if (text(clientData.recordState).toUpperCase() === 'MERGED' || text(clientData.mergedIntoClientId)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Use the canonical client before creating this booking.');
+  }
+
+  const clientDepartmentId = text(data?.clientDepartmentId, 160);
+  const department = clientDepartmentId ? await db.collection('clientDepartments').doc(clientDepartmentId).get() : null;
+  if (clientDepartmentId && (!department?.exists || text(department.data()?.clientId) !== clientId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Selected department does not belong to this client.');
+  }
+
+  const requestedByAgentId = text(data?.requestedByAgentId, 160);
+  const requesterAgent = requestedByAgentId ? await db.collection('clientAgents').doc(requestedByAgentId).get() : null;
+  if (requestedByAgentId && !requesterAgent?.exists) {
+    throw new functions.https.HttpsError('invalid-argument', 'Selected requester identity was not found.');
+  }
+  if (requestedByAgentId) {
+    const memberships = await db.collection('clientMemberships').where('clientId', '==', clientId).get();
+    if (!memberships.docs.some(document => text(document.data().agentId) === requestedByAgentId)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Selected requester does not belong to this client.');
+    }
   }
   const interpreterId = text(data?.interpreterId, 160);
   const interpreter = interpreterId ? await db.collection('interpreters').doc(interpreterId).get() : null;
@@ -75,11 +98,23 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
     name: text(file?.name, 250),
     url: text(file?.url, 2000),
   })).filter((file: any) => file.url);
+  const departmentData = department?.data() || {};
+  const requesterData = requesterAgent?.data() || {};
   const booking = {
     id: bookingRef.id,
-    organizationId: text(data?.organizationId, 160) || 'lingland-main',
+    organizationId: text(clientData.organizationId || data?.organizationId, 160) || 'lingland-main',
     clientId,
-    clientName: text(data?.clientName || guest?.organisation || guest?.name, 250),
+    clientName: text(clientData.companyName || data?.clientName || guest?.organisation || guest?.name, 250),
+    clientDepartmentId: clientDepartmentId || null,
+    clientDepartmentSource: clientDepartmentId ? 'STAFF_MANUAL' : null,
+    requestedByAgentId: requestedByAgentId || null,
+    requestedByAgentSource: requestedByAgentId ? 'STAFF_MANUAL' : null,
+    clientSnapshot: clientId ? {
+      organizationName: text(clientData.companyName, 250),
+      departmentName: text(departmentData.name, 160),
+      requesterName: text(requesterData.displayName, 200),
+      requesterEmail: text(requesterData.email, 320).toLowerCase(),
+    } : null,
     guestContact: {
       name: text(guest?.name, 200),
       email: text(guest?.email, 320).toLowerCase(),
@@ -122,7 +157,7 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
     bookingRef: numbering.base,
     displayRef: numbering.display,
     legacyRef: numbering.display,
-    requestedByUserId: context.auth!.uid,
+    requestedByUserId: actorUid,
     sourceSystem: 'STAFF_MANUAL',
     syncStatus: 'LOCAL_ONLY',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -136,15 +171,20 @@ export const createAdminBooking = functions.https.onCall(async (data, context) =
     status: 'OFFERED',
     offeredAt: now,
     assignmentType: 'DIRECT',
-    createdBy: context.auth!.uid,
+    createdBy: actorUid,
   });
   batch.set(db.collection('jobEvents').doc(), {
     jobId: bookingRef.id,
     organizationId: booking.organizationId,
     type: interpreterId ? 'DIRECT_ASSIGNMENT_SENT' : 'JOB_CREATED',
     source: 'admin',
-    actorUserId: context.auth!.uid,
-    metadata: { interpreterId: interpreterId || null, assignmentId: assignmentRef?.id || null },
+    actorUserId: actorUid,
+    metadata: {
+      interpreterId: interpreterId || null,
+      assignmentId: assignmentRef?.id || null,
+      clientDepartmentId: clientDepartmentId || null,
+      requestedByAgentId: requestedByAgentId || null,
+    },
     createdAt: now,
   });
   await batch.commit();

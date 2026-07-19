@@ -13,6 +13,7 @@ import {
 import { InterpreterService, StorageService } from '../../../services/api';
 import { InfoCard } from '../../../components/ui/InfoCard';
 import { Modal } from '../../../components/ui/Modal';
+import { useClientPortal } from '../../../context/ClientPortalContext';
 
 const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => (
   <div className="mb-5">
@@ -30,9 +31,12 @@ export const ClientNewBooking = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { createBooking } = useCreateClientBooking();
-  const { profile: clientProfile, loading: profileLoading } = useClientProfile(user?.profileId);
+  const linkedClientId = user?.clientId || user?.profileId;
+  const { profile: clientProfile, loading: profileLoading } = useClientProfile(linkedClientId);
+  const { access: portalContext, loading: hierarchyLoading, error: portalContextError } = useClientPortal();
   
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [loadingLangs, setLoadingLangs] = useState(true);
   const [helpModal, setHelpModal] = useState<{ isOpen: boolean; title: string; content: React.ReactNode } | null>(null);
@@ -67,6 +71,17 @@ export const ClientNewBooking = () => {
   });
 
   const isTranslation = formData.serviceType === ServiceType.TRANSLATION;
+
+  useEffect(() => {
+    if (!portalContext) return;
+    if (portalContext.departments.length === 1) {
+      setSelectedDepartmentId(portalContext.departments[0].id);
+      return;
+    }
+    if (selectedDepartmentId && !portalContext.departments.some(department => department.id === selectedDepartmentId)) {
+      setSelectedDepartmentId('');
+    }
+  }, [portalContext, selectedDepartmentId]);
 
   useEffect(() => {
     const fetchLangs = async () => {
@@ -116,7 +131,7 @@ export const ClientNewBooking = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user?.profileId) return;
+    if (!user || !portalContext) return;
     if (clientProfile?.status === 'SUSPENDED') {
       showToast('Your client account is suspended. Please contact Lingland before creating new bookings.', 'error');
       return;
@@ -133,6 +148,14 @@ export const ClientNewBooking = () => {
       showToast('Please upload at least one document for translation', 'error');
       return;
     }
+    if (!portalContext.canRequest) {
+      showToast('Your client membership does not include requester access.', 'error');
+      return;
+    }
+    if (portalContext.departments.length > 0 && !selectedDepartmentId) {
+      showToast('Select the department requesting this booking.', 'error');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -147,10 +170,18 @@ export const ClientNewBooking = () => {
         ...formData,
         costCode: formData.requiresCostCode === 'YES' ? formData.costCode : 'NOT_APPLICABLE',
         expectedEndTime,
-        clientId: user.profileId,
-        clientName: clientProfile?.companyName || user.displayName,
+        clientId: portalContext.client.id,
+        clientName: portalContext.client.companyName || clientProfile?.companyName || user.displayName,
+        clientDepartmentId: selectedDepartmentId || undefined,
+        requestedByAgentId: portalContext.agent?.id,
+        clientSnapshot: {
+          organizationName: portalContext.client.companyName,
+          departmentName: portalContext.departments.find(department => department.id === selectedDepartmentId)?.name || '',
+          requesterName: portalContext.agent?.displayName || user.displayName,
+          requesterEmail: portalContext.agent?.email || user.email,
+        },
         requestedByUserId: user.id,
-        organizationId: clientProfile?.organizationId || 'lingland-main',
+        organizationId: portalContext.client.organizationId || clientProfile?.organizationId || 'lingland-main',
         deliveryEmail: formData.deliveryEmail || user.email,
         status: BookingStatus.INCOMING
       };
@@ -182,6 +213,53 @@ export const ClientNewBooking = () => {
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 items-start">
         <form onSubmit={handleSubmit} className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-8">
+            {hierarchyLoading ? (
+              <div className="flex h-12 items-center gap-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
+                <Loader2 size={18} className="animate-spin" /> Loading account scope...
+              </div>
+            ) : portalContextError ? (
+              <div className="flex items-start gap-3 border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0" /> {portalContextError}
+              </div>
+            ) : portalContext ? (
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)] md:items-end">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Requesting as</p>
+                  <p className="mt-1 truncate text-sm font-bold text-slate-950 dark:text-white">{portalContext.client.companyName}</p>
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {portalContext.agent?.displayName || user?.displayName}
+                    {portalContext.membership && ` · ${portalContext.membership.accessLevel.replaceAll('_', ' ')}`}
+                  </p>
+                </div>
+                <div>
+                  <label htmlFor="client-department" className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    Department
+                  </label>
+                  {portalContext.departments.length > 0 ? (
+                    <select
+                      id="client-department"
+                      required
+                      value={selectedDepartmentId}
+                      onChange={event => setSelectedDepartmentId(event.target.value)}
+                      className="h-10 w-full border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    >
+                      <option value="">Select department</option>
+                      {portalContext.departments.map(department => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}{department.locationName ? ` · ${department.locationName}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="flex h-10 items-center border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                      Organisation-wide
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
           
           <div className="p-8 border-b border-slate-100">
             <div className="flex items-center mb-6">
@@ -651,7 +729,7 @@ export const ClientNewBooking = () => {
               </button>
               <button 
                 type="submit" 
-                disabled={isSubmitting || uploadingFiles || profileLoading || availableLanguages.length === 0 || clientProfile?.status === 'SUSPENDED'}
+                disabled={isSubmitting || uploadingFiles || profileLoading || hierarchyLoading || !portalContext || Boolean(portalContextError) || !portalContext?.canRequest || availableLanguages.length === 0 || clientProfile?.status === 'SUSPENDED'}
                 className="px-10 py-4 bg-slate-900 text-white font-bold text-lg rounded-xl shadow-xl shadow-slate-900/10 hover:bg-black hover:scale-[1.01] active:scale-95 transition-all flex items-center disabled:opacity-50"
               >
                 {isSubmitting ? (

@@ -3,34 +3,60 @@ import React, { useState } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useClientBookings } from '../../../hooks/useClientHooks';
 import { StatusBadge } from '../../../components/StatusBadge';
-import { Search, Filter, Clock, MapPin, Video, FileText } from 'lucide-react';
+import { Search, Clock, MapPin, Video, FileText, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ServiceType } from '../../../types';
+import { useClientPortal } from '../../../context/ClientPortalContext';
 
 export const ClientBookingsList = () => {
   const { user } = useAuth();
-  const { bookings, loading } = useClientBookings(user?.profileId);
+  const { access } = useClientPortal();
+  const { bookings, loading } = useClientBookings(user?.clientId || user?.profileId);
   const [filter, setFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [serviceFilter, setServiceFilter] = useState('ALL');
+  const accessLevel = access?.membership?.accessLevel || (access?.legacyFallback ? 'LEGACY' : 'AGENT');
 
-  const filteredBookings = bookings.filter(b => {
-    const search = filter.toLowerCase();
-    return (
+  const scopeTitle = accessLevel === 'CLIENT_MASTER'
+    ? 'Organisation Bookings'
+    : accessLevel === 'DEPARTMENT_MANAGER'
+      ? 'Department Bookings'
+      : 'My Bookings';
+  const scopeDescription = accessLevel === 'CLIENT_MASTER'
+    ? 'All requests across your organisation.'
+    : accessLevel === 'DEPARTMENT_MANAGER'
+      ? `Requests for ${access?.departments.map(department => department.name).join(', ') || 'your departments'}.`
+      : 'Requests submitted through your account.';
+  const statuses = Array.from(new Set(bookings.map(booking => booking.status).filter(Boolean))).sort();
+  const search = filter.trim().toLowerCase();
+
+  const filteredBookings = bookings.filter(b => (
+    statusFilter === 'ALL' || b.status === statusFilter
+  )).filter(b => (
+    serviceFilter === 'ALL'
+    || (serviceFilter === 'TRANSLATION' && b.serviceType === ServiceType.TRANSLATION)
+    || (serviceFilter === 'INTERPRETING' && b.serviceType !== ServiceType.TRANSLATION)
+  )).filter(b => (
       (b.languageTo || '').toLowerCase().includes(search) ||
       (b.languageFrom || '').toLowerCase().includes(search) ||
       (b.status || '').toLowerCase().includes(search) ||
       (b.bookingRef || '').toLowerCase().includes(search) ||
       (b.costCode || '').toLowerCase().includes(search)
-    );
-  });
+    ));
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">My Bookings</h1>
-          <p className="text-gray-500 text-sm">Manage your interpreting requests.</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{scopeTitle}</h1>
+          <p className="text-gray-500 text-sm dark:text-slate-400">{scopeDescription}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {access?.canRequest && (
+            <Link to="/client/new-booking" className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+              <Plus size={17} className="mr-1.5" /> New request
+            </Link>
+          )}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
             <input 
@@ -41,10 +67,15 @@ export const ClientBookingsList = () => {
               onChange={e => setFilter(e.target.value)}
             />
           </div>
-          <button className="flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
-            <Filter size={18} className="mr-2" />
-            Filters
-          </button>
+          <select value={serviceFilter} onChange={event => setServiceFilter(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <option value="ALL">All services</option>
+            <option value="INTERPRETING">Interpreting</option>
+            <option value="TRANSLATION">Translation</option>
+          </select>
+          <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <option value="ALL">All statuses</option>
+            {statuses.map(status => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}
+          </select>
         </div>
       </div>
 

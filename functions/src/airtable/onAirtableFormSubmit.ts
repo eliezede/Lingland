@@ -1,193 +1,70 @@
-
-import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import * as functions from 'firebase-functions/v1';
+import { createHash, timingSafeEqual } from 'crypto';
 
+const db = admin.firestore();
+const text = (value: unknown, max = 500) => String(value ?? '').trim().slice(0, max);
+
+const validToken = (provided: unknown, expected: string) => {
+  const providedBuffer = Buffer.from(text(provided, 2048));
+  const expectedBuffer = Buffer.from(expected);
+  return providedBuffer.length === expectedBuffer.length && timingSafeEqual(providedBuffer, expectedBuffer);
+};
+
+/**
+ * Compatibility endpoint for the retired Airtable automation bridge.
+ * REDBOOK sync is the only writer for Airtable jobs; this endpoint records a
+ * receipt so old automations can be observed without creating duplicates.
+ */
 export const onAirtableFormSubmit = functions.runWith({
   secrets: ['AIRTABLE_SECRET_TOKEN'],
-  timeoutSeconds: 60,
+  timeoutSeconds: 30,
+  memory: '256MB',
 }).https.onRequest(async (req, res) => {
-  // 1. Basic Security check — token loaded from Firebase Secret Manager (via runWith secrets)
-  const token = req.get('X-Airtable-Token') || req.query.token;
-  const expectedToken = process.env.AIRTABLE_SECRET_TOKEN;
-
-  if (!expectedToken || token !== expectedToken) {
-    console.warn('[Airtable] Unauthorized sync attempt from IP:', req.ip);
-    res.status(401).send('Unauthorized');
-    return;
-  }
-
   if (req.method !== 'POST') {
-    res.status(405).send('Method Not Allowed');
+    res.set('Allow', 'POST').status(405).json({ success: false, error: 'Method Not Allowed' });
     return;
   }
 
-  const db = admin.firestore();
-  const data = req.body;
-
-  try {
-    console.log('Received Airtable Submission:', JSON.stringify(data));
-
-    // 2. Mapping Logic
-    // Fields from Airtable payload
-    const professionalName = data['Booking By'] || 'Unknown Professional';
-    const organisation = data['Organisation / Department'] || 'Guest Org';
-    const contactEmail = data['Contact Email'] ? data['Contact Email'].toLowerCase().trim() : '';
-    const languageTo = data['Language Requested'] || 'Portuguese'; // Defaulting to Port if missing
-    const bookingDateTime = data['Booking Date & Time']; // Expected ISO string
-    const sessionType = data['Session Type'] || 'F2F'; // F2F, Virtual, Phone
-    const sessionLocation = data['Session Location'] || '';
-    const costCode = data['Cost Code...'] || '';
-    const notes = data['Notes'] || '';
-
-    // 3. Date & Time Parsing
-    let dateStr = new Date().toISOString().split('T')[0];
-    let startTimeStr = '09:00';
-    
-    if (bookingDateTime) {
-      const dt = new Date(bookingDateTime);
-      if (!isNaN(dt.getTime())) {
-        dateStr = dt.toISOString().split('T')[0];
-        startTimeStr = dt.toTimeString().substring(0, 5);
-      }
-    }
-
-    // 4. Session Mode Mapping
-    let locationType: 'ONSITE' | 'ONLINE' = 'ONSITE';
-    let sessionMode = 'Face-to-Face';
-
-    if (sessionType.toLowerCase().includes('virtual') || sessionType.toLowerCase().includes('video')) {
-      locationType = 'ONLINE';
-      sessionMode = 'Videocall';
-    } else if (sessionType.toLowerCase().includes('phone')) {
-      locationType = 'ONLINE';
-      sessionMode = 'Over the Phone';
-    }
-
-    // 5. Client & Organization Resolution
-    let clientId = '';
-    let organizationId = '';
-    let clientName = organisation;
-
-    if (contactEmail) {
-      const clientsSnap = await db.collection('clients')
-        .where('email', '==', contactEmail)
-        .limit(1)
-        .get();
-
-      if (!clientsSnap.empty) {
-        const clientDoc = clientsSnap.docs[0];
-        clientId = clientDoc.id;
-        organizationId = clientDoc.data().organizationId;
-        clientName = clientDoc.data().companyName || organisation;
-        console.log(`Matched existing client: ${clientId} in org: ${organizationId}`);
-      } else {
-        // Create New Guest Client & Organization
-        console.log(`Creating new Guest Client for: ${contactEmail}`);
-        organizationId = `org-guest-${Date.now()}`;
-        const newClientRef = db.collection('clients').doc();
-        clientId = newClientRef.id;
-
-        await newClientRef.set({
-          id: clientId,
-          organizationId,
-          companyName: organisation,
-          contactPerson: professionalName,
-          email: contactEmail,
-          status: 'GUEST',
-          billingAddress: 'Address Pending Update',
-          paymentTermsDays: 30,
-          defaultCostCodeType: 'PO',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-      }
-    }
-
-    // 6. Final Booking Object
-    const bookingRef = `LL-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newBooking = {
-      clientId,
-      clientName,
-      organizationId,
-      bookingRef,
-      professionalName,
-      languageFrom: 'English', // Fixed as per request
-      languageTo,
-      date: dateStr,
-      startTime: startTimeStr,
-      durationMinutes: 60, // Default to 1 hour if not specified
-      locationType,
-      sessionMode,
-      address: sessionLocation,
-      costCode,
-      notes,
-      status: 'INCOMING',
-      guestContact: {
-        name: professionalName,
-        organisation: organisation,
-        email: contactEmail
-      },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    const bookingDoc = await db.collection('bookings').add(newBooking);
-    console.log(`✅ Success: Booking created with ID: ${bookingDoc.id} and Ref: ${bookingRef}`);
-
-    // 7. Admin Notifications
-    const adminsSnap = await db.collection('users')
-      .where('role', 'in', ['ADMIN', 'SUPER_ADMIN'])
-      .get();
-
-    const batch = db.batch();
-    adminsSnap.docs.forEach(adminDoc => {
-      const notifRef = db.collection('notifications').doc();
-      batch.set(notifRef, {
-        userId: adminDoc.id,
-        title: '📋 New Airtable Request',
-        message: `New booking ${bookingRef} submitted via Airtable for ${languageTo} interpretation on ${dateStr}.`,
-        type: 'URGENT',
-        read: false,
-        link: `/admin/bookings/${bookingDoc.id}`,
-        createdAt: new Date().toISOString()
-      });
-    });
-
-    // 8. Email confirmation to client (BK-05)
-    if (contactEmail) {
-      const mailRef = db.collection('mail').doc();
-      batch.set(mailRef, {
-        to: [contactEmail],
-        message: {
-          subject: `Booking Request Received — Ref: ${bookingRef}`,
-          html: `Dear ${professionalName},<br><br>Thank you for your booking request with Lingland.<br><br>
-<strong>Your Booking Reference:</strong> ${bookingRef}<br>
-<strong>Language:</strong> ${languageTo}<br>
-<strong>Date:</strong> ${dateStr} at ${startTimeStr}<br>
-<strong>Session Type:</strong> ${sessionMode}<br>${sessionLocation ? `<strong>Location:</strong> ${sessionLocation}<br>` : ''}
-<br>Our team is reviewing your request and will match you with a qualified interpreter. You will receive a further confirmation once an interpreter has been assigned.<br><br>
-If you have any questions, please contact us by replying to this email.<br><br>
-Kind regards,<br>The Lingland Team`
-        },
-        bookingId: bookingDoc.id,
-        source: 'airtable_webhook',
-        createdAt: new Date().toISOString()
-      });
-    }
-
-    await batch.commit();
-
-    res.status(200).json({
-      success: true,
-      bookingId: bookingDoc.id,
-      bookingRef
-    });
-
-  } catch (error: any) {
-    console.error('❌ Integration Error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+  const expectedToken = process.env.AIRTABLE_SECRET_TOKEN || '';
+  const providedToken = req.get('X-Airtable-Token') || req.query.token;
+  if (!expectedToken || !validToken(providedToken, expectedToken)) {
+    console.warn('[Airtable bridge] Rejected unauthorised compatibility request.');
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return;
   }
+
+  const payload = req.body && typeof req.body === 'object' ? req.body : {};
+  const sourceRecordId = text(
+    payload.recordId
+      || payload.id
+      || payload.airtableRecordId
+      || payload['Record ID'],
+    160,
+  );
+  const payloadHash = createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex');
+  const receivedAt = new Date().toISOString();
+
+  await db.collection('airtableWebhookReceipts').add({
+    source: 'LEGACY_AIRTABLE_AUTOMATION',
+    sourceRecordId,
+    payloadHash,
+    action: 'DEFERRED_TO_REDBOOK_SYNC',
+    jobCreated: false,
+    clientCreated: false,
+    communicationSent: false,
+    receivedAt,
+    expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 90 * 24 * 60 * 60 * 1000),
+  });
+
+  res.status(202).json({
+    success: true,
+    accepted: true,
+    sourceRecordId,
+    processing: 'REDBOOK_SYNC',
+    jobCreated: false,
+    communicationSent: false,
+  });
 });

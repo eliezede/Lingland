@@ -40,6 +40,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               displayName: userData.displayName || firebaseUser.email,
               role: userData.role as UserRole,
               profileId: userData.profileId,
+              clientId: userData.clientId,
+              clientAgentId: userData.clientAgentId,
+              clientMembershipId: userData.clientMembershipId,
               staffProfileId: userData.staffProfileId,
               status: userData.status || 'ACTIVE',
               photoUrl: userData.photoUrl

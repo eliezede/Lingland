@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordManualClientInvoice = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const clientFinanceScope_1 = require("../clients/clientFinanceScope");
 const db = admin.firestore();
 const assertAdmin = async (uid) => {
     if (!uid)
@@ -90,6 +91,8 @@ exports.recordManualClientInvoice = functions.https.onCall(async (data, context)
         const paymentTermsDays = Number(client?.data()?.paymentTermsDays ?? settings.data()?.finance?.paymentTermsDays ?? 30);
         const dueDate = new Date(new Date(now).getTime() + Math.max(0, paymentTermsDays) * 86400000).toISOString();
         const reference = requestedReference || String(bookingData.clientInvoiceReference || bookingData.clientInvoiceNumber || `MANUAL-${bookingData.displayRef || bookingData.jobNumber || bookingId}`);
+        const hierarchy = (0, clientFinanceScope_1.projectClientFinanceHierarchy)([{ id: bookingId, ...bookingData }]);
+        const lineHierarchy = (0, clientFinanceScope_1.projectClientInvoiceLineHierarchy)(bookingData);
         const invoice = {
             organizationId: bookingData.organizationId || 'lingland-main',
             clientId: bookingData.clientId || '',
@@ -109,6 +112,7 @@ exports.recordManualClientInvoice = functions.https.onCall(async (data, context)
             financialIntegrityStatus: 'VERIFIED',
             referenceIntegrityStatus: 'VERIFIED',
             source: 'STAFF_MANUAL',
+            ...hierarchy,
             createdBy: context.auth.uid,
             createdAt: now,
             updatedAt: now,
@@ -122,6 +126,7 @@ exports.recordManualClientInvoice = functions.https.onCall(async (data, context)
             units: Number(timesheet.data().unitsBillableToClient || 1),
             rate: 0,
             total: subtotal,
+            ...lineHierarchy,
             createdAt: now,
         });
         transaction.update(timesheet.ref, {

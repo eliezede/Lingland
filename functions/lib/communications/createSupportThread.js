@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSupportThread = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const clientPortalAccess_1 = require("../clients/clientPortalAccess");
+const clientPortalPolicy_1 = require("../clients/clientPortalPolicy");
 const db = admin.firestore();
 const getSupportUser = async () => {
     for (const role of ['SUPER_ADMIN', 'ADMIN']) {
@@ -57,7 +59,7 @@ const canAccessBooking = (user, booking) => {
         const offeredIds = Array.isArray(booking.offeredInterpreterIds) ? booking.offeredInterpreterIds.map(String) : [];
         return String(booking.interpreterId || '') === profileId || offeredIds.includes(profileId);
     }
-    return user.role === 'CLIENT' && String(booking.clientId || '') === profileId;
+    return false;
 };
 exports.createSupportThread = functions.https.onCall(async (data, context) => {
     if (!context.auth)
@@ -74,7 +76,13 @@ exports.createSupportThread = functions.https.onCall(async (data, context) => {
         if (!booking.exists)
             throw new functions.https.HttpsError('not-found', 'Booking not found');
         bookingData = booking.data() || {};
-        if (!canAccessBooking(callerData, bookingData)) {
+        const clientAccess = callerData.role === 'CLIENT'
+            ? await (0, clientPortalAccess_1.resolveClientPortalAccess)(context.auth.uid, callerData)
+            : null;
+        const allowed = clientAccess
+            ? clientAccess.canViewBookings && (0, clientPortalPolicy_1.canManageClientBooking)(bookingData, clientAccess)
+            : canAccessBooking(callerData, bookingData);
+        if (!allowed) {
             throw new functions.https.HttpsError('permission-denied', 'This account cannot open a thread for that booking');
         }
     }
@@ -105,6 +113,9 @@ exports.createSupportThread = functions.https.onCall(async (data, context) => {
             participantNames: { ...(current.participantNames || {}), ...participantNames },
             participantPhotos: current.participantPhotos || {},
             bookingId: bookingId || null,
+            clientId: bookingId ? String(bookingData.clientId || '') : null,
+            departmentId: bookingId ? String(bookingData.clientDepartmentId || '') : null,
+            requestedByAgentId: bookingId ? String(bookingData.requestedByAgentId || '') : null,
             metadata: {
                 ...(current.metadata || {}),
                 name: bookingId

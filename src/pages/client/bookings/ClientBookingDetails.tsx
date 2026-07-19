@@ -10,7 +10,7 @@ import { UserAvatar } from '../../../components/ui/UserAvatar';
 export const ClientBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
-  const { booking, loading } = useClientBookingById(user?.profileId, id);
+  const { booking, loading } = useClientBookingById(user?.clientId || user?.profileId, id);
   const isTranslation = booking?.serviceType === ServiceType.TRANSLATION;
   const formatCreatedAt = (value: any) => {
     if (!value) return 'Unknown';

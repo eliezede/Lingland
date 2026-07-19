@@ -55,6 +55,7 @@ const AdminInterpreterInvoicesPage = lazyNamed(() => import('./pages/admin/billi
 const AdminInterpreterInvoiceDetailsPage = lazyNamed(() => import('./pages/admin/billing/AdminInterpreterInvoiceDetailsPage'), 'AdminInterpreterInvoiceDetailsPage');
 const AdminClients = lazyNamed(() => import('./pages/admin/AdminClients'), 'AdminClients');
 const AdminClientDetails = lazyNamed(() => import('./pages/admin/clients/AdminClientDetails'), 'AdminClientDetails');
+const ClientIdentityAudit = lazyNamed(() => import('./pages/admin/clients/ClientIdentityAudit'), 'ClientIdentityAudit');
 const AdminInterpreters = lazyNamed(() => import('./pages/admin/AdminInterpreters'), 'AdminInterpreters');
 const AdminInterpreterDetails = lazyNamed(() => import('./pages/admin/interpreters/AdminInterpreterDetails'), 'AdminInterpreterDetails');
 const AdminNewBooking = lazyNamed(() => import('./pages/admin/bookings/AdminNewBooking'), 'AdminNewBooking');
@@ -207,6 +208,7 @@ const App = () => {
                               <Route path="bookings/edit/:id" element={<AdminNewBooking />} />
                               <Route path="applications" element={<AdminApplications />} />
                               <Route path="clients" element={<AdminClients />} />
+                              <Route path="clients/identity-audit" element={<ClientIdentityAudit />} />
                               <Route path="clients/:id" element={<AdminClientDetails />} />
                               <Route path="interpreters" element={<AdminInterpreters />} />
                               <Route path="interpreters/:id" element={<AdminInterpreterDetails />} />

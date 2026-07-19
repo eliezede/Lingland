@@ -3,6 +3,10 @@ import { createHash } from 'crypto';
 import { queueBookingStatusEmails } from '../mail/bookingEmail';
 import { findBestInterpreterForBooking, rankInterpreterForBooking } from './interpreterMatcher';
 import { AIAction, AIActionDefinition, AIRisk } from './types';
+import {
+  projectClientFinanceHierarchy,
+  projectClientInvoiceLineHierarchy,
+} from '../clients/clientFinanceScope';
 
 export interface AIActionToolInput {
   db: admin.firestore.Firestore;
@@ -368,6 +372,9 @@ const createClientInvoiceDraft = async (input: AIActionToolInput): Promise<AIAct
     const client = clientSnapshot.data() || {};
     const paymentTermsDays = Number(client.paymentTermsDays ?? finance.paymentTermsDays ?? 30);
     const dueDate = new Date(Date.now() + paymentTermsDays * 86400000).toISOString();
+    const freshBookingData = freshBooking.data() || {};
+    const hierarchy = projectClientFinanceHierarchy([{ id: input.entityId, ...freshBookingData }]);
+    const lineHierarchy = projectClientInvoiceLineHierarchy(freshBookingData);
     beforeSnapshot = {
       booking: { status: freshBooking.data()?.status || null, paymentStatus: freshBooking.data()?.paymentStatus || null },
       timesheets: eligible.map(doc => ({ id: doc.id, status: doc.data()?.status || null, readyForClientInvoice: doc.data()?.readyForClientInvoice === true })),
@@ -388,6 +395,7 @@ const createClientInvoiceDraft = async (input: AIActionToolInput): Promise<AIAct
         rate: units > 0 ? Number((lineAmount / units).toFixed(4)) : lineAmount,
         lineAmount,
         total: lineAmount,
+        ...lineHierarchy,
         aiExecutionId: input.executionId,
       });
       transaction.update(timesheet.ref, {
@@ -430,6 +438,7 @@ const createClientInvoiceDraft = async (input: AIActionToolInput): Promise<AIAct
       lineCount: eligible.length,
       financialIntegrityStatus: 'VERIFIED',
       referenceIntegrityStatus: 'VERIFIED',
+      ...hierarchy,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdBy: input.actorId,
       aiBeforeSnapshot: clean(beforeSnapshot),

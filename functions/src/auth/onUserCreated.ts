@@ -346,6 +346,24 @@ async function alignUserDocumentToAuthUid(
         updatedAt: new Date().toISOString(),
     }, { merge: true });
 
+    if (String(cleanUserData.role || '').toUpperCase() === 'CLIENT') {
+        const linkedAt = new Date().toISOString();
+        const clientAgentId = String(cleanUserData.clientAgentId || '');
+        const clientMembershipId = String(cleanUserData.clientMembershipId || '');
+        if (clientAgentId) {
+            batch.set(admin.firestore().collection('clientAgents').doc(clientAgentId), {
+                userId: authUid,
+                updatedAt: linkedAt,
+            }, { merge: true });
+        }
+        if (clientMembershipId) {
+            batch.set(admin.firestore().collection('clientMemberships').doc(clientMembershipId), {
+                userId: authUid,
+                updatedAt: linkedAt,
+            }, { merge: true });
+        }
+    }
+
     if (sourceDoc.id !== authUid && sourceDoc.ref) {
         batch.delete(sourceDoc.ref);
     }

@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useClientProfile } from '../../hooks/useClientHooks';
-import { Building2, Mail, MapPin, CreditCard, Users, Upload } from 'lucide-react';
+import { Building2, Mail, MapPin, CreditCard, Users, Upload, ShieldCheck } from 'lucide-react';
 import { UserAvatar } from '../../components/ui/UserAvatar';
 import { ImageCropper } from '../../components/ui/ImageCropper';
 import { UserService } from '../../services/userService';
 import { useToast } from '../../context/ToastContext';
+import { useClientPortal } from '../../context/ClientPortalContext';
 
 export const ClientProfile = () => {
   const { user, refreshUser } = useAuth();
-  const { profile, loading } = useClientProfile(user?.profileId);
+  const { profile, loading } = useClientProfile(user?.clientId || user?.profileId);
+  const { access } = useClientPortal();
   const { showToast } = useToast();
 
   const [showCropper, setShowCropper] = useState(false);
@@ -49,7 +51,10 @@ export const ClientProfile = () => {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Company Profile</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Account & organisation</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">Your identity and access scope within this client account.</p>
+      </div>
 
       <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
         <div className="flex items-center mb-8">
@@ -126,6 +131,34 @@ export const ClientProfile = () => {
                 <p className="font-medium text-gray-900">{profile.paymentTermsDays} Days</p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-5 flex items-center gap-3">
+          <div className="rounded-lg bg-blue-50 p-2 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"><ShieldCheck size={20} /></div>
+          <div>
+            <h2 className="font-bold text-gray-900 dark:text-white">Portal access</h2>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{access?.agent?.displayName || user?.displayName} / {access?.agent?.email || user?.email}</p>
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-400">Access level</p>
+            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{(access?.membership?.accessLevel || 'LEGACY').replaceAll('_', ' ')}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-400">Departments</p>
+            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{access?.departments.map(department => department.name).join(', ') || 'Organisation-wide'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-400">Requests</p>
+            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{access?.canRequest ? 'Can submit' : access?.canViewBookings ? 'View only' : 'No access'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-400">Finance</p>
+            <p className="mt-1 font-semibold text-slate-900 dark:text-white">{access?.canReadFinance ? 'Invoice access' : 'No access'}</p>
           </div>
         </div>
       </div>

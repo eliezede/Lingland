@@ -2,11 +2,114 @@ import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { queueBookingStatusEmails } from '../mail/bookingEmail';
 import { createHash } from 'crypto';
+import { resolveClientPortalAccess } from '../clients/clientPortalAccess';
 
 const db = admin.firestore();
 
 const cleanString = (value: unknown, max = 5000) => String(value ?? '').trim().slice(0, max);
 const cleanEmail = (value: unknown) => cleanString(value, 320).toLowerCase();
+const normalizeOrganizationName = (value: unknown) => cleanString(value, 250)
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+const stableId = (prefix: string, value: string) => `${prefix}_${createHash('sha1').update(value).digest('hex').slice(0, 20)}`;
+const placeholderOrganizations = new Set(['client', 'airtable client', 'unknown client', 'guest org', 'home', 'n a']);
+const sharedMailboxPrefixes = /^(accounts?|admin|appointments?|bookings?|enquiries?|finance|info|invoices?|office|payments?|reception|referrals?|team)([._+-]|$)/i;
+
+const canonicalClientDocument = async (document: FirebaseFirestore.DocumentSnapshot) => {
+  let current = document;
+  for (let depth = 0; depth < 4; depth += 1) {
+    const redirectId = cleanString(current.data()?.mergedIntoClientId, 160);
+    if (!redirectId || redirectId === current.id) return current;
+    const redirect = await db.collection('clients').doc(redirectId).get();
+    if (!redirect.exists) return current;
+    current = redirect;
+  }
+  return current;
+};
+
+const resolvePublicOrganization = async (organizationName: string) => {
+  const normalizedCompanyName = normalizeOrganizationName(organizationName);
+  if (!normalizedCompanyName || placeholderOrganizations.has(normalizedCompanyName)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid organisation name is required.');
+  }
+
+  const [normalizedMatches, literalMatches] = await Promise.all([
+    db.collection('clients').where('normalizedCompanyName', '==', normalizedCompanyName).limit(10).get(),
+    db.collection('clients').where('companyName', '==', organizationName).limit(10).get(),
+  ]);
+  const matchedDocuments = Array.from(new Map(
+    [...normalizedMatches.docs, ...literalMatches.docs].map(document => [document.id, document]),
+  ).values());
+  const canonicalMatches = await Promise.all(matchedDocuments.map(canonicalClientDocument));
+  const canonicalById = new Map(canonicalMatches.map(document => [document.id, document]));
+  if (canonicalById.size === 1) {
+    const document = Array.from(canonicalById.values())[0];
+    return {
+      clientId: document.id,
+      clientName: cleanString(document.data()?.companyName || organizationName, 250),
+      status: 'RESOLVED' as const,
+      candidateClientIds: [document.id],
+      createPatch: null,
+    };
+  }
+  if (canonicalById.size > 1) {
+    return {
+      clientId: '',
+      clientName: organizationName,
+      status: 'AMBIGUOUS' as const,
+      candidateClientIds: Array.from(canonicalById.keys()).sort(),
+      createPatch: null,
+    };
+  }
+
+  const clientId = stableId('public_client', normalizedCompanyName);
+  const clientRef = db.collection('clients').doc(clientId);
+  const existing = await clientRef.get();
+  if (existing.exists) {
+    const canonical = await canonicalClientDocument(existing);
+    return {
+      clientId: canonical.id,
+      clientName: cleanString(canonical.data()?.companyName || organizationName, 250),
+      status: 'RESOLVED' as const,
+      candidateClientIds: [canonical.id],
+      createPatch: null,
+    };
+  }
+
+  return {
+    clientId,
+    clientName: organizationName,
+    status: 'PROVISIONAL' as const,
+    candidateClientIds: [clientId],
+    createPatch: {
+      ref: clientRef,
+      data: {
+        id: clientId,
+        organizationId: 'lingland-main',
+        companyName: organizationName,
+        normalizedCompanyName,
+        contactPerson: '',
+        email: '',
+        phone: '',
+        invoiceEmail: '',
+        billingAddress: 'Address pending update',
+        paymentTermsDays: 30,
+        defaultCostCodeType: 'PO',
+        status: 'GUEST',
+        identityReviewStatus: 'PENDING',
+        sourceSystem: 'PUBLIC_INTAKE',
+        syncStatus: 'LOCAL_ONLY',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+    },
+  };
+};
 
 const cleanValue = (value: unknown, depth = 0): unknown => {
   if (depth > 4 || value === undefined || typeof value === 'function') return undefined;
@@ -201,30 +304,59 @@ export const submitPublicBookingRequest = functions.runWith({
   }
   await enforceRateLimit('BOOKING_REQUEST', context, email);
 
-  const existingClientSnap = await db.collection('clients').where('email', '==', email).limit(1).get();
-  let clientId = existingClientSnap.empty ? '' : existingClientSnap.docs[0].id;
-  if (!clientId) {
-    const clientRef = db.collection('clients').doc();
-    clientId = clientRef.id;
-    await clientRef.set({
-      id: clientId,
-      companyName: cleanString(guest.organisation || contactName, 250),
-      normalizedCompanyName: cleanString(guest.organisation || contactName, 250).toLowerCase(),
-      contactPerson: contactName,
-      email,
-      phone: cleanString(guest.phone, 80),
-      invoiceEmail: cleanEmail(guest.billingEmail || email),
-      billingAddress: 'Address pending update',
-      paymentTermsDays: 30,
-      defaultCostCodeType: 'PO',
-      status: 'GUEST',
-      sourceSystem: 'CLIENT_PORTAL',
-      syncStatus: 'LOCAL_ONLY',
-      organizationId: 'lingland-main',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+  const organizationName = cleanString(guest.organisation, 250);
+  const organization = await resolvePublicOrganization(organizationName);
+  const clientId = organization.clientId;
+  const billingEmail = cleanEmail(guest.billingEmail);
+  if (organization.createPatch && billingEmail && billingEmail.includes('@')) {
+    organization.createPatch.data.invoiceEmail = billingEmail;
   }
+  const agentMatches = await db.collection('clientAgents').where('normalizedEmail', '==', email).limit(2).get();
+  const agentMatchStatus = agentMatches.size > 1 ? 'AMBIGUOUS' : agentMatches.empty ? 'PROVISIONAL' : 'MATCHED';
+  const existingAgent = agentMatches.size === 1 ? agentMatches.docs[0] : null;
+  const agentId = agentMatchStatus === 'AMBIGUOUS'
+    ? ''
+    : existingAgent?.id || stableId('client_agent', email);
+  const agentData = existingAgent?.data() || {};
+  const mailboxPrefix = email.split('@')[0] || '';
+  const agentType = cleanString(agentData.agentType, 40).toUpperCase()
+    || (sharedMailboxPrefixes.test(mailboxPrefix) ? 'SHARED_MAILBOX' : 'PERSON');
+  const membershipId = clientId && agentId ? stableId('client_membership', `${clientId}|${agentId}`) : '';
+  const membershipRef = membershipId ? db.collection('clientMemberships').doc(membershipId) : null;
+  const membershipDocument = membershipRef ? await membershipRef.get() : null;
+  const membershipData = membershipDocument?.data() || {};
+  const agentIdentityStatus = agentMatchStatus === 'AMBIGUOUS'
+    ? 'AMBIGUOUS'
+    : cleanString(membershipData.status, 40).toUpperCase() === 'ACTIVE'
+      ? 'RESOLVED'
+      : 'PENDING_VERIFICATION';
+  const contactPhone = cleanString(guest.phone, 80);
+  const requesterRoles = billingEmail && billingEmail === email ? ['REQUESTER', 'FINANCE'] : ['REQUESTER'];
+
+  const separateFinanceEmail = billingEmail && billingEmail.includes('@') && billingEmail !== email ? billingEmail : '';
+  const financeAgentMatches = separateFinanceEmail
+    ? await db.collection('clientAgents').where('normalizedEmail', '==', separateFinanceEmail).limit(2).get()
+    : null;
+  const financeAgentDocument = financeAgentMatches?.size === 1 ? financeAgentMatches.docs[0] : null;
+  const financeAgentId = !separateFinanceEmail || (financeAgentMatches && financeAgentMatches.size > 1)
+    ? ''
+    : financeAgentDocument?.id || stableId('client_agent', separateFinanceEmail);
+  const financeAgentData = financeAgentDocument?.data() || {};
+  const financeMembershipId = clientId && financeAgentId
+    ? stableId('client_membership', `${clientId}|${financeAgentId}`)
+    : '';
+  const financeMembershipRef = financeMembershipId
+    ? db.collection('clientMemberships').doc(financeMembershipId)
+    : null;
+  const financeMembershipDocument = financeMembershipRef ? await financeMembershipRef.get() : null;
+  const financeMembershipData = financeMembershipDocument?.data() || {};
+  const financeIdentityStatus = !separateFinanceEmail
+    ? 'SAME_AS_REQUESTER'
+    : financeAgentMatches && financeAgentMatches.size > 1
+      ? 'AMBIGUOUS'
+      : cleanString(financeMembershipDocument?.data()?.status, 40).toUpperCase() === 'ACTIVE'
+        ? 'RESOLVED'
+        : 'PENDING_VERIFICATION';
 
   const numbering = await allocateJobNumber(languageTo);
   const bookingRef = db.collection('bookings').doc();
@@ -233,7 +365,20 @@ export const submitPublicBookingRequest = functions.runWith({
     ...bookingInput,
     id: bookingRef.id,
     clientId,
-    clientName: cleanString(guest.organisation || contactName, 250),
+    clientName: organization.clientName,
+    clientIdentityStatus: organization.status,
+    clientIdentityCandidateIds: organization.candidateClientIds,
+    requestedByAgentId: agentId,
+    requestedByAgentSource: agentId ? 'PUBLIC_INTAKE' : '',
+    requesterIdentityStatus: agentIdentityStatus,
+    billingContactAgentId: financeAgentId || (billingEmail === email ? agentId : ''),
+    financeIdentityStatus,
+    clientSnapshot: {
+      organizationName,
+      departmentName: '',
+      requesterName: contactName,
+      requesterEmail: email,
+    },
     guestContact: { ...guest, email },
     bookingRef: numbering.base,
     displayRef: numbering.display,
@@ -245,11 +390,82 @@ export const submitPublicBookingRequest = functions.runWith({
     sourceSystem: 'CLIENT_PORTAL',
     syncStatus: 'LOCAL_ONLY',
     organizationId: 'lingland-main',
-    requestedByUserId: context.auth!.uid,
+    submittedByUid: context.auth!.uid,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   };
   const intakeBatch = db.batch();
+  if (organization.createPatch) {
+    intakeBatch.set(organization.createPatch.ref, organization.createPatch.data, { merge: false });
+  }
+  if (agentId) {
+    const agentRef = db.collection('clientAgents').doc(agentId);
+    intakeBatch.set(agentRef, {
+      displayName: cleanString(agentData.displayName || contactName, 200),
+      names: admin.firestore.FieldValue.arrayUnion(contactName),
+      email,
+      normalizedEmail: email,
+      ...(contactPhone ? { phoneNumbers: admin.firestore.FieldValue.arrayUnion(contactPhone) } : {}),
+      agentType,
+      roles: admin.firestore.FieldValue.arrayUnion(...requesterRoles),
+      status: cleanString(agentData.status, 40)
+        || (cleanString(membershipData.status, 40).toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'),
+      organizationId: 'lingland-main',
+      sourceSystem: cleanString(agentData.sourceSystem, 80) || 'PUBLIC_INTAKE',
+      syncStatus: cleanString(agentData.syncStatus, 80) || 'LOCAL_ONLY',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(!existingAgent ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
+    }, { merge: true });
+  }
+  if (membershipRef) {
+    intakeBatch.set(membershipRef, {
+      clientId,
+      agentId,
+      ...(!membershipDocument?.exists ? { departmentIds: [] } : {}),
+      accessLevel: cleanString(membershipData.accessLevel, 40) || 'AGENT',
+      roles: admin.firestore.FieldValue.arrayUnion(...requesterRoles),
+      status: cleanString(membershipData.status, 40) || 'INACTIVE',
+      organizationId: 'lingland-main',
+      sourceSystem: cleanString(membershipData.sourceSystem, 80) || 'PUBLIC_INTAKE',
+      syncStatus: cleanString(membershipData.syncStatus, 80) || 'LOCAL_ONLY',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(!membershipDocument?.exists ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
+    }, { merge: true });
+  }
+  if (financeAgentId) {
+    const financeLocalPart = separateFinanceEmail.split('@')[0] || '';
+    intakeBatch.set(db.collection('clientAgents').doc(financeAgentId), {
+      displayName: cleanString(financeAgentData.displayName || `Finance - ${organizationName}`, 200),
+      names: admin.firestore.FieldValue.arrayUnion(cleanString(financeAgentData.displayName || `Finance - ${organizationName}`, 200)),
+      email: separateFinanceEmail,
+      normalizedEmail: separateFinanceEmail,
+      agentType: cleanString(financeAgentData.agentType, 40).toUpperCase()
+        || (sharedMailboxPrefixes.test(financeLocalPart) ? 'SHARED_MAILBOX' : 'PERSON'),
+      roles: admin.firestore.FieldValue.arrayUnion('FINANCE'),
+      status: cleanString(financeAgentData.status, 40)
+        || (cleanString(financeMembershipData.status, 40).toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'),
+      organizationId: 'lingland-main',
+      sourceSystem: cleanString(financeAgentData.sourceSystem, 80) || 'PUBLIC_INTAKE',
+      syncStatus: cleanString(financeAgentData.syncStatus, 80) || 'LOCAL_ONLY',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(!financeAgentDocument ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
+    }, { merge: true });
+  }
+  if (financeMembershipRef) {
+    intakeBatch.set(financeMembershipRef, {
+      clientId,
+      agentId: financeAgentId,
+      ...(!financeMembershipDocument?.exists ? { departmentIds: [] } : {}),
+      accessLevel: cleanString(financeMembershipData.accessLevel, 40) || 'CLIENT_FINANCE',
+      roles: admin.firestore.FieldValue.arrayUnion('FINANCE'),
+      status: cleanString(financeMembershipData.status, 40) || 'INACTIVE',
+      organizationId: 'lingland-main',
+      sourceSystem: cleanString(financeMembershipData.sourceSystem, 80) || 'PUBLIC_INTAKE',
+      syncStatus: cleanString(financeMembershipData.syncStatus, 80) || 'LOCAL_ONLY',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(!financeMembershipDocument?.exists ? { createdAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
+    }, { merge: true });
+  }
   intakeBatch.set(bookingRef, booking);
   intakeBatch.set(db.collection('jobEvents').doc(`public_${bookingRef.id}_created`), {
     jobId: bookingRef.id,
@@ -257,7 +473,15 @@ export const submitPublicBookingRequest = functions.runWith({
     type: 'JOB_CREATED',
     source: 'client',
     actorUserId: context.auth!.uid,
-    metadata: { publicRequest: true, clientId },
+    metadata: {
+      publicRequest: true,
+      clientId: clientId || null,
+      clientIdentityStatus: organization.status,
+      requestedByAgentId: agentId || null,
+      requesterIdentityStatus: agentIdentityStatus,
+      billingContactAgentId: financeAgentId || (billingEmail === email ? agentId || null : null),
+      financeIdentityStatus,
+    },
     createdAt: new Date().toISOString()
   });
   await intakeBatch.commit();
@@ -290,12 +514,14 @@ export const submitClientBookingRequest = functions.runWith({
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Client authentication is required');
   const user = await db.collection('users').doc(context.auth.uid).get();
   const userData = user.data() || {};
-  if (!user.exists || userData.status !== 'ACTIVE' || userData.role !== 'CLIENT' || !userData.profileId) {
-    throw new functions.https.HttpsError('permission-denied', 'An active client account is required');
+  if (!user.exists) throw new functions.https.HttpsError('not-found', 'Platform user not found');
+  const access = await resolveClientPortalAccess(context.auth.uid, userData);
+  if (!access.canRequest) {
+    throw new functions.https.HttpsError('permission-denied', 'This membership does not include requester access.');
   }
-  const clientId = String(userData.profileId);
-  const client = await db.collection('clients').doc(clientId).get();
-  if (!client.exists || ['SUSPENDED', 'INACTIVE', 'BLOCKED'].includes(String(client.data()?.status || '').toUpperCase())) {
+  const clientId = access.clientId;
+  const clientData = access.client;
+  if (['SUSPENDED', 'INACTIVE', 'BLOCKED'].includes(String(clientData.status || '').toUpperCase())) {
     throw new functions.https.HttpsError('failed-precondition', 'This client account cannot create bookings');
   }
 
@@ -305,24 +531,46 @@ export const submitClientBookingRequest = functions.runWith({
   if (!bookingInput.gdprConsent || !bookingInput.agreedToTerms) {
     throw new functions.https.HttpsError('failed-precondition', 'Consent and terms acceptance are required');
   }
-  const clientData = client.data() || {};
-  const email = cleanEmail(clientData.bookingEmail || clientData.email || userData.email);
+  let clientDepartmentId = cleanString(raw.clientDepartmentId, 160);
+  if (!clientDepartmentId && access.allowedDepartmentIds.length === 1) {
+    [clientDepartmentId] = access.allowedDepartmentIds;
+  }
+  if (clientDepartmentId && !access.allowedDepartmentIds.includes(clientDepartmentId)) {
+    throw new functions.https.HttpsError('permission-denied', 'The selected department is outside this membership scope.');
+  }
+  if (!clientDepartmentId && access.allowedDepartmentIds.length > 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Select the department requesting this booking.');
+  }
+  const department = access.departments.find(item => item.id === clientDepartmentId);
+  const requesterName = cleanString(access.agent?.displayName || userData.displayName, 200);
+  const requesterEmail = cleanEmail(access.agent?.email || userData.email);
+  const email = requesterEmail || cleanEmail(clientData.bookingEmail || clientData.email);
   await enforceRateLimit('CLIENT_BOOKING', context, email);
 
   const numbering = await allocateJobNumber(bookingInput.languageTo);
   const bookingRef = db.collection('bookings').doc();
   const isTranslation = bookingInput.serviceType.toLowerCase() === 'translation';
-  const contactName = cleanString(clientData.bookingContactName || clientData.contactPerson || userData.displayName, 200);
+  const contactName = requesterName || cleanString(clientData.bookingContactName || clientData.contactPerson || userData.displayName, 200);
   const clientName = cleanString(clientData.companyName || userData.displayName, 250);
   const booking = {
     ...bookingInput,
     id: bookingRef.id,
     clientId,
     clientName,
+    clientDepartmentId: clientDepartmentId || null,
+    clientDepartmentSource: clientDepartmentId ? 'CLIENT_PORTAL' : null,
+    requestedByAgentId: access.agentId || null,
+    requestedByAgentSource: access.agentId ? 'CLIENT_PORTAL' : null,
+    clientSnapshot: {
+      organizationName: clientName,
+      departmentName: cleanString(department?.data.name, 160),
+      requesterName: contactName,
+      requesterEmail: email,
+    },
     guestContact: {
       name: contactName,
       email,
-      phone: cleanString(clientData.bookingPhone || clientData.phone, 80),
+      phone: cleanString(access.agent?.phoneNumbers?.[0] || clientData.bookingPhone || clientData.phone, 80),
       organisation: clientName,
     },
     bookingRef: numbering.base,
@@ -346,7 +594,12 @@ export const submitClientBookingRequest = functions.runWith({
     type: 'JOB_CREATED',
     source: 'client_portal',
     actorUserId: context.auth.uid,
-    metadata: { clientId },
+    metadata: {
+      clientId,
+      clientDepartmentId: clientDepartmentId || null,
+      requestedByAgentId: access.agentId || null,
+      clientMembershipId: access.membershipId || null,
+    },
     createdAt: new Date().toISOString(),
   });
   await batch.commit();

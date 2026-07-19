@@ -11,7 +11,7 @@ export const ClientInvoiceDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { invoice, loading } = useClientInvoiceById(user?.profileId, id);
+  const { invoice, loading } = useClientInvoiceById(user?.clientId || user?.profileId, id);
 
   const handleDownload = () => {
     if (invoice) {

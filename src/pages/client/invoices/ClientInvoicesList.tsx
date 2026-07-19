@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 
 export const ClientInvoicesList = () => {
   const { user } = useAuth();
-  const { invoices, loading } = useClientInvoices(user?.profileId);
+  const { invoices, loading } = useClientInvoices(user?.clientId || user?.profileId);
 
   return (
     <div className="space-y-6">

@@ -38,6 +38,7 @@ const admin = __importStar(require("firebase-admin"));
 const crypto_1 = require("crypto");
 const bookingEmail_1 = require("../mail/bookingEmail");
 const interpreterMatcher_1 = require("./interpreterMatcher");
+const clientFinanceScope_1 = require("../clients/clientFinanceScope");
 const nowIso = () => new Date().toISOString();
 const text = (value, max = 500) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const clean = (value) => JSON.parse(JSON.stringify(value));
@@ -386,6 +387,9 @@ const createClientInvoiceDraft = async (input) => {
         const client = clientSnapshot.data() || {};
         const paymentTermsDays = Number(client.paymentTermsDays ?? finance.paymentTermsDays ?? 30);
         const dueDate = new Date(Date.now() + paymentTermsDays * 86400000).toISOString();
+        const freshBookingData = freshBooking.data() || {};
+        const hierarchy = (0, clientFinanceScope_1.projectClientFinanceHierarchy)([{ id: input.entityId, ...freshBookingData }]);
+        const lineHierarchy = (0, clientFinanceScope_1.projectClientInvoiceLineHierarchy)(freshBookingData);
         beforeSnapshot = {
             booking: { status: freshBooking.data()?.status || null, paymentStatus: freshBooking.data()?.paymentStatus || null },
             timesheets: eligible.map(doc => ({ id: doc.id, status: doc.data()?.status || null, readyForClientInvoice: doc.data()?.readyForClientInvoice === true })),
@@ -405,6 +409,7 @@ const createClientInvoiceDraft = async (input) => {
                 rate: units > 0 ? Number((lineAmount / units).toFixed(4)) : lineAmount,
                 lineAmount,
                 total: lineAmount,
+                ...lineHierarchy,
                 aiExecutionId: input.executionId,
             });
             transaction.update(timesheet.ref, {
@@ -447,6 +452,7 @@ const createClientInvoiceDraft = async (input) => {
             lineCount: eligible.length,
             financialIntegrityStatus: 'VERIFIED',
             referenceIntegrityStatus: 'VERIFIED',
+            ...hierarchy,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             createdBy: input.actorId,
             aiBeforeSnapshot: clean(beforeSnapshot),

@@ -1,14 +1,18 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { queueBookingStatusEmails } from '../mail/bookingEmail';
+import { resolveClientPortalAccess } from '../clients/clientPortalAccess';
+import { canManageClientBooking } from '../clients/clientPortalPolicy';
 
 const db = admin.firestore();
 
 export const cancelOwnBooking = functions.https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Client authentication is required');
   const user = await db.collection('users').doc(context.auth.uid).get();
-  if (!user.exists || user.data()?.status !== 'ACTIVE' || user.data()?.role !== 'CLIENT' || !user.data()?.profileId) {
-    throw new functions.https.HttpsError('permission-denied', 'An active client account is required');
+  if (!user.exists) throw new functions.https.HttpsError('not-found', 'Platform user not found');
+  const access = await resolveClientPortalAccess(context.auth.uid, user.data() || {});
+  if (!access.canViewBookings) {
+    throw new functions.https.HttpsError('permission-denied', 'This membership does not include booking access');
   }
   const bookingId = String(data?.bookingId || '').trim();
   const reason = String(data?.reason || 'Cancelled by client').trim().slice(0, 500);
@@ -21,8 +25,8 @@ export const cancelOwnBooking = functions.https.onCall(async (data, context) => 
     const booking = await transaction.get(bookingRef);
     if (!booking.exists) throw new functions.https.HttpsError('not-found', 'Booking not found');
     const current = booking.data() || {};
-    if (String(current.clientId || '') !== String(user.data()!.profileId)) {
-      throw new functions.https.HttpsError('permission-denied', 'This booking belongs to another client');
+    if (!canManageClientBooking(current, access)) {
+      throw new functions.https.HttpsError('permission-denied', 'This booking is outside your client membership scope');
     }
     if (current.status === 'CANCELLED') return { idempotent: true };
     if (!['INCOMING', 'OPENED', 'NEEDS_ASSIGNMENT', 'PENDING_ASSIGNMENT', 'ASSIGNMENT_PENDING', 'BOOKED', 'QUOTE_PENDING'].includes(String(current.status || ''))) {

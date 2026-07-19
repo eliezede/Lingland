@@ -239,6 +239,12 @@ export const ChatService = {
     return snap.empty ? null : getUserFromDoc(snap.docs[0].id, snap.docs[0].data());
   },
 
+  resolveUserById: async (userId: string): Promise<ChatParticipant | null> => {
+    if (!userId) return null;
+    const snap = await getDoc(doc(db, 'users', userId));
+    return snap.exists() ? getUserFromDoc(snap.id, snap.data()) : null;
+  },
+
   resolveUserByEmail: async (email: string): Promise<ChatParticipant | null> => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return null;

@@ -14,7 +14,7 @@ import { useChat } from '../../context/ChatContext';
 import {
   Search, Plus, Trash2, Briefcase,
   ExternalLink, MessageSquare, AlertCircle,
-  Building, Check, CreditCard
+  Building, Check, CreditCard, ScanSearch
 } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Table } from '../../components/ui/Table';
@@ -287,7 +287,16 @@ export const AdminClients = () => {
         title="Client CRM"
         subtitle="Account control for bookings, billing readiness and client data health."
         stats={{ label: "Rows", value: filteredClients.length }}
-      />
+      >
+        <Button
+          variant="secondary"
+          icon={ScanSearch}
+          size="sm"
+          onClick={() => navigate('/admin/clients/identity-audit')}
+        >
+          Identity audit
+        </Button>
+      </PageHeader>
 
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 lg:px-5 lg:pb-5">
       <div className="flex flex-col gap-2 border border-slate-200 bg-white p-2 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center">

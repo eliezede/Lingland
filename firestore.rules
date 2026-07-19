@@ -109,6 +109,20 @@ service cloud.firestore {
       );
     }
 
+    // Client hierarchy is admin-managed until membership-scoped portal rules
+    // replace the legacy profileId access model.
+    match /clientDepartments/{departmentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /clientAgents/{agentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /clientMemberships/{membershipId} {
+      allow read, write: if isAdmin();
+    }
+
     match /bookings/{bookingId} {
       allow read: if canReadBooking(resource.data);
       allow create: if isAdmin() || (

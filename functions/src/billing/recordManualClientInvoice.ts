@@ -1,5 +1,9 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import {
+  projectClientFinanceHierarchy,
+  projectClientInvoiceLineHierarchy,
+} from '../clients/clientFinanceScope';
 
 const db = admin.firestore();
 
@@ -54,6 +58,8 @@ export const recordManualClientInvoice = functions.https.onCall(async (data, con
     const paymentTermsDays = Number(client?.data()?.paymentTermsDays ?? settings.data()?.finance?.paymentTermsDays ?? 30);
     const dueDate = new Date(new Date(now).getTime() + Math.max(0, paymentTermsDays) * 86400000).toISOString();
     const reference = requestedReference || String(bookingData.clientInvoiceReference || bookingData.clientInvoiceNumber || `MANUAL-${bookingData.displayRef || bookingData.jobNumber || bookingId}`);
+    const hierarchy = projectClientFinanceHierarchy([{ id: bookingId, ...bookingData }]);
+    const lineHierarchy = projectClientInvoiceLineHierarchy(bookingData);
     const invoice = {
       organizationId: bookingData.organizationId || 'lingland-main',
       clientId: bookingData.clientId || '',
@@ -73,6 +79,7 @@ export const recordManualClientInvoice = functions.https.onCall(async (data, con
       financialIntegrityStatus: 'VERIFIED',
       referenceIntegrityStatus: 'VERIFIED',
       source: 'STAFF_MANUAL',
+      ...hierarchy,
       createdBy: context.auth!.uid,
       createdAt: now,
       updatedAt: now,
@@ -86,6 +93,7 @@ export const recordManualClientInvoice = functions.https.onCall(async (data, con
       units: Number(timesheet.data().unitsBillableToClient || 1),
       rate: 0,
       total: subtotal,
+      ...lineHierarchy,
       createdAt: now,
     });
     transaction.update(timesheet.ref, {

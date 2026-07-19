@@ -34,6 +34,9 @@ export const onMessageCreated = functions.firestore
         read: false,
         link,
         threadId,
+        ...(threadData.bookingId ? { bookingId: threadData.bookingId } : {}),
+        ...(threadData.clientId ? { clientId: threadData.clientId } : {}),
+        ...(threadData.departmentId ? { clientDepartmentIds: [threadData.departmentId] } : {}),
         createdAt,
       });
     });
