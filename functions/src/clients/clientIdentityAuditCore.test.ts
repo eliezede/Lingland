@@ -261,4 +261,30 @@ describe('client identity audit', () => {
     expect(audit.organizationCandidates).toHaveLength(0);
     expect(audit.summary).toMatchObject({ clientRecords: 1, mergedRecordsExcluded: 1 });
   });
+
+  it('keeps manually separated organisation partitions out of the candidate graph', () => {
+    const audit = buildClientIdentityAudit({
+      clients: [
+        { id: 'client-a', companyName: 'Example Council' },
+        { id: 'client-b', companyName: 'Example Council' },
+        { id: 'client-c', companyName: 'Example Council' },
+      ],
+      excludedOrganizationPairs: ['client-a|client-c', 'client-b|client-c'],
+    });
+
+    expect(audit.organizationCandidates).toHaveLength(1);
+    expect(audit.organizationCandidates[0].clientIds).toEqual(['client-a', 'client-b']);
+  });
+
+  it('does not recreate a candidate whose only pair was rejected by an administrator', () => {
+    const audit = buildClientIdentityAudit({
+      clients: [
+        { id: 'client-a', companyName: 'Example Council' },
+        { id: 'client-b', companyName: 'Example Council' },
+      ],
+      excludedOrganizationPairs: ['client-a|client-b'],
+    });
+
+    expect(audit.organizationCandidates).toHaveLength(0);
+  });
 });

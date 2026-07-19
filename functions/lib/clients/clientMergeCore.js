@@ -129,6 +129,11 @@ const buildClientMergePreview = (candidate, canonicalClientId, documents, depend
         hierarchySeed.totals.unresolvedContacts > 0 ? 'Contacts without a deterministic email remain in source snapshots and require manual classification.' : '',
         dependencyCount('clientInvoices') > 0 ? 'Financial records will keep their historical display snapshots; only the client relationship is reassigned.' : '',
     ].filter(Boolean)));
+    const secondApprovalReasons = [
+        candidate.mergeRisk === 'HIGH' ? 'The identity candidate is classified as high risk.' : '',
+        dependencies.length >= 100 ? `${dependencies.length} dependent records are in scope.` : '',
+        dependencyCount('clientInvoices') >= 10 ? `${dependencyCount('clientInvoices')} client invoices are in scope.` : '',
+    ].filter(Boolean);
     return {
         candidateId: candidate.id,
         candidateFingerprint: candidate.fingerprint,
@@ -138,6 +143,8 @@ const buildClientMergePreview = (candidate, canonicalClientId, documents, depend
         eligibility: effectiveEligibility,
         canExecute: candidate.executionEligibility !== 'BLOCKED',
         requiresReviewAcknowledgement: effectiveEligibility === 'REVIEW_REQUIRED',
+        requiresSecondApproval: secondApprovalReasons.length > 0,
+        secondApprovalReasons,
         confirmationPhrase: 'MERGE CLIENTS',
         blockers: candidate.blockers,
         warnings,

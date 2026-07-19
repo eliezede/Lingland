@@ -75,11 +75,11 @@ Invoices continue to link to `clientId`; optional department and agent reference
 
 ### Phase 2 - Canonical mapping and merge preparation
 
-- [ ] Add persistent review decisions: reject, split, and defer. Merge confirmation is implemented.
+- [x] Add persistent review decisions: reject, split, defer, reopen, review history, and deterministic exclusion of rejected/split record pairs.
 - [x] Create canonical client, department, agent, and membership manifests with backups and rollback ownership markers.
 - [x] Preview every protected client field winner and conflict before a write.
 - [x] Produce dependency rewrite counts, concurrency fingerprint, backups, and tested rollback payload.
-- [ ] Require a second administrator approval for high-risk groups.
+- [x] Require a second active Super Admin approval for high-risk groups and material financial/dependency footprints.
 
 ### Phase 3 - Non-destructive migration
 
@@ -134,6 +134,12 @@ Before any merge can execute:
 ## Current implementation boundary
 
 Audit refresh remains deliberately **read-only**. Organisation consolidation is available only through a live preview and is non-destructive: the canonical client remains active, source records become redirects, relationship IDs are reassigned, and a rollback manifest is written first. Conflicting Sage identities and source records linked to portal users are blocked.
+
+Identity review decisions are now durable operational records rather than temporary UI filters. Staff can defer a candidate with an optional revisit date, record that organisations are distinct, split a mixed candidate into explicit groups, and reopen any active decision. Rejected and split cross-group pairs are excluded deterministically from future audit runs, while stale decisions remain visible in review history instead of silently affecting changed data.
+
+Material merges use a two-person rule. High-risk identity groups, previews with at least 100 dependent records, or previews containing at least 10 client invoices require a second active `SUPER_ADMIN`. Approval is bound to the exact candidate fingerprint, canonical client, selected field winners, and dependency snapshot for 24 hours. Requester and reviewer must be different accounts. Execution atomically reserves both the approval and a fingerprint-based execution lock before any migration write; completion consumes the approval, failure blocks retries until the manifest is inspected or restored, and rollback releases the reviewed path as `ROLLED_BACK`.
+
+Staged deployments are fail-safe. A frontend receiving the previous audit contract normalises the missing decision history to an empty state; a merge preview missing the new approval-policy fields is treated as requiring approval and cannot execute. This prevents a temporary frontend/backend version mismatch from crashing the audit or bypassing the two-person gate.
 
 The executable merge now creates and backs up departments, agents, shared mailboxes, and memberships before redirecting a source client. Historical jobs receive department/requester IDs only when deterministic evidence exists. Admins can create or edit departments and agent memberships from the canonical client profile through validated Cloud Functions; every manual hierarchy write creates an `auditEvents` entry. Institution-family matching can now join a named ward/site to its parent only when organisation-name evidence is corroborated by both the same normalised phone and the same specific email domain.
 

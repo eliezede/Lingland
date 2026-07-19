@@ -24,6 +24,7 @@ describe('client merge preview', () => {
   it('preserves canonical values and fills only empty canonical fields', () => {
     const preview = buildClientMergePreview(candidate, 'canonical', documents, dependencies);
     expect(preview.canExecute).toBe(true);
+    expect(preview.requiresSecondApproval).toBe(false);
     expect(preview.canonicalPatch).toMatchObject({
       billingAddress: '1 High Street, SO14 1AA',
       recordState: 'ACTIVE',
@@ -74,5 +75,18 @@ describe('client merge preview', () => {
       sourceClientId: 'duplicate',
       overridesCanonical: true,
     });
+  });
+
+  it('requires a second administrator for a material dependency footprint', () => {
+    const materialDependencies = Array.from({ length: 100 }, (_, index) => ({
+      collection: 'bookings',
+      id: `job-${index}`,
+      clientId: 'duplicate',
+      version: `v-${index}`,
+    }));
+    const preview = buildClientMergePreview(candidate, 'canonical', documents, materialDependencies);
+
+    expect(preview.requiresSecondApproval).toBe(true);
+    expect(preview.secondApprovalReasons).toContain('100 dependent records are in scope.');
   });
 });

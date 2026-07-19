@@ -5,6 +5,52 @@ export type ClientIdentityCandidateKind = 'ORGANIZATION' | 'AGENT';
 export type ClientIdentityConfidence = 'HIGH' | 'MEDIUM' | 'REVIEW';
 export type ClientIdentityRisk = 'LOW' | 'MEDIUM' | 'HIGH';
 export type ClientMergeEligibility = 'READY' | 'REVIEW_REQUIRED' | 'BLOCKED';
+export type ClientIdentityDecisionType = 'DEFERRED' | 'REJECTED' | 'SPLIT';
+export type ClientMergeApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'IN_PROGRESS' | 'CONSUMED' | 'EXPIRED' | 'ROLLED_BACK';
+
+export interface ClientMergeApproval {
+  id: string;
+  status: ClientMergeApprovalStatus;
+  requestedBy: string;
+  requestedByName: string;
+  requestedAt: string;
+  reviewedBy: string;
+  reviewedByName: string;
+  reviewedAt: string;
+  reviewNote: string;
+  expiresAt: string;
+}
+
+export interface ClientIdentityReviewState {
+  decision: ClientIdentityDecisionType;
+  reason: string;
+  notes: string;
+  revisitAt: string;
+  decidedBy: string;
+  decidedAt: string;
+}
+
+export interface ClientIdentityDecision {
+  id: string;
+  candidateId: string;
+  candidateFingerprint: string;
+  kind: ClientIdentityCandidateKind;
+  decision: ClientIdentityDecisionType;
+  candidateLabel: string;
+  clientIds: string[];
+  partitions: string[][];
+  reason: string;
+  notes: string;
+  revisitAt: string;
+  active: boolean;
+  decidedBy: string;
+  decidedByName: string;
+  decidedAt: string;
+  updatedBy: string;
+  updatedByName: string;
+  updatedAt: string;
+  stale: boolean;
+}
 
 export interface ClientIdentityEvidence {
   type: 'SAGE_ACCOUNT' | 'AIRTABLE_CLIENT_KEY' | 'NAME_AND_POSTCODE' | 'COMPANY_NAME' | 'ORGANIZATION_ALIAS' | 'PHONE' | 'ADDRESS' | 'EMAIL_DOMAIN' | 'NAME_SIMILARITY' | 'CONTACT_EMAIL' | 'SHARED_MAILBOX' | 'CONFLICT';
@@ -63,6 +109,7 @@ export interface ClientIdentityCandidate {
     invoicesToReassign: number;
     usersToReassign: number;
   };
+  reviewDecision?: ClientIdentityReviewState;
 }
 
 export interface ClientIdentityAuditResult {
@@ -90,6 +137,13 @@ export interface ClientIdentityAuditResult {
   };
   organizationCandidates: ClientIdentityCandidate[];
   agentCandidates: ClientIdentityCandidate[];
+  decisions: ClientIdentityDecision[];
+  decisionSummary: {
+    deferred: number;
+    rejected: number;
+    split: number;
+    stale: number;
+  };
 }
 
 export interface ClientMergeFieldDecision {
@@ -164,6 +218,9 @@ export interface ClientMergePreview {
   eligibility: ClientMergeEligibility;
   canExecute: boolean;
   requiresReviewAcknowledgement: boolean;
+  requiresSecondApproval: boolean;
+  secondApprovalReasons: string[];
+  approval: ClientMergeApproval | null;
   confirmationPhrase: string;
   blockers: string[];
   warnings: string[];
@@ -318,6 +375,24 @@ export interface ClientInvoiceIdentityResolutionResult {
 let pendingAudit: Promise<ClientIdentityAuditResult> | null = null;
 let cachedAudit: { value: ClientIdentityAuditResult; expiresAt: number } | null = null;
 
+export const normalizeAuditResult = (value: ClientIdentityAuditResult): ClientIdentityAuditResult => ({
+  ...value,
+  decisions: Array.isArray(value.decisions) ? value.decisions : [],
+  decisionSummary: value.decisionSummary || { deferred: 0, rejected: 0, split: 0, stale: 0 },
+});
+
+export const normalizeMergePreview = (value: ClientMergePreview): ClientMergePreview => {
+  const approvalPolicyAvailable = typeof value.requiresSecondApproval === 'boolean';
+  return {
+    ...value,
+    requiresSecondApproval: approvalPolicyAvailable ? value.requiresSecondApproval : true,
+    secondApprovalReasons: approvalPolicyAvailable && Array.isArray(value.secondApprovalReasons)
+      ? value.secondApprovalReasons
+      : ['The merge approval policy is not available yet. Refresh after the backend deployment completes.'],
+    approval: value.approval || null,
+  };
+};
+
 const requestAudit = async () => {
   const callable = httpsCallable<Record<string, never>, ClientIdentityAuditResult>(
     functions,
@@ -325,8 +400,9 @@ const requestAudit = async () => {
     { timeout: 120000 },
   );
   const response = await callable({});
-  cachedAudit = { value: response.data, expiresAt: Date.now() + 30_000 };
-  return response.data;
+  const value = normalizeAuditResult(response.data);
+  cachedAudit = { value, expiresAt: Date.now() + 30_000 };
+  return value;
 };
 
 export const ClientIdentityAuditService = {
@@ -344,7 +420,54 @@ export const ClientIdentityAuditService = {
       'getClientMergePreview',
       { timeout: 300000 },
     );
-    return (await callable({ candidateId, canonicalClientId, fieldSelections })).data;
+    return normalizeMergePreview((await callable({ candidateId, canonicalClientId, fieldSelections })).data);
+  },
+  requestMergeApproval: async (input: {
+    candidateId: string;
+    canonicalClientId: string;
+    expectedFingerprint: string;
+    fieldSelections: Record<string, string>;
+  }): Promise<{ success: true; required: boolean; approval: ClientMergeApproval | null }> => {
+    const callable = httpsCallable<typeof input, { success: true; required: boolean; approval: ClientMergeApproval | null }>(
+      functions,
+      'requestClientMergeApproval',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  reviewMergeApproval: async (
+    approvalId: string,
+    decision: 'APPROVE' | 'REJECT',
+    note = '',
+  ): Promise<{ success: true; approval: ClientMergeApproval }> => {
+    const callable = httpsCallable<{
+      approvalId: string;
+      decision: 'APPROVE' | 'REJECT';
+      note: string;
+    }, { success: true; approval: ClientMergeApproval }>(
+      functions,
+      'reviewClientMergeApproval',
+      { timeout: 300000 },
+    );
+    return (await callable({ approvalId, decision, note })).data;
+  },
+  saveDecision: async (input: {
+    candidateId: string;
+    expectedFingerprint?: string;
+    decision: ClientIdentityDecisionType | 'REOPEN';
+    reason?: string;
+    notes?: string;
+    revisitAt?: string;
+    partitions?: string[][];
+  }): Promise<{ success: true; candidateId: string; active: boolean }> => {
+    const callable = httpsCallable<typeof input, { success: true; candidateId: string; active: boolean }>(
+      functions,
+      'saveClientIdentityDecision',
+      { timeout: 120000 },
+    );
+    const result = (await callable(input)).data;
+    cachedAudit = null;
+    return result;
   },
   executeMerge: async (input: {
     candidateId: string;

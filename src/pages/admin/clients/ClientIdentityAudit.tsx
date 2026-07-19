@@ -5,12 +5,15 @@ import {
   ArrowLeft,
   BriefcaseBusiness,
   Building2,
+  CircleOff,
+  Clock3,
   CheckCircle2,
   ChevronRight,
   Combine,
   Database,
   ExternalLink,
   FileSearch,
+  GitBranch,
   Link2,
   ReceiptText,
   RefreshCw,
@@ -33,6 +36,8 @@ import {
   ClientMergePreview,
   ClientMergeResult,
   ClientIdentityRisk,
+  ClientIdentityDecision,
+  ClientIdentityDecisionType,
   ClientHierarchyIntegrityResult,
   ClientFinanceHierarchyReconciliation,
   ClientInvoiceIdentityBlocker,
@@ -40,6 +45,7 @@ import {
 } from '../../../services/clientIdentityAuditService';
 import { ClientService } from '../../../services/clientService';
 import { Client } from '../../../types';
+import { useAuth } from '../../../context/AuthContext';
 
 type AuditTab = 'ORGANIZATIONS' | 'AGENTS';
 type RiskFilter = 'ALL' | ClientIdentityRisk;
@@ -110,6 +116,7 @@ const EvidenceSummary = ({ candidate }: { candidate: ClientIdentityCandidate }) 
 
 export const ClientIdentityAudit = () => {
   const navigate = useNavigate();
+  const { user, isSuperAdmin } = useAuth();
   const [audit, setAudit] = useState<ClientIdentityAuditResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -144,6 +151,16 @@ export const ClientIdentityAudit = () => {
   const [identityResolverOpen, setIdentityResolverOpen] = useState(false);
   const [identityResolverLoading, setIdentityResolverLoading] = useState(false);
   const [identityResolverError, setIdentityResolverError] = useState('');
+  const [decisionMode, setDecisionMode] = useState<ClientIdentityDecisionType | null>(null);
+  const [decisionReason, setDecisionReason] = useState('');
+  const [decisionNotes, setDecisionNotes] = useState('');
+  const [decisionRevisitAt, setDecisionRevisitAt] = useState('');
+  const [splitAssignments, setSplitAssignments] = useState<Record<string, string>>({});
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [decisionError, setDecisionError] = useState('');
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
+  const [approvalReviewNote, setApprovalReviewNote] = useState('');
 
   const loadAudit = useCallback(async (forceRefresh = false) => {
     setLoading(true);
@@ -348,6 +365,10 @@ export const ClientIdentityAudit = () => {
   const inspectedAt = audit?.generatedAt
     ? new Date(audit.generatedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
     : '';
+  const selectedDecision = selected ? audit?.decisions?.find(decision => decision.candidateId === selected.id) : undefined;
+  const splitGroupCount = decisionMode === 'SPLIT'
+    ? new Set(selected?.records.map(record => splitAssignments[record.id]).filter(Boolean)).size
+    : 0;
 
   const closeCandidate = () => {
     setSelected(null);
@@ -358,12 +379,74 @@ export const ClientIdentityAudit = () => {
     setMergeConfirmation('');
     setReviewAcknowledged(false);
     setRollbackConfirmation('');
+    setDecisionMode(null);
+    setDecisionReason('');
+    setDecisionNotes('');
+    setDecisionRevisitAt('');
+    setSplitAssignments({});
+    setDecisionError('');
+    setApprovalLoading(false);
+    setApprovalError('');
+    setApprovalReviewNote('');
   };
 
   const openCandidate = (candidate: ClientIdentityCandidate) => {
     closeCandidate();
     setSelected(candidate);
     setCanonicalClientId(candidate.recommendedClientId);
+    setSplitAssignments(Object.fromEntries(candidate.records.map((record, index) => [record.id, String(index + 1)])));
+  };
+
+  const saveDecision = async () => {
+    if (!selected || !decisionMode) return;
+    setDecisionLoading(true);
+    setDecisionError('');
+    const partitions = decisionMode === 'SPLIT'
+      ? Object.values(selected.records.reduce<Record<string, string[]>>((groups, record) => {
+        const group = splitAssignments[record.id] || '';
+        if (!group) return groups;
+        groups[group] = [...(groups[group] || []), record.id];
+        return groups;
+      }, {}))
+      : undefined;
+    try {
+      await ClientIdentityAuditService.saveDecision({
+        candidateId: selected.id,
+        expectedFingerprint: selected.fingerprint,
+        decision: decisionMode,
+        reason: decisionReason,
+        notes: decisionNotes,
+        revisitAt: decisionMode === 'DEFERRED' && decisionRevisitAt
+          ? new Date(`${decisionRevisitAt}T12:00:00`).toISOString()
+          : '',
+        partitions,
+      });
+      closeCandidate();
+      await loadAudit(true);
+    } catch (decisionFailure) {
+      console.error('Failed to save client identity decision', decisionFailure);
+      setDecisionError(decisionFailure instanceof Error ? decisionFailure.message : 'The review decision could not be saved.');
+    } finally {
+      setDecisionLoading(false);
+    }
+  };
+
+  const reopenDecision = async (decision: ClientIdentityDecision) => {
+    setDecisionLoading(true);
+    setError('');
+    try {
+      await ClientIdentityAuditService.saveDecision({
+        candidateId: decision.candidateId,
+        decision: 'REOPEN',
+      });
+      if (selected?.id === decision.candidateId) closeCandidate();
+      await loadAudit(true);
+    } catch (decisionFailure) {
+      console.error('Failed to reopen client identity decision', decisionFailure);
+      setError(decisionFailure instanceof Error ? decisionFailure.message : 'The review decision could not be reopened.');
+    } finally {
+      setDecisionLoading(false);
+    }
   };
 
   const chooseCanonicalClient = (clientId: string) => {
@@ -373,6 +456,8 @@ export const ClientIdentityAudit = () => {
     setMergeError('');
     setMergeConfirmation('');
     setReviewAcknowledged(false);
+    setApprovalError('');
+    setApprovalReviewNote('');
   };
 
   const prepareMerge = async (fieldSelections: Record<string, string> = {}) => {
@@ -381,6 +466,8 @@ export const ClientIdentityAudit = () => {
     setMergeError('');
     setMergeConfirmation('');
     setReviewAcknowledged(false);
+    setApprovalError('');
+    setApprovalReviewNote('');
     try {
       setMergePreview(await ClientIdentityAuditService.getMergePreview(selected.id, canonicalClientId, fieldSelections));
     } catch (previewError) {
@@ -388,6 +475,46 @@ export const ClientIdentityAudit = () => {
       setMergeError(previewError instanceof Error ? previewError.message : 'The merge preview could not be prepared.');
     } finally {
       setMergeLoading(false);
+    }
+  };
+
+  const requestMergeApproval = async () => {
+    if (!selected || !mergePreview) return;
+    setApprovalLoading(true);
+    setApprovalError('');
+    try {
+      const result = await ClientIdentityAuditService.requestMergeApproval({
+        candidateId: selected.id,
+        canonicalClientId: mergePreview.canonicalClientId,
+        expectedFingerprint: mergePreview.expectedFingerprint,
+        fieldSelections: mergePreview.fieldSelections,
+      });
+      setMergePreview(current => current ? { ...current, approval: result.approval } : current);
+    } catch (approvalFailure) {
+      console.error('Failed to request client merge approval', approvalFailure);
+      setApprovalError(approvalFailure instanceof Error ? approvalFailure.message : 'The second approval could not be requested.');
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  const reviewMergeApproval = async (decision: 'APPROVE' | 'REJECT') => {
+    if (!mergePreview?.approval) return;
+    setApprovalLoading(true);
+    setApprovalError('');
+    try {
+      const result = await ClientIdentityAuditService.reviewMergeApproval(
+        mergePreview.approval.id,
+        decision,
+        approvalReviewNote,
+      );
+      setMergePreview(current => current ? { ...current, approval: result.approval } : current);
+      setApprovalReviewNote('');
+    } catch (approvalFailure) {
+      console.error('Failed to review client merge approval', approvalFailure);
+      setApprovalError(approvalFailure instanceof Error ? approvalFailure.message : 'The second approval could not be reviewed.');
+    } finally {
+      setApprovalLoading(false);
     }
   };
 
@@ -444,7 +571,7 @@ export const ClientIdentityAudit = () => {
         <div className="flex flex-col gap-2 border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-2">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
-            <p><strong>Safe by default:</strong> refreshing the audit is read-only. A merge requires a live preview, fingerprint, Super Admin confirmation, and rollback manifest.</p>
+            <p><strong>Safe by default:</strong> refreshing the audit is read-only. A merge requires a live preview, fingerprint, Super Admin confirmation, second approval when material, and rollback manifest.</p>
           </div>
           {inspectedAt && <span className="shrink-0 text-xs text-emerald-700 dark:text-emerald-300">Generated {inspectedAt}</span>}
         </div>
@@ -523,6 +650,13 @@ export const ClientIdentityAudit = () => {
           </div>
         )}
 
+        {error && audit && (
+          <div className="flex items-start gap-2 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
         {loading && !audit ? (
           <div className="flex min-h-[320px] flex-1 flex-col items-center justify-center gap-3 border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <Spinner size="lg" />
@@ -547,6 +681,42 @@ export const ClientIdentityAudit = () => {
               <Metric label="Jobs in scope" value={audit.summary.jobsAffected} icon={BriefcaseBusiness} />
               <Metric label="Invoices in scope" value={audit.summary.invoicesAffected} icon={ReceiptText} />
             </div>
+
+            {(audit.decisions || []).length > 0 && (
+              <details className="border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    <Clock3 className="h-4 w-4 shrink-0 text-blue-600" />
+                    Saved review decisions
+                  </span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    {audit.decisionSummary?.deferred || 0} deferred · {audit.decisionSummary?.rejected || 0} not duplicates · {audit.decisionSummary?.split || 0} split
+                  </span>
+                </summary>
+                <div className="max-h-64 divide-y divide-slate-200 overflow-y-auto border-t border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                  {(audit.decisions || []).map(decision => (
+                    <div key={decision.id} className="grid gap-2 px-3 py-2.5 text-xs sm:grid-cols-[minmax(150px,0.8fr)_minmax(180px,1.4fr)_minmax(130px,0.7fr)_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-900 dark:text-white">{decision.candidateLabel || decision.candidateId}</p>
+                        <p className="mt-0.5 font-mono text-[9px] text-slate-400">{decision.clientIds.length} source records</p>
+                      </div>
+                      <div className="min-w-0">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase ${decision.decision === 'DEFERRED' ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300' : 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}>
+                          {decision.decision === 'REJECTED' ? 'Not duplicates' : decision.decision === 'SPLIT' ? 'Split recorded' : 'Deferred'}
+                        </span>
+                        {decision.stale && <span className="ml-1.5 text-[9px] font-bold uppercase text-amber-700 dark:text-amber-300">New evidence</span>}
+                        <p className="mt-1 truncate text-slate-500 dark:text-slate-400" title={decision.reason}>{decision.reason}</p>
+                      </div>
+                      <div className="text-slate-500 dark:text-slate-400">
+                        <p>{decision.decidedByName || 'Administrator'}</p>
+                        <p className="mt-0.5 text-[10px]">{new Date(decision.updatedAt || decision.decidedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                      </div>
+                      <Button variant="secondary" size="sm" icon={Undo2} disabled={decisionLoading} onClick={() => void reopenDecision(decision)}>Reopen</Button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
 
             <div className="flex min-h-0 flex-1 flex-col border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
               <div className="flex flex-col gap-2 border-b border-slate-200 p-2 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
@@ -629,6 +799,7 @@ export const ClientIdentityAudit = () => {
                                 <span className="block truncate text-sm font-semibold text-slate-950 group-hover:text-blue-700 dark:text-white dark:group-hover:text-blue-300">{candidate.label}</span>
                                 <span className="mt-1 flex flex-wrap items-center gap-2">
                                   <IdentityBadge value={candidate.confidence} />
+                                  {candidate.reviewDecision?.decision === 'DEFERRED' && <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">Deferred</span>}
                                   {candidate.kind === 'ORGANIZATION' && <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${eligibilityClasses[candidate.executionEligibility]}`}>{eligibilityLabel[candidate.executionEligibility]}</span>}
                                   <span className={`text-[10px] font-bold uppercase ${riskClasses[candidate.mergeRisk]}`}>{candidate.mergeRisk.toLowerCase()} risk</span>
                                 </span>
@@ -665,6 +836,7 @@ export const ClientIdentityAudit = () => {
                               <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{candidate.label}</p>
                               <div className="mt-1 flex flex-wrap items-center gap-2">
                                 <IdentityBadge value={candidate.confidence} />
+                                {candidate.reviewDecision?.decision === 'DEFERRED' && <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">Deferred</span>}
                                 {candidate.kind === 'ORGANIZATION' && <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${eligibilityClasses[candidate.executionEligibility]}`}>{eligibilityLabel[candidate.executionEligibility]}</span>}
                                 <span className={`text-[10px] font-bold uppercase ${riskClasses[candidate.mergeRisk]}`}>{candidate.mergeRisk.toLowerCase()} risk</span>
                               </div>
@@ -703,12 +875,23 @@ export const ClientIdentityAudit = () => {
             ) : mergePreview ? (
               <>
                 <Button variant="secondary" onClick={() => { setMergePreview(null); setMergeError(''); }}>Back</Button>
-                <Button icon={Combine} isLoading={mergeLoading} disabled={!mergePreview.canExecute || mergeConfirmation.toUpperCase() !== mergePreview.confirmationPhrase || (mergePreview.requiresReviewAcknowledgement && !reviewAcknowledged)} onClick={() => void executeMerge()}>Merge records</Button>
+                <Button
+                  icon={Combine}
+                  isLoading={mergeLoading}
+                  disabled={
+                    !isSuperAdmin
+                    || !mergePreview.canExecute
+                    || mergeConfirmation.toUpperCase() !== mergePreview.confirmationPhrase
+                    || (mergePreview.requiresReviewAcknowledgement && !reviewAcknowledged)
+                    || (mergePreview.requiresSecondApproval && mergePreview.approval?.status !== 'APPROVED')
+                  }
+                  onClick={() => void executeMerge()}
+                >Merge records</Button>
               </>
             ) : (
               <>
                 <Button variant="secondary" onClick={closeCandidate}>Close</Button>
-                {selected.kind === 'ORGANIZATION' && <Button icon={FileSearch} isLoading={mergeLoading} disabled={selected.executionEligibility === 'BLOCKED' || !canonicalClientId} onClick={() => void prepareMerge()}>Prepare merge preview</Button>}
+                {selected.kind === 'ORGANIZATION' && <Button icon={FileSearch} isLoading={mergeLoading} disabled={selected.executionEligibility === 'BLOCKED' || !canonicalClientId || Boolean(selected.reviewDecision)} onClick={() => void prepareMerge()}>Prepare merge preview</Button>}
               </>
             )}
           </div>
@@ -738,6 +921,102 @@ export const ClientIdentityAudit = () => {
               </div>
             )}
 
+            {!mergePreview && !mergeResult && (
+              <section className="border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Review disposition</h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Save the operational decision so the same false positive does not return on every audit refresh.</p>
+                  </div>
+                  {selectedDecision ? (
+                    <Button variant="secondary" size="sm" icon={Undo2} isLoading={decisionLoading} onClick={() => void reopenDecision(selectedDecision)}>Reopen review</Button>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button variant="secondary" size="sm" icon={Clock3} onClick={() => { setDecisionMode('DEFERRED'); setDecisionError(''); }}>Defer</Button>
+                      {selected.kind === 'ORGANIZATION' && <Button variant="secondary" size="sm" icon={CircleOff} onClick={() => { setDecisionMode('REJECTED'); setDecisionError(''); }}>Not duplicates</Button>}
+                      {selected.kind === 'ORGANIZATION' && <Button variant="secondary" size="sm" icon={GitBranch} onClick={() => { setDecisionMode('SPLIT'); setDecisionError(''); }}>Split group</Button>}
+                    </div>
+                  )}
+                </div>
+
+                {selectedDecision && (
+                  <div className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+                    <p className="font-semibold">{selectedDecision.decision === 'DEFERRED' ? 'Review deferred' : 'Decision saved'}</p>
+                    <p>{selectedDecision.reason}</p>
+                    {selectedDecision.revisitAt && <p className="mt-1 text-blue-700 dark:text-blue-300">Revisit {new Date(selectedDecision.revisitAt).toLocaleDateString('en-GB', { dateStyle: 'medium' })}</p>}
+                  </div>
+                )}
+
+                {decisionMode && !selectedDecision && (
+                  <div className="mt-3 space-y-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {decisionMode === 'DEFERRED' ? 'Defer this review' : decisionMode === 'REJECTED' ? 'Confirm distinct organisations' : 'Define organisation groups'}
+                        </p>
+                        <p className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          {decisionMode === 'DEFERRED'
+                            ? 'The candidate remains visible but merge preparation is paused until reopened.'
+                            : decisionMode === 'REJECTED'
+                              ? 'Every source record will be treated as a distinct organisation in future audits.'
+                              : 'Records in different groups will no longer be connected; records in the same group remain eligible for review.'}
+                        </p>
+                      </div>
+                      <button type="button" aria-label="Cancel review decision" onClick={() => { setDecisionMode(null); setDecisionError(''); }} className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white">
+                        <CircleOff className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {decisionMode === 'SPLIT' && (
+                      <div className="divide-y divide-slate-200 border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+                        {selected.records.map(record => (
+                          <label key={record.id} className="grid gap-2 px-3 py-2.5 text-xs sm:grid-cols-[minmax(0,1fr)_120px] sm:items-center">
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold text-slate-900 dark:text-white">{record.companyName}</span>
+                              <span className="block truncate font-mono text-[9px] text-slate-400">{record.id}</span>
+                            </span>
+                            <select
+                              aria-label={`Group for ${record.companyName}`}
+                              value={splitAssignments[record.id] || ''}
+                              onChange={event => setSplitAssignments(current => ({ ...current, [record.id]: event.target.value }))}
+                              className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                            >
+                              {selected.records.map((_, index) => <option key={index + 1} value={String(index + 1)}>Group {index + 1}</option>)}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Decision reason
+                      <input value={decisionReason} onChange={event => setDecisionReason(event.target.value)} maxLength={500} placeholder="Evidence reviewed and operational reason" className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Notes <span className="font-normal text-slate-400">(optional)</span>
+                      <textarea value={decisionNotes} onChange={event => setDecisionNotes(event.target.value)} maxLength={3000} rows={2} className="mt-1 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                    </label>
+                    {decisionMode === 'DEFERRED' && (
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Revisit date <span className="font-normal text-slate-400">(optional)</span>
+                        <input type="date" value={decisionRevisitAt} onChange={event => setDecisionRevisitAt(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                      </label>
+                    )}
+                    {decisionError && <div className="flex items-start gap-2 border border-red-200 bg-red-50 p-2.5 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{decisionError}</div>}
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        icon={decisionMode === 'DEFERRED' ? Clock3 : decisionMode === 'REJECTED' ? CircleOff : GitBranch}
+                        isLoading={decisionLoading}
+                        disabled={decisionReason.trim().length < 5 || (decisionMode === 'SPLIT' && splitGroupCount < 2)}
+                        onClick={() => void saveDecision()}
+                      >Save decision</Button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
             {mergeError && (
               <div className="flex items-start gap-2 border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -745,9 +1024,12 @@ export const ClientIdentityAudit = () => {
               </div>
             )}
 
-            <section>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Decision signals</h3>
-              <div className="mt-2 divide-y divide-slate-200 border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+            <details key={selected.id} open={selected.evidence.length <= 6} className="border border-slate-200 dark:border-slate-800">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-900">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Decision signals</span>
+                <span className="text-[10px] font-semibold text-slate-400">{quantityLabel(selected.evidence.length, 'signal')}</span>
+              </summary>
+              <div className="divide-y divide-slate-200 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-800">
                 {selected.evidence.map((evidence, index) => (
                   <div key={`${evidence.type}-${evidence.value}-${index}`} className="flex items-start gap-3 px-3 py-2.5">
                     {evidence.strength === 'RISK' ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" /> : <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />}
@@ -758,7 +1040,7 @@ export const ClientIdentityAudit = () => {
                   </div>
                 ))}
               </div>
-            </section>
+            </details>
 
             <section>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Dependency impact</h3>
@@ -944,17 +1226,91 @@ export const ClientIdentityAudit = () => {
                   </div>
                 </div>
 
+                {mergePreview.requiresSecondApproval && (
+                  <div className="border-y border-blue-200 bg-blue-50/70 px-3 py-3 dark:border-blue-900/70 dark:bg-blue-950/25">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700 dark:text-blue-300" />
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-semibold text-slate-950 dark:text-white">Two-person approval required</h4>
+                          <p className="mt-0.5 text-[11px] leading-5 text-slate-600 dark:text-slate-300">A different active Super Admin must approve this exact canonical record, field selection, and dependency snapshot.</p>
+                        </div>
+                      </div>
+                      <span className={`inline-flex w-fit shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${
+                        mergePreview.approval?.status === 'APPROVED'
+                          ? 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+                          : mergePreview.approval?.status === 'REJECTED' || mergePreview.approval?.status === 'EXPIRED'
+                            ? 'border-red-200 bg-red-100 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
+                            : 'border-blue-200 bg-white text-blue-800 dark:border-blue-900 dark:bg-slate-950 dark:text-blue-300'
+                      }`}>{mergePreview.approval?.status.replace('_', ' ') || 'Not requested'}</span>
+                    </div>
+
+                    <ul className="mt-2 space-y-1 pl-6 text-[11px] leading-5 text-slate-600 dark:text-slate-300">
+                      {mergePreview.secondApprovalReasons.map(reason => <li key={reason} className="list-disc">{reason}</li>)}
+                    </ul>
+
+                    {mergePreview.approval && (
+                      <div className="mt-3 grid gap-2 border-t border-blue-200 pt-3 text-[11px] text-slate-600 dark:border-blue-900/70 dark:text-slate-300 sm:grid-cols-2">
+                        <p><span className="font-semibold text-slate-800 dark:text-slate-100">Requested by:</span> {mergePreview.approval.requestedByName || 'Super Admin'}</p>
+                        <p><span className="font-semibold text-slate-800 dark:text-slate-100">Valid until:</span> {new Date(mergePreview.approval.expiresAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                        {mergePreview.approval.reviewedByName && <p><span className="font-semibold text-slate-800 dark:text-slate-100">Reviewed by:</span> {mergePreview.approval.reviewedByName}</p>}
+                        {mergePreview.approval.reviewNote && <p className="sm:col-span-2"><span className="font-semibold text-slate-800 dark:text-slate-100">Review note:</span> {mergePreview.approval.reviewNote}</p>}
+                      </div>
+                    )}
+
+                    {(!mergePreview.approval || ['REJECTED', 'EXPIRED', 'ROLLED_BACK'].includes(mergePreview.approval.status)) && (
+                      <div className="mt-3 flex flex-col gap-2 border-t border-blue-200 pt-3 dark:border-blue-900/70 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300">Requesting approval freezes this preview for 24 hours. Any field or source change requires a new request.</p>
+                        {isSuperAdmin ? (
+                          <Button className="shrink-0" size="sm" icon={ShieldCheck} isLoading={approvalLoading} onClick={() => void requestMergeApproval()}>Request approval</Button>
+                        ) : (
+                          <span className="text-[10px] font-bold uppercase text-slate-500">Super Admin action</span>
+                        )}
+                      </div>
+                    )}
+
+                    {mergePreview.approval?.status === 'PENDING' && (
+                      <div className="mt-3 border-t border-blue-200 pt-3 dark:border-blue-900/70">
+                        {user?.id === mergePreview.approval.requestedBy ? (
+                          <p className="flex items-start gap-2 text-[11px] leading-5 text-blue-800 dark:text-blue-200"><Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" />Waiting for review by a different Super Admin.</p>
+                        ) : isSuperAdmin ? (
+                          <div className="space-y-2">
+                            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                              Review note <span className="font-normal text-slate-500">(optional)</span>
+                              <textarea value={approvalReviewNote} onChange={event => setApprovalReviewNote(event.target.value)} maxLength={1000} rows={2} className="mt-1 w-full resize-y rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-blue-900 dark:bg-slate-950 dark:text-white" />
+                            </label>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button variant="danger" size="sm" icon={CircleOff} isLoading={approvalLoading} onClick={() => void reviewMergeApproval('REJECT')}>Reject</Button>
+                              <Button size="sm" icon={ShieldCheck} isLoading={approvalLoading} onClick={() => void reviewMergeApproval('APPROVE')}>Approve exact preview</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-600 dark:text-slate-300">Waiting for review by a different Super Admin.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {mergePreview.approval?.status === 'APPROVED' && (
+                      <p className="mt-3 flex items-start gap-2 border-t border-emerald-200 pt-3 text-[11px] leading-5 text-emerald-800 dark:border-emerald-900/70 dark:text-emerald-200"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />The exact preview is approved. Execution will atomically consume this approval.</p>
+                    )}
+                    {mergePreview.approval?.status === 'IN_PROGRESS' && (
+                      <p className="mt-3 flex items-start gap-2 border-t border-blue-200 pt-3 text-[11px] leading-5 text-blue-800 dark:border-blue-900/70 dark:text-blue-200"><Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" />This approval is reserved by a merge execution. Inspect its manifest before retrying.</p>
+                    )}
+                    {approvalError && <div className="mt-3 flex items-start gap-2 border border-red-200 bg-red-50 p-2.5 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{approvalError}</div>}
+                  </div>
+                )}
+
                 {mergePreview.requiresReviewAcknowledgement && (
                   <label className="flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-                    <input type="checkbox" checked={reviewAcknowledged} onChange={event => setReviewAcknowledged(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                    <input type="checkbox" checked={reviewAcknowledged} disabled={mergePreview.requiresSecondApproval && mergePreview.approval?.status !== 'APPROVED'} onChange={event => setReviewAcknowledged(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
                     I reviewed the identity differences, financial references, preserved agents, field winners, and dependency counts shown above.
                   </label>
                 )}
 
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
                   Final confirmation
-                  <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">Type <strong>{mergePreview.confirmationPhrase}</strong>. The rollback manifest is written before dependencies change.</span>
-                  <input value={mergeConfirmation} onChange={event => setMergeConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white" placeholder="Merge confirmation" />
+                  <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">{mergePreview.requiresSecondApproval && mergePreview.approval?.status !== 'APPROVED' ? 'Available after this exact preview receives its second approval.' : <>Type <strong>{mergePreview.confirmationPhrase}</strong>. The rollback manifest is written before dependencies change.</>}</span>
+                  <input value={mergeConfirmation} disabled={mergePreview.requiresSecondApproval && mergePreview.approval?.status !== 'APPROVED'} onChange={event => setMergeConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-blue-600 disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:disabled:bg-slate-900/60" placeholder="Merge confirmation" />
                 </label>
               </section>
             )}

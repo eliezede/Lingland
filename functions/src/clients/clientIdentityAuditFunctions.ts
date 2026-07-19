@@ -14,6 +14,18 @@ import {
   ClientMergeSourceDocument,
 } from './clientMergeCore';
 import { buildClientHierarchySeedPreview } from './clientHierarchyCore';
+import {
+  buildExcludedOrganizationPairs,
+  ClientIdentityDecisionRecord,
+  ClientIdentityDecisionType,
+  normalizeDecisionPartitions,
+} from './clientIdentityDecisionCore';
+import {
+  ClientMergeApprovalRecord,
+  ClientMergeApprovalStatus,
+  clientMergeApprovalStatus,
+  validateClientMergeApproval,
+} from './clientMergeApprovalCore';
 
 const db = admin.firestore();
 const MAX_CLIENT_RECORDS = 5000;
@@ -30,10 +42,36 @@ const DEPENDENCY_COLLECTIONS = [
 interface ActiveAdmin {
   uid: string;
   role: 'ADMIN' | 'SUPER_ADMIN';
+  displayName: string;
+}
+
+interface ClientIdentityDecisionView extends ClientIdentityDecisionRecord {
+  stale: boolean;
+}
+
+interface ClientIdentityReviewState {
+  decision: ClientIdentityDecisionType;
+  reason: string;
+  notes: string;
+  revisitAt: string;
+  decidedBy: string;
+  decidedAt: string;
+}
+
+interface ClientIdentityAuditPayload extends ClientIdentityAuditResult {
+  organizationCandidates: Array<ClientIdentityCandidate & { reviewDecision?: ClientIdentityReviewState }>;
+  agentCandidates: Array<ClientIdentityCandidate & { reviewDecision?: ClientIdentityReviewState }>;
+  decisions: ClientIdentityDecisionView[];
+  decisionSummary: {
+    deferred: number;
+    rejected: number;
+    split: number;
+    stale: number;
+  };
 }
 
 interface AuditContext {
-  audit: ClientIdentityAuditResult;
+  audit: ClientIdentityAuditPayload;
   clientDocuments: admin.firestore.QueryDocumentSnapshot[];
 }
 
@@ -46,6 +84,19 @@ interface MergeContext {
   hierarchySnapshots: Map<string, admin.firestore.DocumentSnapshot>;
   linkedSourceUsers: admin.firestore.QueryDocumentSnapshot[];
   preview: ClientMergePreview;
+}
+
+interface ClientMergeApprovalView {
+  id: string;
+  status: ClientMergeApprovalStatus;
+  requestedBy: string;
+  requestedByName: string;
+  requestedAt: string;
+  reviewedBy: string;
+  reviewedByName: string;
+  reviewedAt: string;
+  reviewNote: string;
+  expiresAt: string;
 }
 
 const text = (value: unknown) => String(value ?? '').trim();
@@ -66,7 +117,11 @@ const assertActiveAdmin = async (uid?: string, superAdminOnly = false): Promise<
   if (superAdminOnly && role !== 'SUPER_ADMIN') {
     throw new functions.https.HttpsError('permission-denied', 'Only an active Super Admin can merge or restore client records.');
   }
-  return { uid, role: role as ActiveAdmin['role'] };
+  return {
+    uid,
+    role: role as ActiveAdmin['role'],
+    displayName: text(data.displayName || data.name || data.email || uid),
+  };
 };
 
 const increment = (target: Record<string, number>, key: unknown) => {
@@ -81,12 +136,43 @@ const chunks = <T>(values: T[], size: number) => {
   return result;
 };
 
-const loadAuditContext = async (): Promise<AuditContext> => {
-  const [clientSnapshot, bookingSnapshot, invoiceSnapshot, userSnapshot] = await Promise.all([
+const decisionFromDocument = (document: admin.firestore.QueryDocumentSnapshot): ClientIdentityDecisionRecord => {
+  const data = document.data() || {};
+  return {
+    id: document.id,
+    candidateId: text(data.candidateId || document.id),
+    candidateFingerprint: text(data.candidateFingerprint),
+    kind: text(data.kind).toUpperCase() === 'AGENT' ? 'AGENT' : 'ORGANIZATION',
+    decision: ['REJECTED', 'SPLIT'].includes(text(data.decision).toUpperCase())
+      ? text(data.decision).toUpperCase() as ClientIdentityDecisionType
+      : 'DEFERRED',
+    candidateLabel: text(data.candidateLabel),
+    clientIds: uniqueStrings(Array.isArray(data.clientIds) ? data.clientIds : []),
+    partitions: Array.isArray(data.partitions)
+      ? data.partitions.filter(Array.isArray).map((partition: unknown[]) => uniqueStrings(partition))
+      : [],
+    reason: text(data.reason),
+    notes: text(data.notes),
+    revisitAt: text(data.revisitAt),
+    active: data.active === true,
+    decidedBy: text(data.decidedBy),
+    decidedByName: text(data.decidedByName),
+    decidedAt: text(data.decidedAt),
+    updatedBy: text(data.updatedBy),
+    updatedByName: text(data.updatedByName),
+    updatedAt: text(data.updatedAt),
+  };
+};
+
+const sameIds = (left: string[], right: string[]) => uniqueStrings(left).join('|') === uniqueStrings(right).join('|');
+
+const loadAuditContext = async (applyDecisions = true): Promise<AuditContext> => {
+  const [clientSnapshot, bookingSnapshot, invoiceSnapshot, userSnapshot, decisionSnapshot] = await Promise.all([
     db.collection('clients').limit(MAX_CLIENT_RECORDS + 1).get(),
     db.collection('bookings').select('clientId').get(),
     db.collection('clientInvoices').select('clientId').get(),
     db.collection('users').where('role', '==', 'CLIENT').select('profileId').get(),
+    db.collection('clientIdentityDecisions').limit(MAX_CLIENT_RECORDS).get(),
   ]);
   const truncated = clientSnapshot.size > MAX_CLIENT_RECORDS;
   const clientDocuments = clientSnapshot.docs.slice(0, MAX_CLIENT_RECORDS);
@@ -101,16 +187,72 @@ const loadAuditContext = async (): Promise<AuditContext> => {
   invoiceSnapshot.docs.forEach(document => increment(invoiceCounts, document.data().clientId));
   userSnapshot.docs.forEach(document => increment(linkedUserCounts, document.data().profileId));
 
-  return {
-    clientDocuments,
-    audit: buildClientIdentityAudit({
+  const decisions = decisionSnapshot.docs.map(decisionFromDocument);
+  const baseline = buildClientIdentityAudit({
+    clients,
+    bookingCounts,
+    invoiceCounts,
+    linkedUserCounts,
+    generatedAt: nowIso(),
+    truncated,
+  });
+  const excludedOrganizationPairs = applyDecisions
+    ? buildExcludedOrganizationPairs(decisions)
+    : [];
+  const resolved = excludedOrganizationPairs.length > 0
+    ? buildClientIdentityAudit({
       clients,
       bookingCounts,
       invoiceCounts,
       linkedUserCounts,
-      generatedAt: nowIso(),
+      excludedOrganizationPairs,
+      generatedAt: baseline.generatedAt,
       truncated,
-    }),
+    })
+    : baseline;
+  const activeDeferred = new Map(decisions
+    .filter(decision => applyDecisions && decision.active && decision.decision === 'DEFERRED')
+    .map(decision => [decision.candidateId, decision]));
+  const annotateCandidate = (candidate: ClientIdentityCandidate) => {
+    const decision = activeDeferred.get(candidate.id);
+    if (!decision || !sameIds(decision.clientIds, candidate.clientIds)) return candidate;
+    return {
+      ...candidate,
+      reviewDecision: {
+        decision: decision.decision,
+        reason: decision.reason,
+        notes: decision.notes,
+        revisitAt: decision.revisitAt,
+        decidedBy: decision.decidedBy,
+        decidedAt: decision.decidedAt,
+      },
+    };
+  };
+  const baselineCandidates = new Map([
+    ...baseline.organizationCandidates,
+    ...baseline.agentCandidates,
+  ].map(candidate => [candidate.id, candidate]));
+  const decisionViews = decisions
+    .filter(decision => decision.active)
+    .map(decision => ({
+      ...decision,
+      stale: !sameIds(decision.clientIds, baselineCandidates.get(decision.candidateId)?.clientIds || []),
+    }))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return {
+    clientDocuments,
+    audit: {
+      ...resolved,
+      organizationCandidates: resolved.organizationCandidates.map(annotateCandidate),
+      agentCandidates: resolved.agentCandidates.map(annotateCandidate),
+      decisions: decisionViews,
+      decisionSummary: {
+        deferred: decisionViews.filter(decision => decision.decision === 'DEFERRED').length,
+        rejected: decisionViews.filter(decision => decision.decision === 'REJECTED').length,
+        split: decisionViews.filter(decision => decision.decision === 'SPLIT').length,
+        stale: decisionViews.filter(decision => decision.stale).length,
+      },
+    },
   };
 };
 
@@ -143,6 +285,9 @@ const prepareMergeContext = async (
   }
   if (!sourceCandidate.clientIds.includes(canonicalClientId)) {
     throw new functions.https.HttpsError('invalid-argument', 'Select a canonical client from this candidate.');
+  }
+  if (sourceCandidate.reviewDecision?.decision === 'DEFERRED') {
+    throw new functions.https.HttpsError('failed-precondition', 'This candidate is deferred. Reopen the review before preparing a merge.');
   }
   const sourceIds = sourceCandidate.clientIds.filter(id => id !== canonicalClientId);
   const documentSnapshots = new Map(clientDocuments
@@ -246,6 +391,38 @@ const normalizeFieldSelections = (value: unknown): Record<string, string> => {
     .filter(([field, clientId]) => Boolean(field && clientId)));
 };
 
+const approvalRefFor = (expectedFingerprint: string) => db.collection('clientMergeApprovals').doc(expectedFingerprint);
+
+const approvalRecordFromData = (data: Record<string, unknown>): ClientMergeApprovalRecord => ({
+  status: text(data.status),
+  candidateId: text(data.candidateId),
+  candidateFingerprint: text(data.candidateFingerprint),
+  expectedFingerprint: text(data.expectedFingerprint),
+  canonicalClientId: text(data.canonicalClientId),
+  fieldSelections: normalizeFieldSelections(data.fieldSelections),
+  requestedBy: text(data.requestedBy),
+  reviewedBy: text(data.reviewedBy),
+  expiresAt: text(data.expiresAt),
+  consumedByManifestId: text(data.consumedByManifestId),
+});
+
+const approvalView = (document: admin.firestore.DocumentSnapshot): ClientMergeApprovalView | null => {
+  if (!document.exists) return null;
+  const data = document.data() || {};
+  return {
+    id: document.id,
+    status: clientMergeApprovalStatus(approvalRecordFromData(data)),
+    requestedBy: text(data.requestedBy),
+    requestedByName: text(data.requestedByName),
+    requestedAt: text(data.requestedAt),
+    reviewedBy: text(data.reviewedBy),
+    reviewedByName: text(data.reviewedByName),
+    reviewedAt: text(data.reviewedAt),
+    reviewNote: text(data.reviewNote),
+    expiresAt: text(data.expiresAt),
+  };
+};
+
 /**
  * Read-only discovery endpoint. It never writes canonical mappings or changes
  * client, booking, invoice, or user documents.
@@ -263,6 +440,102 @@ export const getClientIdentityAudit = functions
     }
   });
 
+export const saveClientIdentityDecision = functions
+  .runWith(SAFE_RUNTIME)
+  .https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    const candidateId = text(data?.candidateId);
+    const expectedFingerprint = text(data?.expectedFingerprint);
+    const requestedDecision = text(data?.decision).toUpperCase();
+    const reason = text(data?.reason).slice(0, 500);
+    const notes = text(data?.notes).slice(0, 3000);
+    const revisitAt = text(data?.revisitAt).slice(0, 40);
+    if (!candidateId || !['DEFERRED', 'REJECTED', 'SPLIT', 'REOPEN'].includes(requestedDecision)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Candidate and a valid review decision are required.');
+    }
+    const decisionRef = db.collection('clientIdentityDecisions').doc(candidateId);
+    const changedAt = nowIso();
+    if (requestedDecision === 'REOPEN') {
+      const current = await decisionRef.get();
+      if (!current.exists || current.data()?.active !== true) {
+        throw new functions.https.HttpsError('failed-precondition', 'This candidate does not have an active review decision.');
+      }
+      await decisionRef.set({
+        active: false,
+        reopenedBy: actor.uid,
+        reopenedByName: actor.displayName,
+        reopenedAt: changedAt,
+        updatedBy: actor.uid,
+        updatedAt: changedAt,
+      }, { merge: true });
+      await persistAuditEvent({
+        action: 'CLIENT_IDENTITY_DECISION_REOPENED',
+        candidateId,
+        actorId: actor.uid,
+        actorName: actor.displayName,
+      });
+      return { success: true, candidateId, active: false };
+    }
+    if (!expectedFingerprint || reason.length < 5) {
+      throw new functions.https.HttpsError('invalid-argument', 'A current candidate fingerprint and a review reason are required.');
+    }
+    const baseline = (await loadAuditContext(false)).audit;
+    const candidate = [...baseline.organizationCandidates, ...baseline.agentCandidates]
+      .find(item => item.id === candidateId);
+    if (!candidate) {
+      throw new functions.https.HttpsError('not-found', 'This candidate changed or no longer exists. Refresh the audit.');
+    }
+    if (candidate.fingerprint !== expectedFingerprint) {
+      throw new functions.https.HttpsError('aborted', 'The candidate changed after review. Refresh and inspect it again.');
+    }
+    const decision = requestedDecision as ClientIdentityDecisionType;
+    if (candidate.kind !== 'ORGANIZATION' && decision !== 'DEFERRED') {
+      throw new functions.https.HttpsError('failed-precondition', 'Agent candidates can be deferred, but organisation separation must be managed from an organisation candidate.');
+    }
+    if (revisitAt && (!Number.isFinite(Date.parse(revisitAt)) || Date.parse(revisitAt) <= Date.now())) {
+      throw new functions.https.HttpsError('invalid-argument', 'The revisit date must be in the future.');
+    }
+    const partitions = decision === 'SPLIT'
+      ? normalizeDecisionPartitions(candidate.clientIds, data?.partitions)
+      : [];
+    if (decision === 'SPLIT' && partitions.length < 2) {
+      throw new functions.https.HttpsError('invalid-argument', 'Assign every source record to at least two non-overlapping groups.');
+    }
+    const record: ClientIdentityDecisionRecord = {
+      id: candidateId,
+      candidateId,
+      candidateFingerprint: candidate.fingerprint,
+      kind: candidate.kind,
+      decision,
+      candidateLabel: candidate.label,
+      clientIds: candidate.clientIds,
+      partitions,
+      reason,
+      notes,
+      revisitAt: decision === 'DEFERRED' ? revisitAt : '',
+      active: true,
+      decidedBy: actor.uid,
+      decidedByName: actor.displayName,
+      decidedAt: changedAt,
+      updatedBy: actor.uid,
+      updatedByName: actor.displayName,
+      updatedAt: changedAt,
+    };
+    await decisionRef.set(record, { merge: false });
+    await persistAuditEvent({
+      action: 'CLIENT_IDENTITY_DECISION_SAVED',
+      candidateId,
+      candidateFingerprint: candidate.fingerprint,
+      decision,
+      clientIds: candidate.clientIds,
+      partitions,
+      reason,
+      actorId: actor.uid,
+      actorName: actor.displayName,
+    });
+    return { success: true, ...record };
+  });
+
 export const getClientMergePreview = functions
   .runWith(MERGE_RUNTIME)
   .https.onCall(async (data, context) => {
@@ -274,12 +547,153 @@ export const getClientMergePreview = functions
       throw new functions.https.HttpsError('invalid-argument', 'Candidate and canonical client are required.');
     }
     try {
-      return (await prepareMergeContext(candidateId, canonicalClientId, fieldSelections)).preview;
+      const merge = await prepareMergeContext(candidateId, canonicalClientId, fieldSelections);
+      const approvalDocument = merge.preview.requiresSecondApproval
+        ? await approvalRefFor(merge.preview.expectedFingerprint).get()
+        : null;
+      return {
+        ...merge.preview,
+        approval: approvalDocument ? approvalView(approvalDocument) : null,
+      };
     } catch (error) {
       console.error('Client merge preview failed', error);
       if (error instanceof functions.https.HttpsError) throw error;
       throw new functions.https.HttpsError('internal', 'The merge preview could not be prepared.');
     }
+  });
+
+export const requestClientMergeApproval = functions
+  .runWith(MERGE_RUNTIME)
+  .https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid, true);
+    const candidateId = text(data?.candidateId);
+    const canonicalClientId = text(data?.canonicalClientId);
+    const expectedFingerprint = text(data?.expectedFingerprint);
+    const fieldSelections = normalizeFieldSelections(data?.fieldSelections);
+    if (!candidateId || !canonicalClientId || !expectedFingerprint) {
+      throw new functions.https.HttpsError('invalid-argument', 'Candidate, canonical client and fingerprint are required.');
+    }
+    const merge = await prepareMergeContext(candidateId, canonicalClientId, fieldSelections);
+    if (merge.preview.expectedFingerprint !== expectedFingerprint) {
+      throw new functions.https.HttpsError('aborted', 'The preview changed. Refresh it before requesting approval.');
+    }
+    if (!merge.preview.canExecute) {
+      throw new functions.https.HttpsError('failed-precondition', merge.preview.blockers.join(' ') || 'This merge is blocked.');
+    }
+    if (!merge.preview.requiresSecondApproval) {
+      return { success: true, required: false, approval: null };
+    }
+    const approvalRef = approvalRefFor(expectedFingerprint);
+    const requestedAt = nowIso();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const createdRequest = await db.runTransaction(async transaction => {
+      const current = await transaction.get(approvalRef);
+      const currentView = approvalView(current);
+      if (currentView && ['PENDING', 'APPROVED', 'IN_PROGRESS'].includes(currentView.status)) return false;
+      transaction.set(approvalRef, {
+        candidateId,
+        candidateFingerprint: merge.preview.candidateFingerprint,
+        expectedFingerprint,
+        canonicalClientId,
+        fieldSelections: merge.preview.fieldSelections,
+        status: 'PENDING',
+        reasons: merge.preview.secondApprovalReasons,
+        requestedBy: actor.uid,
+        requestedByName: actor.displayName,
+        requestedAt,
+        reviewedBy: '',
+        reviewedByName: '',
+        reviewedAt: '',
+        reviewNote: '',
+        expiresAt,
+        consumedByManifestId: '',
+        reservedByManifestId: '',
+      }, { merge: false });
+      return true;
+    });
+    const currentApproval = await approvalRef.get();
+    if (createdRequest) {
+      await persistAuditEvent({
+        action: 'CLIENT_MERGE_APPROVAL_REQUESTED',
+        candidateId,
+        expectedFingerprint,
+        canonicalClientId,
+        reasons: merge.preview.secondApprovalReasons,
+        actorId: actor.uid,
+        actorName: actor.displayName,
+      });
+    }
+    return { success: true, required: true, approval: approvalView(currentApproval) };
+  });
+
+export const reviewClientMergeApproval = functions
+  .runWith(MERGE_RUNTIME)
+  .https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid, true);
+    const approvalId = text(data?.approvalId);
+    const reviewDecision = text(data?.decision).toUpperCase();
+    const reviewNote = text(data?.note).slice(0, 1000);
+    if (!approvalId || !['APPROVE', 'REJECT'].includes(reviewDecision)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Approval and review decision are required.');
+    }
+    const approvalRef = db.collection('clientMergeApprovals').doc(approvalId);
+    const approvalDocument = await approvalRef.get();
+    if (!approvalDocument.exists) throw new functions.https.HttpsError('not-found', 'Merge approval request not found.');
+    const approvalData = approvalDocument.data() || {};
+    const currentView = approvalView(approvalDocument)!;
+    if (currentView.status !== 'PENDING') {
+      throw new functions.https.HttpsError('failed-precondition', `This approval is ${currentView.status.toLowerCase()}.`);
+    }
+    if (text(approvalData.requestedBy) === actor.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'A different Super Admin must review this merge.');
+    }
+    if (reviewDecision === 'APPROVE') {
+      const merge = await prepareMergeContext(
+        text(approvalData.candidateId),
+        text(approvalData.canonicalClientId),
+        normalizeFieldSelections(approvalData.fieldSelections),
+      );
+      if (merge.preview.expectedFingerprint !== text(approvalData.expectedFingerprint)) {
+        throw new functions.https.HttpsError('aborted', 'The merge changed after approval was requested. Create a new preview.');
+      }
+    }
+    const reviewedAt = nowIso();
+    await db.runTransaction(async transaction => {
+      const latest = await transaction.get(approvalRef);
+      if (!latest.exists) throw new functions.https.HttpsError('not-found', 'Merge approval request not found.');
+      const latestData = latest.data() || {};
+      const latestView = approvalView(latest)!;
+      if (latestView.status !== 'PENDING') {
+        throw new functions.https.HttpsError('failed-precondition', `This approval is ${latestView.status.toLowerCase()}.`);
+      }
+      if (text(latestData.requestedBy) === actor.uid) {
+        throw new functions.https.HttpsError('permission-denied', 'A different Super Admin must review this merge.');
+      }
+      if (
+        text(latestData.expectedFingerprint) !== text(approvalData.expectedFingerprint)
+        || text(latestData.candidateId) !== text(approvalData.candidateId)
+        || text(latestData.canonicalClientId) !== text(approvalData.canonicalClientId)
+      ) {
+        throw new functions.https.HttpsError('aborted', 'The approval request changed while it was being reviewed.');
+      }
+      transaction.set(approvalRef, {
+        status: reviewDecision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        reviewedBy: actor.uid,
+        reviewedByName: actor.displayName,
+        reviewedAt,
+        reviewNote,
+      }, { merge: true });
+    });
+    await persistAuditEvent({
+      action: reviewDecision === 'APPROVE' ? 'CLIENT_MERGE_APPROVAL_GRANTED' : 'CLIENT_MERGE_APPROVAL_REJECTED',
+      approvalId,
+      candidateId: text(approvalData.candidateId),
+      expectedFingerprint: text(approvalData.expectedFingerprint),
+      actorId: actor.uid,
+      actorName: actor.displayName,
+      reviewNote,
+    });
+    return { success: true, approval: approvalView(await approvalRef.get()) };
   });
 
 export const executeClientMerge = functions
@@ -320,6 +734,8 @@ export const executeClientMerge = functions
     }
 
     const manifestRef = db.collection('clientMergeManifests').doc();
+    const executionRef = db.collection('clientMergeExecutionLocks').doc(expectedFingerprint);
+    const mergeApprovalRef = preview.requiresSecondApproval ? approvalRefFor(expectedFingerprint) : null;
     const createdAt = nowIso();
     const canonicalSnapshot = merge.documentSnapshots.get(canonicalClientId)!;
     const canonicalTouchedFields = Array.from(new Set([
@@ -329,22 +745,95 @@ export const executeClientMerge = functions
     ]));
     const sourceTouchedFields = ['recordState', 'mergedIntoClientId', 'mergeManifestId', 'mergedAt'];
 
-    await manifestRef.set({
-      status: 'PREPARING',
-      candidateId,
-      candidateFingerprint: preview.candidateFingerprint,
-      expectedFingerprint,
-      canonicalClientId,
-      sourceClientIds: preview.sourceClientIds,
-      eligibility: preview.eligibility,
-      fieldSelections: preview.fieldSelections,
-      counts: preview.totals,
-      canonicalTouchedFields,
-      sourceTouchedFields,
-      createdAt,
-      createdBy: actor.uid,
-      rollbackAvailable: false,
+    const claim = await db.runTransaction(async transaction => {
+      const execution = await transaction.get(executionRef);
+      const executionData = execution.data() || {};
+      const executionStatus = text(executionData.status).toUpperCase();
+      if (executionStatus === 'COMPLETED') {
+        return { state: 'COMPLETED' as const, manifestId: text(executionData.manifestId) };
+      }
+      if (['IN_PROGRESS', 'FAILED'].includes(executionStatus)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          `This merge already has a ${executionStatus.toLowerCase().replace('_', ' ')} execution. Inspect or restore manifest ${text(executionData.manifestId) || 'unknown'}.`,
+        );
+      }
+
+      let approvalDocument: admin.firestore.DocumentSnapshot | null = null;
+      let approvalRecord: ClientMergeApprovalRecord | null = null;
+      let approvalReviewer: admin.firestore.DocumentSnapshot | null = null;
+      if (mergeApprovalRef) {
+        approvalDocument = await transaction.get(mergeApprovalRef);
+        if (!approvalDocument.exists) {
+          throw new functions.https.HttpsError('failed-precondition', 'A second Super Admin must approve this merge before execution.');
+        }
+        approvalRecord = approvalRecordFromData(approvalDocument.data() || {});
+        const validation = validateClientMergeApproval(approvalRecord, {
+          candidateId,
+          candidateFingerprint: preview.candidateFingerprint,
+          expectedFingerprint,
+          canonicalClientId,
+          fieldSelections: preview.fieldSelections,
+        });
+        if (!validation.valid) {
+          throw new functions.https.HttpsError('failed-precondition', validation.reason);
+        }
+        approvalReviewer = await transaction.get(db.collection('users').doc(approvalRecord.reviewedBy));
+        const reviewerData = approvalReviewer.data() || {};
+        if (
+          !approvalReviewer.exists
+          || reviewerData.status !== 'ACTIVE'
+          || text(reviewerData.role).toUpperCase() !== 'SUPER_ADMIN'
+        ) {
+          throw new functions.https.HttpsError('failed-precondition', 'The approving Super Admin is no longer active. Request a new approval.');
+        }
+      }
+
+      transaction.set(manifestRef, {
+        status: 'PREPARING',
+        candidateId,
+        candidateFingerprint: preview.candidateFingerprint,
+        expectedFingerprint,
+        canonicalClientId,
+        sourceClientIds: preview.sourceClientIds,
+        eligibility: preview.eligibility,
+        fieldSelections: preview.fieldSelections,
+        counts: preview.totals,
+        canonicalTouchedFields,
+        sourceTouchedFields,
+        approvalId: mergeApprovalRef?.id || '',
+        secondApprovalRequired: preview.requiresSecondApproval,
+        secondApprovalReasons: preview.secondApprovalReasons,
+        createdAt,
+        createdBy: actor.uid,
+        rollbackAvailable: false,
+      });
+      transaction.set(executionRef, {
+        status: 'IN_PROGRESS',
+        manifestId: manifestRef.id,
+        candidateId,
+        expectedFingerprint,
+        canonicalClientId,
+        startedAt: createdAt,
+        startedBy: actor.uid,
+      }, { merge: false });
+      if (mergeApprovalRef && approvalDocument && approvalRecord && approvalReviewer) {
+        transaction.set(mergeApprovalRef, {
+          status: 'IN_PROGRESS',
+          reservedByManifestId: manifestRef.id,
+          reservedAt: createdAt,
+          executionStartedBy: actor.uid,
+        }, { merge: true });
+      }
+      return { state: 'CLAIMED' as const, manifestId: manifestRef.id };
     });
+
+    if (claim.state === 'COMPLETED') {
+      if (!claim.manifestId) throw new functions.https.HttpsError('internal', 'The completed merge execution is missing its manifest.');
+      const completedManifest = await db.collection('clientMergeManifests').doc(claim.manifestId).get();
+      const completedData = completedManifest.data() || {};
+      return { success: true, idempotent: true, manifestId: claim.manifestId, ...(completedData.result || {}) };
+    }
 
     try {
       const clientBackupBatch = db.batch();
@@ -550,6 +1039,18 @@ export const executeClientMerge = functions
         rollbackAvailable: true,
         result,
       }, { merge: true });
+      finalBatch.set(executionRef, {
+        status: 'COMPLETED',
+        completedAt: nowIso(),
+        result,
+      }, { merge: true });
+      if (mergeApprovalRef) {
+        finalBatch.set(mergeApprovalRef, {
+          status: 'CONSUMED',
+          consumedByManifestId: manifestRef.id,
+          consumedAt: nowIso(),
+        }, { merge: true });
+      }
       await finalBatch.commit();
       await persistAuditEvent({
         action: 'CLIENT_MERGE_COMPLETED',
@@ -562,12 +1063,26 @@ export const executeClientMerge = functions
       return { success: true, idempotent: false, manifestId: manifestRef.id, ...result };
     } catch (error) {
       console.error('Client merge execution failed', { manifestId: manifestRef.id, error });
-      await manifestRef.set({
+      const failedAt = nowIso();
+      const failedBatch = db.batch();
+      failedBatch.set(manifestRef, {
         status: 'FAILED',
-        failedAt: nowIso(),
+        failedAt,
         rollbackAvailable: true,
         error: error instanceof Error ? error.message : String(error),
       }, { merge: true });
+      failedBatch.set(executionRef, {
+        status: 'FAILED',
+        failedAt,
+        error: error instanceof Error ? error.message : String(error),
+      }, { merge: true });
+      if (mergeApprovalRef) {
+        failedBatch.set(mergeApprovalRef, {
+          executionFailedAt: failedAt,
+          executionError: error instanceof Error ? error.message : String(error),
+        }, { merge: true });
+      }
+      await failedBatch.commit();
       await persistAuditEvent({
         action: 'CLIENT_MERGE_FAILED',
         manifestId: manifestRef.id,
@@ -684,9 +1199,10 @@ export const rollbackClientMerge = functions
       ) as any);
       restoredClients += 1;
     }
+    const rolledBackAt = nowIso();
     clientBatch.set(manifestRef, {
       status: 'ROLLED_BACK',
-      rolledBackAt: nowIso(),
+      rolledBackAt,
       rolledBackBy: actor.uid,
       rollbackAvailable: false,
       rollbackResult: {
@@ -699,6 +1215,24 @@ export const rollbackClientMerge = functions
         skippedHierarchyRecords,
       },
     }, { merge: true });
+    const mergeFingerprint = text(manifestData.expectedFingerprint);
+    if (mergeFingerprint) {
+      clientBatch.set(db.collection('clientMergeExecutionLocks').doc(mergeFingerprint), {
+        status: 'ROLLED_BACK',
+        manifestId,
+        rolledBackAt,
+        rolledBackBy: actor.uid,
+      }, { merge: true });
+    }
+    const approvalId = text(manifestData.approvalId);
+    if (approvalId) {
+      clientBatch.set(db.collection('clientMergeApprovals').doc(approvalId), {
+        status: 'ROLLED_BACK',
+        rolledBackManifestId: manifestId,
+        rolledBackAt,
+        rolledBackBy: actor.uid,
+      }, { merge: true });
+    }
     await clientBatch.commit();
     await persistAuditEvent({
       action: 'CLIENT_MERGE_ROLLED_BACK',

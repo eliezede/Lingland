@@ -66,6 +66,7 @@ const stableHash = (value) => (0, node_crypto_1.createHash)('sha256').update(JSO
 const stableId = (prefix, values) => `${prefix}_${(0, node_crypto_1.createHash)('sha1').update(values.slice().sort().join('|')).digest('hex').slice(0, 12)}`;
 const unique = (values) => Array.from(new Set(values.filter(Boolean))).sort((left, right) => left.localeCompare(right));
 const intersects = (left, right) => left.some(value => right.includes(value));
+const organizationPairKey = (leftId, rightId) => [leftId, rightId].sort().join('|');
 const normalizeClientEmail = (value) => text(value).toLowerCase();
 exports.normalizeClientEmail = normalizeClientEmail;
 const normalizeOrganizationName = (value) => text(value)
@@ -352,10 +353,12 @@ const fingerprintFor = (kind, records, recommendedClientId, eligibility) => stab
         users: record.linkedUserCount,
     })),
 });
-const buildOrganizationCandidates = (records) => {
+const buildOrganizationCandidates = (records, excludedPairs) => {
     const unionFind = new UnionFind(records.length);
     for (let leftIndex = 0; leftIndex < records.length; leftIndex += 1) {
         for (let rightIndex = leftIndex + 1; rightIndex < records.length; rightIndex += 1) {
+            if (excludedPairs.has(organizationPairKey(records[leftIndex].id, records[rightIndex].id)))
+                continue;
             if (shouldLinkOrganizations(signalsFor(records[leftIndex], records[rightIndex]))) {
                 unionFind.union(leftIndex, rightIndex);
             }
@@ -516,7 +519,8 @@ const buildClientIdentityAudit = (input) => {
         .filter(client => text(client.id))
         .filter(client => text(client.recordState).toUpperCase() !== 'MERGED' && !text(client.mergedIntoClientId))
         .map(client => prepareRecord(client, input));
-    const organizationCandidates = buildOrganizationCandidates(records);
+    const excludedOrganizationPairs = new Set((input.excludedOrganizationPairs || []).map(text).filter(Boolean));
+    const organizationCandidates = buildOrganizationCandidates(records, excludedOrganizationPairs);
     const agentCandidates = buildAgentCandidates(records);
     const uniqueOrganizationRecords = new Set(organizationCandidates.flatMap(candidate => candidate.clientIds));
     const uniqueAgentRecords = new Set(agentCandidates.flatMap(candidate => candidate.clientIds));
