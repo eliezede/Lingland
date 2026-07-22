@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
+exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.saveAirtableClientIdentityMappingsManualBatch = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const statusMapping_1 = require("./statusMapping");
@@ -5096,6 +5096,129 @@ exports.saveAirtableClientIdentityMappingsBatch = functions.runWith({
             groupKey: item.mapping.groupKey,
             canonicalClientId: item.mapping.canonicalClientId,
             canonicalCompanyName: item.canonicalCompanyName,
+        })),
+    };
+});
+exports.saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
+    timeoutSeconds: 120,
+    memory: '256MB',
+}).https.onCall(async (data, context) => {
+    const actor = await assertAdmin(context);
+    if (actor.role !== 'SUPER_ADMIN') {
+        throw new functions.https.HttpsError('permission-denied', 'Only a Super Admin can save manual client identity batches.');
+    }
+    let requests;
+    try {
+        requests = (0, clientIdentityMappingPolicy_1.validateClientIdentityManualMappingBatch)(data?.mappings, actor.role, data?.confirmed === true);
+    }
+    catch (error) {
+        throw new functions.https.HttpsError('invalid-argument', error instanceof Error ? error.message : 'Invalid manual client identity batch.');
+    }
+    const syncRunId = normalize(data?.syncRunId);
+    if (!syncRunId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Run a fresh Clients Dry Run before saving a manual identity batch.');
+    }
+    const syncRun = await db.collection('syncRuns').doc(syncRunId).get();
+    const runValidation = (0, clientIdentityMappingPolicy_1.validateClientIdentityManualReviewRun)(syncRun.exists ? cleanReportData(syncRun.data() || {}) : null, requests, actor.uid, syncWriteApproval_1.AIRTABLE_SYNC_MAPPING_VERSION);
+    if (!runValidation.ok) {
+        throw new functions.https.HttpsError('failed-precondition', `The client identity review is stale or changed (${runValidation.reason}). Run a fresh Clients Dry Run.`);
+    }
+    const requestedClient = await db.collection('clients').doc(requests[0].canonicalClientId).get();
+    if (!requestedClient.exists) {
+        throw new functions.https.HttpsError('not-found', 'The selected canonical client no longer exists.');
+    }
+    const canonical = await canonicalClientDocument(requestedClient);
+    const canonicalState = normalize(canonical.data()?.recordState).toUpperCase();
+    if (!canonical.exists || canonicalState === 'ARCHIVED') {
+        throw new functions.https.HttpsError('failed-precondition', 'The selected canonical client is archived or unavailable.');
+    }
+    const canonicalCompanyName = normalize(canonical.data()?.companyName)
+        || normalize(requests[0].canonicalCompanyName)
+        || canonical.id;
+    const prepared = await Promise.all(requests.map(async (request) => {
+        const sourceTable = normalize(request.sourceTable);
+        const groupKey = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(request.groupKey);
+        const mappingId = clientIdentityMappingId(sourceTable, groupKey);
+        const mappingRef = db.collection('airtableClientIdentityMappings').doc(mappingId);
+        const before = await mappingRef.get();
+        if (before.exists && normalize(before.data()?.status).toUpperCase() === 'ACTIVE') {
+            throw new functions.https.HttpsError('aborted', `Identity ${request.sourceNames[0] || groupKey} was reviewed by another action. Run a fresh Clients Dry Run.`);
+        }
+        const now = new Date().toISOString();
+        const mapping = {
+            id: mappingId,
+            sourceSystem: 'AIRTABLE',
+            sourceBaseId: DEFAULT_BASE_ID,
+            sourceTable,
+            groupKey,
+            sourceNames: uniqueValues(...request.sourceNames.map(normalize)),
+            action: 'MAP_TO_CLIENT',
+            canonicalClientId: canonical.id,
+            canonicalCompanyName,
+            status: 'ACTIVE',
+            reason: normalize(request.reason) || 'Manually mapped in an audited Airtable Sync Center batch',
+            recommendationConfidence: 'MANUAL',
+            reviewMethod: 'MANUAL_BATCH',
+            reviewRunId: syncRunId,
+            approvedBy: actor.uid,
+            approvedRole: actor.role,
+            approvedAt: now,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: before.exists ? before.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp(),
+        };
+        return { mappingId, mappingRef, before, mapping, now };
+    }));
+    const settings = await db.collection('system').doc('settings').get();
+    const communicationMode = normalize(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase();
+    const batch = db.batch();
+    prepared.forEach(item => {
+        batch.set(item.mappingRef, item.mapping, { merge: true });
+        const auditRef = db.collection('auditEvents').doc();
+        batch.set(auditRef, {
+            id: auditRef.id,
+            schemaVersion: 1,
+            entityType: 'AIRTABLE_CLIENT_IDENTITY_MAPPING',
+            entityId: item.mappingId,
+            action: item.before.exists
+                ? 'AIRTABLE_CLIENT_IDENTITY_MAPPING_UPDATED'
+                : 'AIRTABLE_CLIENT_IDENTITY_MAPPING_CREATED',
+            actorId: actor.uid,
+            actorRole: actor.role,
+            source: 'AIRTABLE_SYNC_CENTER_MANUAL_BATCH',
+            communicationMode,
+            syncRunId,
+            changedFields: ['action', 'canonicalClientId', 'canonicalCompanyName', 'status'],
+            before: item.before.exists ? cleanReportData(item.before.data() || {}) : null,
+            after: {
+                sourceTable: item.mapping.sourceTable,
+                groupKey: item.mapping.groupKey,
+                action: item.mapping.action,
+                canonicalClientId: item.mapping.canonicalClientId,
+                canonicalCompanyName: item.mapping.canonicalCompanyName,
+                status: item.mapping.status,
+                recommendationConfidence: item.mapping.recommendationConfidence,
+                reviewMethod: item.mapping.reviewMethod,
+                reviewRunId: syncRunId,
+            },
+            organizationId: 'lingland-main',
+            bookingId: '',
+            createdAt: item.now,
+            timestamp: item.now,
+        }, { merge: false });
+    });
+    await batch.commit();
+    return {
+        success: true,
+        saved: prepared.length,
+        reviewRunId: syncRunId,
+        canonicalClientId: canonical.id,
+        canonicalCompanyName,
+        mappings: prepared.map(item => ({
+            mappingId: item.mappingId,
+            sourceTable: item.mapping.sourceTable,
+            groupKey: item.mapping.groupKey,
+            canonicalClientId: canonical.id,
+            canonicalCompanyName,
         })),
     };
 });

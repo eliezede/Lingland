@@ -44,6 +44,7 @@ import { ClientService } from '../../services/clientService';
 import { Client } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
+import { useAuth } from '../../context/AuthContext';
 
 type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
 
@@ -304,11 +305,15 @@ export const AdminMigration = () => {
   const [crmMappingLoading, setCrmMappingLoading] = useState(false);
   const [crmBatchSelection, setCrmBatchSelection] = useState<Record<string, boolean>>({});
   const [crmBatchSaving, setCrmBatchSaving] = useState(false);
+  const [crmManualBatchMode, setCrmManualBatchMode] = useState(false);
+  const [crmManualBatchSelection, setCrmManualBatchSelection] = useState<Record<string, boolean>>({});
+  const [crmManualBatchTargets, setCrmManualBatchTargets] = useState<ClientCrmMappingTarget[]>([]);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const interpreterStatsRequestedRef = useRef(false);
   const { showToast } = useToast();
   const { settings } = useSettings();
+  const { isSuperAdmin } = useAuth();
   const platformMode = settings.platformMode;
   const importMode = platformMode?.airtableImportMode || 'ON';
   const communicationMode = platformMode?.communicationMode || 'SUPPRESSED';
@@ -372,6 +377,12 @@ export const AdminMigration = () => {
         .some(value => String(value || '').toLowerCase().includes(query)))
       .slice(0, 60);
   }, [crmClientDirectory, crmClientSearch]);
+  const activeCrmMappingTargets = crmManualBatchTargets.length > 0
+    ? crmManualBatchTargets
+    : crmMappingTarget
+      ? [crmMappingTarget]
+      : [];
+  const isManualCrmMappingBatch = crmManualBatchTargets.length > 0;
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -650,6 +661,7 @@ export const AdminMigration = () => {
   }, [activeTab]);
 
   const openClientIdentityMapping = async (target: ClientCrmMappingTarget) => {
+    setCrmManualBatchTargets([]);
     setCrmMappingTarget(target);
     setCrmClientSearch('');
     setCrmSelectedClientId(target.recommendedClientId || '');
@@ -668,9 +680,33 @@ export const AdminMigration = () => {
     }
   };
 
+  const openClientIdentityManualBatch = async (targets: ClientCrmMappingTarget[]) => {
+    if (!targets.length) return;
+    setCrmMappingTarget(null);
+    setCrmManualBatchTargets(targets);
+    setCrmClientSearch('');
+    setCrmSelectedClientId('');
+    if (crmClientDirectory.length) return;
+    setCrmMappingLoading(true);
+    try {
+      const clients = await ClientService.getAll();
+      setCrmClientDirectory(clients
+        .filter(client => client.recordState !== 'ARCHIVED')
+        .sort((left, right) => left.companyName.localeCompare(right.companyName)));
+    } catch (error) {
+      console.warn('Failed to load canonical client directory', error);
+      showToast('Could not load the Client CRM directory.', 'error');
+    } finally {
+      setCrmMappingLoading(false);
+    }
+  };
+
   const refreshClientIdentityDryRun = async () => {
     setApprovedDryRunIds({});
     setCrmBatchSelection({});
+    setCrmManualBatchMode(false);
+    setCrmManualBatchSelection({});
+    setCrmManualBatchTargets([]);
     await runSync(true, ['clients']);
   };
 
@@ -732,6 +768,46 @@ export const AdminMigration = () => {
       await refreshClientIdentityDryRun();
     } catch (error: any) {
       showToast(error?.message || 'Could not save the client identity mapping.', 'error');
+    } finally {
+      setCrmMappingLoading(false);
+    }
+  };
+
+  const saveManualClientIdentityMappings = async () => {
+    if (!crmManualBatchTargets.length || !crmSelectedClientId || crmMappingLoading) return;
+    if (!syncResult?.dryRun || !syncResult.syncRunId) {
+      showToast('Run a fresh Clients Dry Run before saving a manual batch.', 'error');
+      return;
+    }
+    const selected = crmClientDirectory.find(client => client.id === crmSelectedClientId);
+    if (!selected) return;
+    const confirmed = window.confirm(
+      `Map ${crmManualBatchTargets.length} selected Airtable identit${crmManualBatchTargets.length === 1 ? 'y' : 'ies'} to ${selected.companyName}? This audited rule will be reused by future mirror cycles.`,
+    );
+    if (!confirmed) return;
+
+    setCrmMappingLoading(true);
+    try {
+      const result = await AirtableSyncService.saveClientIdentityMappingsManualBatch(
+        crmManualBatchTargets.map(target => ({
+          sourceTable: target.sourceTable as 'Clients Book' | 'Departments',
+          groupKey: target.groupKey,
+          sourceNames: target.sourceNames,
+          action: 'MAP_TO_CLIENT',
+          canonicalClientId: selected.id,
+          canonicalCompanyName: selected.companyName,
+          reason: `Manually mapped ${target.displayName} to ${selected.companyName} in Airtable Sync Center`,
+        })),
+        syncResult.syncRunId,
+      );
+      setCrmManualBatchTargets([]);
+      showToast(
+        `${result.saved} client identity mapping${result.saved === 1 ? '' : 's'} saved. Running one fresh Dry Run...`,
+        'success',
+      );
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not save the manual client identity batch.', 'error');
     } finally {
       setCrmMappingLoading(false);
     }
@@ -884,6 +960,52 @@ export const AdminMigration = () => {
       recommendedClientId: candidate.recommendation?.canonicalClientId,
     });
 
+    const mappingTargetForNewOrganisation = (
+      candidate: ClientCrmNewOrganisationCandidate,
+    ): ClientCrmMappingTarget => ({
+      sourceTable: 'Clients Book',
+      groupKey: candidate.groupKey,
+      displayName: candidate.canonicalCompanyName,
+      sourceNames: candidate.sourceNames,
+      reason: 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED',
+      recommendedClientId: candidate.recommendation?.canonicalClientId,
+    });
+
+    const manualBatchCandidates: ClientCrmMappingTarget[] = [
+      ...newOrganisations.map(mappingTargetForNewOrganisation),
+      ...departmentConflicts.map(mappingTargetFor),
+      ...identityConflicts.map(mappingTargetFor),
+    ];
+    const selectedManualCandidates = manualBatchCandidates.filter(candidate => (
+      crmManualBatchSelection[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)]
+    ));
+
+    const toggleManualCandidate = (candidate: ClientCrmMappingTarget) => {
+      const key = clientCrmReviewKey(candidate.sourceTable, candidate.groupKey);
+      const selected = Boolean(crmManualBatchSelection[key]);
+      if (!selected && selectedManualCandidates.length >= 25) {
+        showToast('Select at most 25 identities in one manual batch.', 'error');
+        return;
+      }
+      setCrmManualBatchSelection(current => ({ ...current, [key]: !current[key] }));
+    };
+
+    const rowReviewControl = (
+      target: ClientCrmMappingTarget,
+      recommendationCandidate: ClientCrmBatchCandidate | null,
+    ) => crmManualBatchMode ? (
+      <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-black text-blue-700 dark:text-blue-300">
+        <input
+          type="checkbox"
+          aria-label={`Select ${target.displayName} for manual batch mapping`}
+          checked={Boolean(crmManualBatchSelection[clientCrmReviewKey(target.sourceTable, target.groupKey)])}
+          onChange={() => toggleManualCandidate(target)}
+          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-950"
+        />
+        Select
+      </label>
+    ) : reviewCheckbox(recommendationCandidate);
+
     return (
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
@@ -947,7 +1069,7 @@ export const AdminMigration = () => {
             <p className="mr-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
               {visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length} visible
             </p>
-            {visibleHighRecommendations.length > 0 && (
+            {!crmManualBatchMode && visibleHighRecommendations.length > 0 && (
               <button
                 onClick={() => setCrmBatchSelection(current => {
                   const next = { ...current };
@@ -973,7 +1095,7 @@ export const AdminMigration = () => {
                 {allVisibleHighSelected ? 'Clear visible' : `Select strong (${Math.min(visibleHighRecommendations.length, 25)})`}
               </button>
             )}
-            {selectedHighRecommendations.length > 0 && (
+            {!crmManualBatchMode && selectedHighRecommendations.length > 0 && (
               <button
                 onClick={() => saveRecommendedIdentityMappings(selectedHighRecommendations)}
                 disabled={crmBatchSaving}
@@ -982,6 +1104,48 @@ export const AdminMigration = () => {
                 {crmBatchSaving && <Loader2 className="animate-spin" size={14} />}
                 Save reviewed ({selectedHighRecommendations.length})
               </button>
+            )}
+            {isSuperAdmin && reviewTotal > 0 && !crmManualBatchMode && (
+              <button
+                onClick={() => {
+                  setCrmManualBatchMode(true);
+                  setCrmManualBatchSelection({});
+                }}
+                className="h-9 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-black text-blue-700 hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/60"
+              >
+                Manual batch
+              </button>
+            )}
+            {crmManualBatchMode && (
+              <>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                  {selectedManualCandidates.length}/25 selected
+                </span>
+                {selectedManualCandidates.length > 0 && (
+                  <button
+                    onClick={() => setCrmManualBatchSelection({})}
+                    className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setCrmManualBatchMode(false);
+                    setCrmManualBatchSelection({});
+                  }}
+                  className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => openClientIdentityManualBatch(selectedManualCandidates)}
+                  disabled={selectedManualCandidates.length === 0}
+                  className="h-9 rounded-lg bg-blue-600 px-3 text-xs font-black text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Map selected
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1002,7 +1166,10 @@ export const AdminMigration = () => {
                     {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-3">
-                    {reviewCheckbox(batchCandidateFor(candidate.sourceTable, candidate.groupKey))}
+                    {rowReviewControl(
+                      mappingTargetFor(candidate),
+                      batchCandidateFor(candidate.sourceTable, candidate.groupKey),
+                    )}
                     <button
                       onClick={() => openClientIdentityMapping(mappingTargetFor(candidate))}
                       className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -1029,16 +1196,12 @@ export const AdminMigration = () => {
                     {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    {reviewCheckbox(batchCandidateFor('Clients Book', candidate.groupKey))}
+                    {rowReviewControl(
+                      mappingTargetForNewOrganisation(candidate),
+                      batchCandidateFor('Clients Book', candidate.groupKey),
+                    )}
                     <button
-                      onClick={() => openClientIdentityMapping({
-                        sourceTable: 'Clients Book',
-                        groupKey: candidate.groupKey,
-                        displayName: candidate.canonicalCompanyName,
-                        sourceNames: candidate.sourceNames,
-                        reason: 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED',
-                        recommendedClientId: candidate.recommendation?.canonicalClientId,
-                      })}
+                      onClick={() => openClientIdentityMapping(mappingTargetForNewOrganisation(candidate))}
                       className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
                       {candidate.recommendation ? 'Review existing' : 'Map existing'}
@@ -1070,7 +1233,10 @@ export const AdminMigration = () => {
                     {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-3">
-                    {reviewCheckbox(batchCandidateFor('Departments', candidate.groupKey))}
+                    {rowReviewControl(
+                      mappingTargetFor(candidate),
+                      batchCandidateFor('Departments', candidate.groupKey),
+                    )}
                     <button
                       onClick={() => openClientIdentityMapping(mappingTargetFor(candidate))}
                       className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -2292,24 +2458,46 @@ export const AdminMigration = () => {
         </div>
       </div>
 
-      {crmMappingTarget && (
+      {activeCrmMappingTargets.length > 0 && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
           onMouseDown={event => {
-            if (event.target === event.currentTarget && !crmMappingLoading) setCrmMappingTarget(null);
+            if (event.target === event.currentTarget && !crmMappingLoading) {
+              setCrmMappingTarget(null);
+              setCrmManualBatchTargets([]);
+            }
           }}
         >
           <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-800 sm:gap-4 sm:px-5">
               <div className="min-w-0">
-                <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-300">Canonical client mapping</p>
-                <h2 className="mt-1 truncate text-lg font-black text-slate-950 dark:text-white">{crmMappingTarget.displayName}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  {crmMappingTarget.sourceTable} · {crmMappingTarget.groupKey}
+                <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-300">
+                  {isManualCrmMappingBatch ? 'Manual batch mapping' : 'Canonical client mapping'}
                 </p>
+                <h2 className="mt-1 truncate text-lg font-black text-slate-950 dark:text-white">
+                  {isManualCrmMappingBatch
+                    ? `Map ${activeCrmMappingTargets.length} selected identities`
+                    : activeCrmMappingTargets[0]?.displayName}
+                </h2>
+                {isManualCrmMappingBatch ? (
+                  <p
+                    className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400"
+                    title={activeCrmMappingTargets.map(target => target.displayName).join(', ')}
+                  >
+                    {activeCrmMappingTargets.slice(0, 3).map(target => target.displayName).join(', ')}
+                    {activeCrmMappingTargets.length > 3 ? ` +${activeCrmMappingTargets.length - 3} more` : ''}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    {activeCrmMappingTargets[0]?.sourceTable} · {activeCrmMappingTargets[0]?.groupKey}
+                  </p>
+                )}
               </div>
               <button
-                onClick={() => setCrmMappingTarget(null)}
+                onClick={() => {
+                  setCrmMappingTarget(null);
+                  setCrmManualBatchTargets([]);
+                }}
                 disabled={crmMappingLoading}
                 aria-label="Close"
                 title="Close"
@@ -2359,15 +2547,17 @@ export const AdminMigration = () => {
 
             <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                This rule is audited and reused by future mirror cycles.
+                {isManualCrmMappingBatch
+                  ? 'All selected identities will map to this client. The batch is audited against the current Dry Run.'
+                  : 'This rule is audited and reused by future mirror cycles.'}
               </p>
               <button
-                onClick={saveClientIdentityMapping}
+                onClick={isManualCrmMappingBatch ? saveManualClientIdentityMappings : saveClientIdentityMapping}
                 disabled={!crmSelectedClientId || crmMappingLoading}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {crmMappingLoading && <Loader2 className="animate-spin" size={16} />}
-                Save mapping
+                {isManualCrmMappingBatch ? `Save ${activeCrmMappingTargets.length} mappings` : 'Save mapping'}
               </button>
             </div>
           </div>

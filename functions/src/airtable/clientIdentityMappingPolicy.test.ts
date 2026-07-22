@@ -3,6 +3,8 @@ import {
   MAX_CLIENT_IDENTITY_BATCH_MAPPINGS,
   CLIENT_IDENTITY_RECOMMENDATION_TTL_MS,
   validateClientIdentityMappingBatch,
+  validateClientIdentityManualMappingBatch,
+  validateClientIdentityManualReviewRun,
   validateClientIdentityRecommendationRun,
 } from './clientIdentityMappingPolicy';
 
@@ -15,6 +17,111 @@ const recommendation = (overrides: Record<string, unknown> = {}) => ({
   canonicalCompanyName: 'Example Trust',
   recommendationConfidence: 'HIGH',
   ...overrides,
+});
+
+describe('manual client identity batch mapping policy', () => {
+  const manualMapping = (overrides: Record<string, unknown> = {}) => ({
+    sourceTable: 'Clients Book',
+    groupKey: 'example trust department',
+    sourceNames: ['Example Trust Department'],
+    action: 'MAP_TO_CLIENT',
+    canonicalClientId: 'client-example',
+    canonicalCompanyName: 'Example Trust',
+    ...overrides,
+  });
+
+  const reviewRun = (finishedAt: string) => ({
+    kind: 'AIRTABLE_SYNC_CENTER',
+    dryRun: true,
+    success: true,
+    mappingVersion: 'airtable-sync-center-v8',
+    userId: 'super-admin-1',
+    finishedAt,
+    moduleResults: [{
+      module: 'clients',
+      diagnostics: {
+        clientsBook: {
+          conflictCandidates: [{
+            sourceTable: 'Clients Book',
+            groupKey: 'example trust department',
+            companyNames: ['Example Trust Department'],
+            reason: 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED',
+          }],
+        },
+      },
+    }],
+  });
+
+  it('requires a Super Admin, confirmation and one shared canonical target', () => {
+    expect(() => validateClientIdentityManualMappingBatch([manualMapping()], 'ADMIN', true))
+      .toThrow(/Super Admin/i);
+    expect(() => validateClientIdentityManualMappingBatch([manualMapping()], 'SUPER_ADMIN', false))
+      .toThrow(/confirmation/i);
+    expect(() => validateClientIdentityManualMappingBatch([
+      manualMapping(),
+      manualMapping({ groupKey: 'other department', sourceNames: ['Other Department'], canonicalClientId: 'client-other' }),
+    ], 'SUPER_ADMIN', true)).toThrow(/same canonical client/i);
+  });
+
+  it('rejects unsupported actions, duplicate scopes and missing source evidence', () => {
+    expect(() => validateClientIdentityManualMappingBatch([
+      manualMapping({ action: 'APPROVE_NEW_CLIENT' }),
+    ], 'SUPER_ADMIN', true)).toThrow(/existing client/i);
+    expect(() => validateClientIdentityManualMappingBatch([
+      manualMapping(),
+      manualMapping(),
+    ], 'SUPER_ADMIN', true)).toThrow(/duplicated/i);
+    expect(() => validateClientIdentityManualMappingBatch([
+      manualMapping({ sourceNames: [] }),
+    ], 'SUPER_ADMIN', true)).toThrow(/source evidence/i);
+  });
+
+  it('binds every selected identity to the same recent Clients dry run and actor', () => {
+    const now = Date.parse('2026-07-22T12:00:00.000Z');
+    const mappings = validateClientIdentityManualMappingBatch([manualMapping()], 'SUPER_ADMIN', true);
+    const run = reviewRun(new Date(now - 60_000).toISOString());
+
+    expect(validateClientIdentityManualReviewRun(
+      run,
+      mappings,
+      'super-admin-1',
+      'airtable-sync-center-v8',
+      now,
+    )).toEqual({ ok: true });
+    expect(validateClientIdentityManualReviewRun(
+      run,
+      [{ ...mappings[0], groupKey: 'changed identity' }],
+      'super-admin-1',
+      'airtable-sync-center-v8',
+      now,
+    )).toEqual({ ok: false, reason: 'IDENTITY_NO_LONGER_UNRESOLVED' });
+    expect(validateClientIdentityManualReviewRun(
+      run,
+      [{ ...mappings[0], sourceNames: ['Changed evidence'] }],
+      'super-admin-1',
+      'airtable-sync-center-v8',
+      now,
+    )).toEqual({ ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' });
+    expect(validateClientIdentityManualReviewRun(
+      run,
+      mappings,
+      'super-admin-2',
+      'airtable-sync-center-v8',
+      now,
+    )).toEqual({ ok: false, reason: 'REVIEW_ACTOR_CHANGED' });
+  });
+
+  it('rejects expired manual review runs', () => {
+    const now = Date.parse('2026-07-22T12:00:00.000Z');
+    const mappings = validateClientIdentityManualMappingBatch([manualMapping()], 'SUPER_ADMIN', true);
+    expect(validateClientIdentityManualReviewRun(
+      reviewRun(new Date(now - CLIENT_IDENTITY_RECOMMENDATION_TTL_MS - 1).toISOString()),
+      mappings,
+      'super-admin-1',
+      'airtable-sync-center-v8',
+      now,
+    )).toEqual({ ok: false, reason: 'REVIEW_RUN_EXPIRED' });
+  });
 });
 
 describe('client identity batch mapping policy', () => {

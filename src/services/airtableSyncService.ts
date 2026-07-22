@@ -183,6 +183,21 @@ export type AirtableClientIdentityBatchMappingResult = {
   }>;
 };
 
+export type AirtableClientIdentityManualBatchMappingRequest = Omit<
+  AirtableClientIdentityMappingRequest,
+  'action' | 'canonicalClientId'
+> & {
+  sourceTable: 'Clients Book' | 'Departments';
+  action: 'MAP_TO_CLIENT';
+  canonicalClientId: string;
+};
+
+export type AirtableClientIdentityManualBatchMappingResult = AirtableClientIdentityBatchMappingResult & {
+  reviewRunId: string;
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+};
+
 export type AirtableSyncAuditTrail = {
   runs: AirtableSyncRunSummary[];
   conflicts: AirtableSyncConflict[];
@@ -346,6 +361,19 @@ export const AirtableSyncService = {
     const saveFn = httpsCallable(functions, 'saveAirtableClientIdentityMappingsBatch', LONG_CALLABLE_OPTIONS);
     const response = await saveFn({ mappings, syncRunId, confirmed: true });
     return response.data as AirtableClientIdentityBatchMappingResult;
+  },
+
+  saveClientIdentityMappingsManualBatch: async (
+    mappings: AirtableClientIdentityManualBatchMappingRequest[],
+    syncRunId: string,
+  ): Promise<AirtableClientIdentityManualBatchMappingResult> => {
+    const saveFn = httpsCallable(
+      functions,
+      'saveAirtableClientIdentityMappingsManualBatch',
+      LONG_CALLABLE_OPTIONS,
+    );
+    const response = await saveFn({ mappings, syncRunId, confirmed: true });
+    return response.data as AirtableClientIdentityManualBatchMappingResult;
   },
 
   revokeClientIdentityMapping: async (
