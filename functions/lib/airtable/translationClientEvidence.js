@@ -1,0 +1,158 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.enrichTranslationClientIdentity = exports.buildTranslationClientEvidence = exports.accountRefFromTranslationInvoice = exports.normalizeTranslationClientName = void 0;
+const text = (value) => {
+    if (value === null || value === undefined)
+        return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).trim();
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const candidate = value;
+        return text(candidate.id || candidate.name || candidate.value);
+    }
+    return '';
+};
+const values = (value) => {
+    if (!Array.isArray(value)) {
+        const normalized = text(value);
+        return normalized ? [normalized] : [];
+    }
+    return value.flatMap(item => values(item));
+};
+const normalizeFieldName = (value) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+const collectFieldValues = (fields, names) => {
+    const requested = names.map(normalizeFieldName);
+    const collected = [];
+    Object.entries(fields).forEach(([fieldName, value]) => {
+        const normalized = normalizeFieldName(fieldName);
+        if (requested.some(name => normalized === name || normalized.startsWith(name) || normalized.endsWith(name))) {
+            collected.push(...values(value));
+        }
+    });
+    return unique(collected);
+};
+const unique = (input) => Array.from(new Set(input.map(value => value.trim()).filter(Boolean)));
+const normalizeTranslationClientName = (value) => value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/\b(ltd|limited|plc|nhs|trust|cic|llp|department|dept|service|services)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+exports.normalizeTranslationClientName = normalizeTranslationClientName;
+const accountRefFromTranslationInvoice = (invoiceNumber) => {
+    const normalized = invoiceNumber.trim().toUpperCase();
+    if (!normalized || /^REC[A-Z0-9]+$/.test(normalized))
+        return '';
+    const match = normalized.match(/^([A-Z][A-Z0-9]{2,})(?=[.\s/_-]|$)/);
+    if (!match)
+        return '';
+    const candidate = match[1];
+    return ['AIRTABLE', 'INVOICE', 'TRANSLATION'].includes(candidate) ? '' : candidate;
+};
+exports.accountRefFromTranslationInvoice = accountRefFromTranslationInvoice;
+const buildTranslationClientEvidence = (records) => {
+    const evidence = new Map();
+    records.forEach(record => {
+        const linkedTranslationIds = collectFieldValues(record.fields, [
+            'Translations',
+            'TR ID',
+        ]).filter(value => /^rec[a-z0-9]+$/i.test(value));
+        if (linkedTranslationIds.length === 0)
+            return;
+        const invoiceNumbers = collectFieldValues(record.fields, [
+            'TR Invoice Nbr',
+            'Invoice Number',
+            'Invoice No',
+            'Invoice Reference',
+            'Reference',
+            'Name',
+        ]).filter(value => !/^rec[a-z0-9]+$/i.test(value));
+        const accountRefs = unique(invoiceNumbers.map(exports.accountRefFromTranslationInvoice));
+        const agencyNames = collectFieldValues(record.fields, ['TR Agency']);
+        const requestedByNames = collectFieldValues(record.fields, ['TR Requested By']);
+        const emails = collectFieldValues(record.fields, ['TR client email']).map(value => value.toLowerCase());
+        linkedTranslationIds.forEach(translationRecordId => {
+            const current = evidence.get(translationRecordId) || {
+                translationRecordId,
+                invoiceRecordIds: [],
+                invoiceNumbers: [],
+                accountRefs: [],
+                agencyNames: [],
+                requestedByNames: [],
+                emails: [],
+                accountRefAmbiguous: false,
+                accountRefSource: '',
+            };
+            const mergedAccountRefs = unique([...current.accountRefs, ...accountRefs]);
+            evidence.set(translationRecordId, {
+                translationRecordId,
+                invoiceRecordIds: unique([...current.invoiceRecordIds, record.id]),
+                invoiceNumbers: unique([...current.invoiceNumbers, ...invoiceNumbers]),
+                accountRefs: mergedAccountRefs,
+                agencyNames: unique([...current.agencyNames, ...agencyNames]),
+                requestedByNames: unique([...current.requestedByNames, ...requestedByNames]),
+                emails: unique([...current.emails, ...emails]),
+                accountRefAmbiguous: mergedAccountRefs.length > 1,
+                accountRefSource: mergedAccountRefs.length === 1 ? 'INVOICE_NUMBER' : '',
+            });
+        });
+    });
+    const refsByEmail = new Map();
+    const refsByAgency = new Map();
+    const addRefs = (index, key, refs) => {
+        if (!key)
+            return;
+        const current = index.get(key) || new Set();
+        refs.forEach(ref => current.add(ref));
+        index.set(key, current);
+    };
+    evidence.forEach(item => {
+        if (item.accountRefs.length !== 1 || item.accountRefAmbiguous)
+            return;
+        item.emails.forEach(email => addRefs(refsByEmail, email.toLowerCase(), item.accountRefs));
+        item.agencyNames.forEach(agency => addRefs(refsByAgency, (0, exports.normalizeTranslationClientName)(agency), item.accountRefs));
+    });
+    evidence.forEach((item, translationRecordId) => {
+        if (item.accountRefs.length > 0)
+            return;
+        const emailRefs = unique(item.emails.flatMap(email => Array.from(refsByEmail.get(email.toLowerCase()) || [])));
+        const agencyRefs = unique(item.agencyNames.flatMap(agency => (Array.from(refsByAgency.get((0, exports.normalizeTranslationClientName)(agency)) || []))));
+        const inferredRefs = emailRefs.length === 1 ? emailRefs : agencyRefs.length === 1 ? agencyRefs : [];
+        const competingRefs = unique([...emailRefs, ...agencyRefs]);
+        evidence.set(translationRecordId, {
+            ...item,
+            accountRefs: inferredRefs,
+            accountRefAmbiguous: competingRefs.length > 1 && inferredRefs.length === 0,
+            accountRefSource: emailRefs.length === 1
+                ? 'SHARED_EMAIL'
+                : agencyRefs.length === 1
+                    ? 'EXACT_AGENCY'
+                    : '',
+        });
+    });
+    return evidence;
+};
+exports.buildTranslationClientEvidence = buildTranslationClientEvidence;
+const enrichTranslationClientIdentity = (identity, evidence) => {
+    if (!evidence)
+        return identity;
+    const accountRef = evidence.accountRefs.length === 1 ? evidence.accountRefs[0] : '';
+    const companyName = identity.companyName === 'Airtable Client'
+        ? evidence.agencyNames[0] || identity.companyName
+        : identity.companyName;
+    const email = identity.email || evidence.emails[0] || '';
+    return {
+        ...identity,
+        companyName,
+        normalizedCompanyName: (0, exports.normalizeTranslationClientName)(companyName),
+        bookingAgent: identity.bookingAgent || evidence.requestedByNames[0] || '',
+        email,
+        uniqueClientKey: identity.uniqueClientKey || accountRef,
+        sageAccountRef: identity.sageAccountRef || accountRef,
+        invoiceEmail: identity.invoiceEmail || email,
+    };
+};
+exports.enrichTranslationClientIdentity = enrichTranslationClientIdentity;
+//# sourceMappingURL=translationClientEvidence.js.map

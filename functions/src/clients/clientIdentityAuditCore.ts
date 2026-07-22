@@ -227,6 +227,10 @@ export const normalizeOrganizationName = (value: unknown) => text(value)
   .replace(/\s+/g, ' ')
   .trim();
 
+export const isGenericOrganizationName = (value: unknown) => (
+  GENERIC_ORGANIZATION_NAMES.has(normalizeOrganizationName(value))
+);
+
 export const extractUkPostcode = (value: unknown) => {
   const match = text(value).toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/);
   if (!match) return '';
@@ -264,7 +268,7 @@ const extractAliases = (source: ClientIdentitySourceRecord) => {
   ]);
 };
 
-const organizationDomains = (emails: string[]) => unique(emails
+export const extractOrganizationDomains = (emails: string[]) => unique(emails
   .map(email => email.split('@')[1] || '')
   .filter(domain => domain && !NON_ORGANIZATION_DOMAINS.has(domain)));
 
@@ -357,8 +361,8 @@ const prepareRecord = (source: ClientIdentitySourceRecord, input: ClientIdentity
     invoiceEmail: invoiceEmails[0] || '',
     phoneNumbers,
     phoneKeys: phoneNumbers,
-    organizationDomains: organizationDomains([...contactEmails, ...invoiceEmails]),
-    domainKeys: organizationDomains([...contactEmails, ...invoiceEmails]),
+    organizationDomains: extractOrganizationDomains([...contactEmails, ...invoiceEmails]),
+    domainKeys: extractOrganizationDomains([...contactEmails, ...invoiceEmails]),
     sageAccountRef: text(source.sageAccountRef),
     sageKey: upperIdentity(source.sageAccountRef),
     airtableClientKey: text(source.airtableClientKey),
@@ -380,6 +384,10 @@ const tokenSimilarity = (left: string, right: string) => {
   const intersection = Array.from(leftTokens).filter(token => rightTokens.has(token)).length;
   return (2 * intersection) / (leftTokens.size + rightTokens.size || 1);
 };
+
+export const organizationNameSimilarity = (left: unknown, right: unknown) => (
+  tokenSimilarity(normalizeOrganizationName(left), normalizeOrganizationName(right))
+);
 
 const bestNameSimilarity = (left: PreparedRecord, right: PreparedRecord) => left.matchingNames.reduce(
   (best, leftName) => Math.max(best, ...right.matchingNames.map(rightName => tokenSimilarity(leftName, rightName))),

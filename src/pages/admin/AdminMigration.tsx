@@ -16,11 +16,13 @@ import {
   Download,
   PlayCircle,
   RefreshCw,
+  Search,
   ShieldCheck,
   SlidersHorizontal,
   UserCog,
   Users,
-  Wallet
+  Wallet,
+  X
 } from 'lucide-react';
 import { MigrationService } from '../../services/migrationService';
 import {
@@ -38,10 +40,105 @@ import {
   FinancialReconciliationAudit,
   AirtableSyncService
 } from '../../services/airtableSyncService';
+import { ClientService } from '../../services/clientService';
+import { Client } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 
 type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
+
+type ClientCrmRecommendation = {
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+  confidence: 'HIGH' | 'MEDIUM';
+  score: number;
+  autoReviewEligible: boolean;
+  evidence: Array<{
+    code: string;
+    label: string;
+    value: string;
+    strength: 'STRONG' | 'SUPPORTING';
+  }>;
+  alternatives?: Array<{
+    canonicalClientId: string;
+    canonicalCompanyName: string;
+    score: number;
+  }>;
+};
+
+type ClientCrmConflictCandidate = {
+  sourceTable: 'Clients Book' | 'Departments';
+  reason: string;
+  groupKey: string;
+  sourceRecordIds?: string[];
+  companyNames: string[];
+  candidateClientIds: string[];
+  recommendation?: ClientCrmRecommendation;
+};
+
+type ClientCrmNewOrganisationCandidate = {
+  groupKey: string;
+  canonicalCompanyName: string;
+  proposedClientId: string;
+  sourceRecordCount: number;
+  sourceNames: string[];
+  recommendation?: ClientCrmRecommendation;
+};
+
+type ClientCrmDiagnostics = {
+  canonicalAccounts?: {
+    sourceRecords?: number;
+    wouldCreateCanonicalAccounts?: Array<{
+      companyName: string;
+      sageAccountRef: string;
+      clientId: string;
+      groupKey: string;
+    }>;
+    writeReadiness?: {
+      ready: boolean;
+      blockerCount: number;
+      blockers: Array<{ reason: string; count: number }>;
+    };
+  };
+  clientsBook?: {
+    clientsBookSourceRecords?: number;
+    departmentSourceRecords?: number;
+    exactOrganisationGroups?: number;
+    canonicalOrganisations?: number;
+    resolutionMethods?: Record<string, number>;
+    conflictReasons?: Record<string, number>;
+    conflictCandidates?: ClientCrmConflictCandidate[];
+    newCanonicalOrganisationCandidates?: ClientCrmNewOrganisationCandidate[];
+    projectedDepartments?: number;
+    projectedAgents?: number;
+    projectedMemberships?: number;
+    unresolvedContacts?: number;
+    writeReadiness?: {
+      ready: boolean;
+      blockerCount: number;
+      blockers: Array<{ reason: string; count: number }>;
+    };
+  };
+};
+
+type ClientCrmMappingTarget = {
+  sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+  groupKey: string;
+  displayName: string;
+  sourceNames: string[];
+  reason: string;
+  recommendedClientId?: string;
+};
+
+type ClientCrmBatchCandidate = {
+  sourceTable: 'Clients Book' | 'Departments';
+  groupKey: string;
+  displayName: string;
+  sourceNames: string[];
+  recommendation: ClientCrmRecommendation;
+};
+
+const clientCrmReviewKey = (sourceTable: string, groupKey: string) => `${sourceTable}|${groupKey}`;
 
 const syncStrategyOptions: Array<{
   id: AirtableSyncStrategy;
@@ -149,6 +246,30 @@ const StatPill = ({ label, value, className = '' }: { label: string; value: numb
   </div>
 );
 
+const ClientRecommendationSummary = ({ recommendation }: { recommendation: ClientCrmRecommendation }) => (
+  <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+        recommendation.confidence === 'HIGH'
+          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+          : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+      }`}>
+        {recommendation.confidence} · SCORE {recommendation.score}
+      </span>
+      <span className="min-w-0 truncate text-xs font-black text-blue-800 dark:text-blue-200">
+        Suggested: {recommendation.canonicalCompanyName}
+      </span>
+    </div>
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {recommendation.evidence.slice(0, 3).map(evidence => (
+        <span key={`${evidence.code}-${evidence.value}`} title={`${evidence.label}: ${evidence.value}`} className="max-w-full truncate rounded bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700">
+          {evidence.label}: {evidence.value}
+        </span>
+      ))}
+    </div>
+  </div>
+);
+
 export const AdminMigration = () => {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('clients');
   const [loading, setLoading] = useState(false);
@@ -172,9 +293,17 @@ export const AdminMigration = () => {
   const [cleanRepairDryRun, setCleanRepairDryRun] = useState(false);
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
   const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
-  const [cleanDryRunKeys, setCleanDryRunKeys] = useState<Set<string>>(new Set());
+  const [approvedDryRunIds, setApprovedDryRunIds] = useState<Record<string, string>>({});
   const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'conflicts' | 'unmatched' | 'changes'>('all');
   const [showInfo, setShowInfo] = useState(false);
+  const [crmReviewFilter, setCrmReviewFilter] = useState('');
+  const [crmMappingTarget, setCrmMappingTarget] = useState<ClientCrmMappingTarget | null>(null);
+  const [crmClientSearch, setCrmClientSearch] = useState('');
+  const [crmClientDirectory, setCrmClientDirectory] = useState<Client[]>([]);
+  const [crmSelectedClientId, setCrmSelectedClientId] = useState('');
+  const [crmMappingLoading, setCrmMappingLoading] = useState(false);
+  const [crmBatchSelection, setCrmBatchSelection] = useState<Record<string, boolean>>({});
+  const [crmBatchSaving, setCrmBatchSaving] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const interpreterStatsRequestedRef = useRef(false);
@@ -204,8 +333,8 @@ export const AdminMigration = () => {
   const activeStrategyConfig = getStrategyConfig(syncStrategy);
   const fullRunKey = `full:${syncStrategy}:${recordLimit}`;
   const moduleRunKey = activeModule ? `${activeModule.id}:${syncStrategy}:${recordLimit}` : fullRunKey;
-  const hasCleanDryRun = cleanDryRunKeys.has(moduleRunKey);
-  const hasCleanFullDryRun = cleanDryRunKeys.has(fullRunKey);
+  const hasCleanDryRun = Boolean(approvedDryRunIds[moduleRunKey]);
+  const hasCleanFullDryRun = Boolean(approvedDryRunIds[fullRunKey]);
   const writeBlockedByDryRun = activeModule ? !hasCleanDryRun : !hasCleanFullDryRun;
   const activeModuleOptions = [
     { id: 'overview' as WorkspaceTab, label: 'Overview' },
@@ -236,6 +365,13 @@ export const AdminMigration = () => {
     }, {});
     return { bySeverity, byReason };
   }, [openConflicts]);
+  const visibleCrmClients = useMemo(() => {
+    const query = crmClientSearch.trim().toLowerCase();
+    return crmClientDirectory
+      .filter(client => !query || [client.companyName, client.sageAccountRef, client.id]
+        .some(value => String(value || '').toLowerCase().includes(query)))
+      .slice(0, 60);
+  }, [crmClientDirectory, crmClientSearch]);
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -427,7 +563,8 @@ export const AdminMigration = () => {
       ? `full:${syncStrategy}:${recordLimit}`
       : `${modules.join('+')}:${syncStrategy}:${recordLimit}`;
 
-    if (!dryRun && !cleanDryRunKeys.has(requestedKey)) {
+    const expectedDryRunId = approvedDryRunIds[requestedKey];
+    if (!dryRun && !expectedDryRunId) {
       showToast('Run a clean Dry Run with the same module and sync strategy before writing data.', 'error');
       return;
     }
@@ -457,19 +594,39 @@ export const AdminMigration = () => {
     setSyncError(null);
     setSyncAttemptLabel(`${dryRun ? 'Dry Run' : 'Write Sync'} · ${moduleLabel} · ${activeStrategyConfig.label}`);
     try {
-      const result = await AirtableSyncService.run(dryRun, modules, recordLimit, syncStrategy);
+      const result = await AirtableSyncService.run(
+        dryRun,
+        modules,
+        recordLimit,
+        syncStrategy,
+        dryRun ? undefined : expectedDryRunId,
+      );
       setSyncResult(result);
       await loadCheckpoint();
       await loadDependencyCounts();
       await loadSyncAuditTrail();
-      if (dryRun && result.success && result.stats.error === 0) {
-        setCleanDryRunKeys(prev => new Set(prev).add(requestedKey));
+      if (
+        dryRun
+        && result.success
+        && result.stats.error === 0
+        && result.writeApproval?.ready === true
+        && result.syncRunId
+      ) {
+        setApprovedDryRunIds(prev => ({ ...prev, [requestedKey]: result.syncRunId as string }));
+      } else {
+        setApprovedDryRunIds(prev => {
+          const next = { ...prev };
+          delete next[requestedKey];
+          return next;
+        });
       }
       showToast(
         dryRun
-          ? `Dry Run complete: ${result.moduleResults.length} module(s) inspected.`
+          ? result.writeApproval?.ready === false
+            ? `Dry Run complete with ${result.writeApproval.blockerCount} write blocker(s). Review staging before Write Sync.`
+            : `Dry Run complete: ${result.moduleResults.length} module(s) inspected.`
           : `Sync complete: ${result.stats.created} created, ${result.stats.updated} updated.`,
-        result.success ? 'success' : 'error'
+        !result.success ? 'error' : result.writeApproval?.ready === false ? 'info' : 'success'
       );
     } catch (err: any) {
       const message = err?.message || 'Airtable sync failed';
@@ -492,6 +649,119 @@ export const AdminMigration = () => {
     loadInterpreterStats();
   }, [activeTab]);
 
+  const openClientIdentityMapping = async (target: ClientCrmMappingTarget) => {
+    setCrmMappingTarget(target);
+    setCrmClientSearch('');
+    setCrmSelectedClientId(target.recommendedClientId || '');
+    if (crmClientDirectory.length) return;
+    setCrmMappingLoading(true);
+    try {
+      const clients = await ClientService.getAll();
+      setCrmClientDirectory(clients
+        .filter(client => client.recordState !== 'ARCHIVED')
+        .sort((left, right) => left.companyName.localeCompare(right.companyName)));
+    } catch (error) {
+      console.warn('Failed to load canonical client directory', error);
+      showToast('Could not load the Client CRM directory.', 'error');
+    } finally {
+      setCrmMappingLoading(false);
+    }
+  };
+
+  const refreshClientIdentityDryRun = async () => {
+    setApprovedDryRunIds({});
+    setCrmBatchSelection({});
+    await runSync(true, ['clients']);
+  };
+
+  const saveRecommendedIdentityMappings = async (candidates: ClientCrmBatchCandidate[]) => {
+    if (!candidates.length || crmBatchSaving) return;
+    if (!syncResult?.dryRun || !syncResult.syncRunId) {
+      showToast('Run a fresh Clients Dry Run before saving recommendations.', 'error');
+      return;
+    }
+    if (candidates.length > 25) {
+      showToast('Review at most 25 client identity recommendations in one batch.', 'error');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Map ${candidates.length} Airtable identit${candidates.length === 1 ? 'y' : 'ies'} to the suggested existing Client CRM organisation${candidates.length === 1 ? '' : 's'}? Each mapping is audited and can be revoked.`,
+    );
+    if (!confirmed) return;
+    setCrmBatchSaving(true);
+    try {
+      const result = await AirtableSyncService.saveClientIdentityMappingsBatch(
+        candidates.map(candidate => ({
+          sourceTable: candidate.sourceTable,
+          groupKey: candidate.groupKey,
+          sourceNames: candidate.sourceNames,
+          action: 'MAP_TO_CLIENT',
+          canonicalClientId: candidate.recommendation.canonicalClientId,
+          canonicalCompanyName: candidate.recommendation.canonicalCompanyName,
+          recommendationConfidence: 'HIGH',
+          reason: `Accepted high-confidence recommendation for ${candidate.displayName} in Airtable Sync Center`,
+        })),
+        syncResult.syncRunId,
+      );
+      showToast(`${result.saved} client identity mapping${result.saved === 1 ? '' : 's'} saved. Running a fresh Dry Run...`, 'success');
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not save the selected client identity mappings.', 'error');
+    } finally {
+      setCrmBatchSaving(false);
+    }
+  };
+
+  const saveClientIdentityMapping = async () => {
+    if (!crmMappingTarget || !crmSelectedClientId) return;
+    const selected = crmClientDirectory.find(client => client.id === crmSelectedClientId);
+    if (!selected) return;
+    setCrmMappingLoading(true);
+    try {
+      await AirtableSyncService.saveClientIdentityMapping({
+        sourceTable: crmMappingTarget.sourceTable,
+        groupKey: crmMappingTarget.groupKey,
+        sourceNames: crmMappingTarget.sourceNames,
+        action: 'MAP_TO_CLIENT',
+        canonicalClientId: selected.id,
+        canonicalCompanyName: selected.companyName,
+        reason: `Mapped ${crmMappingTarget.displayName} to ${selected.companyName} in Airtable Sync Center`,
+      });
+      setCrmMappingTarget(null);
+      showToast(`${crmMappingTarget.displayName} is now mapped to ${selected.companyName}.`, 'success');
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not save the client identity mapping.', 'error');
+    } finally {
+      setCrmMappingLoading(false);
+    }
+  };
+
+  const approveNewCanonicalOrganisation = async (
+    candidate: ClientCrmNewOrganisationCandidate,
+    sourceTable: 'Clients' | 'Clients Book' = 'Clients Book',
+  ) => {
+    if (!window.confirm(`Approve "${candidate.canonicalCompanyName}" as a new canonical Client CRM organisation? Use this only when it is not a department, alias or duplicate.`)) return;
+    setCrmMappingLoading(true);
+    try {
+      await AirtableSyncService.saveClientIdentityMapping({
+        sourceTable,
+        groupKey: candidate.groupKey,
+        sourceNames: candidate.sourceNames,
+        sourceName: candidate.canonicalCompanyName,
+        action: 'APPROVE_NEW_CLIENT',
+        canonicalCompanyName: candidate.canonicalCompanyName,
+        reason: 'Explicitly approved as a new canonical organisation in Airtable Sync Center',
+      });
+      showToast(`${candidate.canonicalCompanyName} was approved for canonical creation.`, 'success');
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not approve the new canonical organisation.', 'error');
+    } finally {
+      setCrmMappingLoading(false);
+    }
+  };
+
   const renderStats = (result?: AirtableModuleResult | null) => {
     if (!result) {
       return (
@@ -509,6 +779,367 @@ export const AdminMigration = () => {
         <StatPill label="Conflicts" value={result.stats.conflict} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
         <StatPill label="Errors" value={result.stats.error} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
       </div>
+    );
+  };
+
+  const renderClientCrmStaging = (result?: AirtableModuleResult | null) => {
+    if (!result?.diagnostics) return null;
+    const diagnostics = result.diagnostics as ClientCrmDiagnostics;
+    const accounts = diagnostics.canonicalAccounts || {};
+    const clientsBook = diagnostics.clientsBook || {};
+    const newOrganisations = clientsBook.newCanonicalOrganisationCandidates || [];
+    const conflicts = clientsBook.conflictCandidates || [];
+    const departmentConflicts = conflicts.filter(candidate => candidate.sourceTable === 'Departments');
+    const identityConflicts = conflicts.filter(candidate => (
+      candidate.sourceTable === 'Clients Book'
+      && candidate.reason !== 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED'
+    ));
+    const query = crmReviewFilter.trim().toLowerCase();
+    const matchesQuery = (values: string[]) => !query || values.some(value => value.toLowerCase().includes(query));
+    const visibleNewOrganisations = newOrganisations.filter(candidate => matchesQuery([
+      candidate.canonicalCompanyName,
+      candidate.groupKey,
+      ...candidate.sourceNames,
+    ]));
+    const visibleDepartmentConflicts = departmentConflicts.filter(candidate => matchesQuery([
+      candidate.groupKey,
+      ...candidate.companyNames,
+    ]));
+    const visibleIdentityConflicts = identityConflicts.filter(candidate => matchesQuery([
+      candidate.groupKey,
+      candidate.reason,
+      ...candidate.companyNames,
+      ...candidate.candidateClientIds,
+    ]));
+    const canonicalCreates = accounts.wouldCreateCanonicalAccounts || [];
+    const visibleCanonicalCreates = canonicalCreates.filter(candidate => matchesQuery([
+      candidate.companyName,
+      candidate.sageAccountRef,
+      candidate.clientId,
+      candidate.groupKey,
+    ]));
+    const reviewTotal = canonicalCreates.length + newOrganisations.length + departmentConflicts.length + identityConflicts.length;
+
+    const highRecommendationCandidates: ClientCrmBatchCandidate[] = [
+      ...newOrganisations.map(candidate => ({
+        sourceTable: 'Clients Book' as const,
+        groupKey: candidate.groupKey,
+        displayName: candidate.canonicalCompanyName,
+        sourceNames: candidate.sourceNames,
+        recommendation: candidate.recommendation,
+      })),
+      ...[...departmentConflicts, ...identityConflicts].map(candidate => ({
+        sourceTable: candidate.sourceTable,
+        groupKey: candidate.groupKey,
+        displayName: candidate.companyNames[0] || candidate.groupKey,
+        sourceNames: candidate.companyNames,
+        recommendation: candidate.recommendation,
+      })),
+    ].filter((candidate): candidate is ClientCrmBatchCandidate => Boolean(
+      candidate.recommendation?.confidence === 'HIGH'
+      && candidate.recommendation.autoReviewEligible,
+    ));
+    const visibleHighRecommendations = highRecommendationCandidates.filter(candidate => matchesQuery([
+      candidate.displayName,
+      candidate.groupKey,
+      candidate.recommendation.canonicalCompanyName,
+    ]));
+    const selectedHighRecommendations = highRecommendationCandidates.filter(candidate => (
+      crmBatchSelection[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)]
+    ));
+    const allVisibleHighSelected = visibleHighRecommendations.length > 0 && visibleHighRecommendations.every(candidate => (
+      crmBatchSelection[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)]
+    ));
+
+    const toggleRecommendation = (candidate: ClientCrmBatchCandidate) => {
+      const key = clientCrmReviewKey(candidate.sourceTable, candidate.groupKey);
+      setCrmBatchSelection(current => ({ ...current, [key]: !current[key] }));
+    };
+
+    const reviewCheckbox = (candidate: ClientCrmBatchCandidate | null) => candidate ? (
+      <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-black text-slate-600 dark:text-slate-300">
+        <input
+          type="checkbox"
+          checked={Boolean(crmBatchSelection[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)])}
+          onChange={() => toggleRecommendation(candidate)}
+          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-950"
+        />
+        Include
+      </label>
+    ) : null;
+
+    const batchCandidateFor = (
+      sourceTable: 'Clients Book' | 'Departments',
+      groupKey: string,
+    ) => highRecommendationCandidates.find(candidate => (
+      candidate.sourceTable === sourceTable && candidate.groupKey === groupKey
+    )) || null;
+
+    const mappingTargetFor = (candidate: ClientCrmConflictCandidate): ClientCrmMappingTarget => ({
+      sourceTable: candidate.sourceTable,
+      groupKey: candidate.groupKey,
+      displayName: candidate.companyNames[0] || candidate.groupKey,
+      sourceNames: candidate.companyNames,
+      reason: candidate.reason,
+      recommendedClientId: candidate.recommendation?.canonicalClientId,
+    });
+
+    return (
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 rounded-lg p-2 ${result.writeReadiness?.ready ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+              {result.writeReadiness?.ready ? <CheckCircle2 size={18} /> : <ShieldCheck size={18} />}
+            </div>
+            <div>
+              <h3 className="font-black text-slate-950 dark:text-white">Client CRM staging</h3>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                Canonical organisations are separated from departments and agents before any write is approved.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/admin/clients/identity-audit"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Open identity audit <ArrowRight size={16} />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-2 border-b border-slate-200 dark:border-slate-800 md:grid-cols-4 lg:grid-cols-6">
+          {[
+            ['Account records', accounts.sourceRecords || 0],
+            ['Contact rows', clientsBook.clientsBookSourceRecords || 0],
+            ['Canonical clients', clientsBook.canonicalOrganisations || 0],
+            ['Departments', clientsBook.projectedDepartments || 0],
+            ['Agents', clientsBook.projectedAgents || 0],
+            ['Needs review', reviewTotal],
+          ].map(([label, value], index) => (
+            <div key={String(label)} className={`px-4 py-3 ${index ? 'border-l border-slate-200 dark:border-slate-800' : ''}`}>
+              <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</p>
+              <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {!result.writeReadiness?.ready && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+            <div className="flex items-start gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 shrink-0" size={17} />
+              <p>
+                Write Sync is locked by {result.writeReadiness?.blockerCount || reviewTotal} identity decision(s). Mapping a row records an auditable rule; rerun Dry Run until this gate is clear.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative w-full sm:max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input
+              value={crmReviewFilter}
+              onChange={event => setCrmReviewFilter(event.target.value)}
+              placeholder="Find an organisation, department or source key"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="mr-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length} visible
+            </p>
+            {visibleHighRecommendations.length > 0 && (
+              <button
+                onClick={() => setCrmBatchSelection(current => {
+                  const next = { ...current };
+                  if (allVisibleHighSelected) {
+                    visibleHighRecommendations.forEach(candidate => {
+                      next[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)] = false;
+                    });
+                  } else {
+                    const selectedCount = highRecommendationCandidates.filter(candidate => (
+                      next[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)]
+                    )).length;
+                    visibleHighRecommendations
+                      .filter(candidate => !next[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)])
+                      .slice(0, Math.max(0, 25 - selectedCount))
+                      .forEach(candidate => {
+                        next[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)] = true;
+                      });
+                  }
+                  return next;
+                })}
+                className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {allVisibleHighSelected ? 'Clear visible' : `Select strong (${Math.min(visibleHighRecommendations.length, 25)})`}
+              </button>
+            )}
+            {selectedHighRecommendations.length > 0 && (
+              <button
+                onClick={() => saveRecommendedIdentityMappings(selectedHighRecommendations)}
+                disabled={crmBatchSaving}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-600 px-3 text-xs font-black text-white hover:bg-blue-500 disabled:opacity-50"
+              >
+                {crmBatchSaving && <Loader2 className="animate-spin" size={14} />}
+                Save reviewed ({selectedHighRecommendations.length})
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="max-h-[560px] overflow-y-auto">
+          {visibleIdentityConflicts.length > 0 && (
+            <div>
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-800 dark:bg-slate-950">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">Ambiguous identities</p>
+                <span className="text-xs font-black text-slate-500">{visibleIdentityConflicts.length}</span>
+              </div>
+              {visibleIdentityConflicts.map((candidate, index) => (
+                <div key={`${candidate.sourceTable}-${candidate.groupKey}-${candidate.reason}-${candidate.sourceRecordIds?.join('-') || index}`} className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">{candidate.companyNames[0] || candidate.groupKey}</p>
+                    <p className="mt-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">{candidate.reason.replaceAll('_', ' ')}</p>
+                    {candidate.candidateClientIds.length > 0 && <p className="mt-1 truncate text-xs text-slate-500">Candidates: {candidate.candidateClientIds.join(', ')}</p>}
+                    {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3">
+                    {reviewCheckbox(batchCandidateFor(candidate.sourceTable, candidate.groupKey))}
+                    <button
+                      onClick={() => openClientIdentityMapping(mappingTargetFor(candidate))}
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {candidate.recommendation ? 'Review mapping' : 'Map client'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {visibleNewOrganisations.length > 0 && (
+            <div>
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-800 dark:bg-slate-950">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">New organisation review</p>
+                <span className="text-xs font-black text-slate-500">{visibleNewOrganisations.length}</span>
+              </div>
+              {visibleNewOrganisations.map(candidate => (
+                <div key={candidate.groupKey} className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">{candidate.canonicalCompanyName}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{candidate.sourceRecordCount} source row{candidate.sourceRecordCount === 1 ? '' : 's'} · {candidate.groupKey}</p>
+                    {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {reviewCheckbox(batchCandidateFor('Clients Book', candidate.groupKey))}
+                    <button
+                      onClick={() => openClientIdentityMapping({
+                        sourceTable: 'Clients Book',
+                        groupKey: candidate.groupKey,
+                        displayName: candidate.canonicalCompanyName,
+                        sourceNames: candidate.sourceNames,
+                        reason: 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED',
+                        recommendedClientId: candidate.recommendation?.canonicalClientId,
+                      })}
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {candidate.recommendation ? 'Review existing' : 'Map existing'}
+                    </button>
+                    <button
+                      onClick={() => approveNewCanonicalOrganisation(candidate)}
+                      disabled={crmMappingLoading}
+                      className="h-9 rounded-lg bg-slate-950 px-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-blue-600 dark:hover:bg-blue-500"
+                    >
+                      Approve new
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {visibleDepartmentConflicts.length > 0 && (
+            <div>
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-800 dark:bg-slate-950">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">Departments without a client</p>
+                <span className="text-xs font-black text-slate-500">{visibleDepartmentConflicts.length}</span>
+              </div>
+              {visibleDepartmentConflicts.map((candidate, index) => (
+                <div key={`${candidate.sourceTable}-${candidate.groupKey}-${candidate.sourceRecordIds?.join('-') || index}`} className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">{candidate.companyNames[0] || candidate.groupKey}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">Airtable Departments · {candidate.sourceRecordIds?.join(', ') || candidate.groupKey}</p>
+                    {candidate.recommendation && <ClientRecommendationSummary recommendation={candidate.recommendation} />}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3">
+                    {reviewCheckbox(batchCandidateFor('Departments', candidate.groupKey))}
+                    <button
+                      onClick={() => openClientIdentityMapping(mappingTargetFor(candidate))}
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {candidate.recommendation ? 'Review client' : 'Assign client'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {reviewTotal === 0 && (
+            <div className="flex min-h-36 flex-col items-center justify-center gap-2 p-6 text-center">
+              <CheckCircle2 className="text-emerald-600" size={26} />
+              <p className="font-black text-slate-950 dark:text-white">Client identities are ready for write review</p>
+              <p className="text-sm text-slate-500">No organisation, department or generic client identity is unresolved in this dry run.</p>
+            </div>
+          )}
+          {reviewTotal > 0 && visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length === 0 && (
+            <div className="p-8 text-center text-sm font-semibold text-slate-500">No staging rows match this search.</div>
+          )}
+        </div>
+
+        {visibleCanonicalCreates.length > 0 && (
+          <details className="border-t border-slate-200 dark:border-slate-800">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
+              {visibleCanonicalCreates.length} canonical account record{visibleCanonicalCreates.length === 1 ? '' : 's'} would be created from Airtable Clients
+            </summary>
+            <div className="grid gap-px bg-slate-200 dark:bg-slate-800 sm:grid-cols-2">
+              {visibleCanonicalCreates.map(candidate => (
+                <div key={candidate.clientId} className="flex items-center justify-between gap-3 bg-white px-4 py-3 dark:bg-slate-900">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">{candidate.companyName}</p>
+                    <p className="truncate text-xs text-slate-500">{candidate.sageAccountRef || 'No Sage ref'} · {candidate.clientId}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => openClientIdentityMapping({
+                        sourceTable: 'Clients',
+                        groupKey: candidate.groupKey,
+                        displayName: candidate.companyName,
+                        sourceNames: [candidate.companyName],
+                        reason: 'CANONICAL_ACCOUNT_MATCH_REQUIRED',
+                      })}
+                      className="h-8 rounded-lg border border-slate-200 px-2.5 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      Map existing
+                    </button>
+                    <button
+                      onClick={() => approveNewCanonicalOrganisation({
+                        groupKey: candidate.groupKey,
+                        canonicalCompanyName: candidate.companyName,
+                        proposedClientId: candidate.clientId,
+                        sourceRecordCount: 1,
+                        sourceNames: [candidate.companyName],
+                      }, 'Clients')}
+                      disabled={crmMappingLoading}
+                      className="h-8 rounded-lg bg-slate-950 px-2.5 text-xs font-black text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-blue-600 dark:hover:bg-blue-500"
+                    >
+                      Approve new
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </section>
     );
   };
 
@@ -809,7 +1440,7 @@ export const AdminMigration = () => {
               <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate text-lg font-black text-slate-950 dark:text-white">{activeTitle}</h2>
-                  <p className="truncate text-sm text-slate-500 dark:text-slate-400">{activeSubtitle}</p>
+                  <p className="text-sm leading-5 text-slate-500 dark:text-slate-400 sm:truncate">{activeSubtitle}</p>
                 </div>
                 <select
                   value={activeTab}
@@ -892,7 +1523,7 @@ export const AdminMigration = () => {
           <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
             <div className="flex gap-2">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" />
-              <span>Run a clean {activeDryRunLabel} with the current {activeStrategyConfig.label} strategy before writing data.</span>
+              <span>Run a clean {activeDryRunLabel} with the current {activeStrategyConfig.label} strategy before writing data. Approval remains valid for 30 minutes and can be used once.</span>
             </div>
           </div>
         )}
@@ -1629,6 +2260,7 @@ export const AdminMigration = () => {
                 )}
 
                 {renderStats(activeResult)}
+                {activeModule.id === 'clients' && renderClientCrmStaging(activeResult)}
                 {activeResult?.financeStats && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
                     <p className="text-xs font-black uppercase tracking-widest text-slate-500">Included finance sync</p>
@@ -1659,6 +2291,88 @@ export const AdminMigration = () => {
           </main>
         </div>
       </div>
+
+      {crmMappingTarget && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !crmMappingLoading) setCrmMappingTarget(null);
+          }}
+        >
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-800 sm:gap-4 sm:px-5">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-300">Canonical client mapping</p>
+                <h2 className="mt-1 truncate text-lg font-black text-slate-950 dark:text-white">{crmMappingTarget.displayName}</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  {crmMappingTarget.sourceTable} · {crmMappingTarget.groupKey}
+                </p>
+              </div>
+              <button
+                onClick={() => setCrmMappingTarget(null)}
+                disabled={crmMappingLoading}
+                aria-label="Close"
+                title="Close"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="border-b border-slate-200 p-4 dark:border-slate-800">
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-500">Find canonical client</span>
+                <div className="relative mt-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <input
+                    autoFocus
+                    value={crmClientSearch}
+                    onChange={event => setCrmClientSearch(event.target.value)}
+                    placeholder="Search organisation, Sage reference or client ID"
+                    className="h-11 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div className="min-h-48 flex-1 overflow-y-auto">
+              {crmMappingLoading && crmClientDirectory.length === 0 ? (
+                <div className="flex min-h-48 items-center justify-center gap-2 text-sm font-semibold text-slate-500">
+                  <Loader2 className="animate-spin" size={18} /> Loading Client CRM...
+                </div>
+              ) : visibleCrmClients.length > 0 ? visibleCrmClients.map(client => (
+                <button
+                  key={client.id}
+                  onClick={() => setCrmSelectedClientId(client.id)}
+                  className={`flex w-full items-center justify-between gap-4 border-b border-slate-100 px-5 py-3 text-left dark:border-slate-800 ${crmSelectedClientId === client.id ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">{client.companyName}</p>
+                    <p className="truncate text-xs text-slate-500">{client.sageAccountRef || 'No Sage ref'} · {client.id}</p>
+                  </div>
+                  <span className={`h-4 w-4 shrink-0 rounded-full border-2 ${crmSelectedClientId === client.id ? 'border-blue-600 bg-blue-600 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-slate-300 dark:border-slate-600'}`} />
+                </button>
+              )) : (
+                <div className="p-8 text-center text-sm font-semibold text-slate-500">No canonical client matches this search.</div>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                This rule is audited and reused by future mirror cycles.
+              </p>
+              <button
+                onClick={saveClientIdentityMapping}
+                disabled={!crmSelectedClientId || crmMappingLoading}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {crmMappingLoading && <Loader2 className="animate-spin" size={16} />}
+                Save mapping
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

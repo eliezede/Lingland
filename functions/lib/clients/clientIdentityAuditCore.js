@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildClientIdentityAudit = exports.extractClientEmails = exports.normalizeClientAddress = exports.normalizeClientPhone = exports.extractUkPostcode = exports.normalizeOrganizationName = exports.normalizeClientEmail = void 0;
+exports.buildClientIdentityAudit = exports.organizationNameSimilarity = exports.extractOrganizationDomains = exports.extractClientEmails = exports.normalizeClientAddress = exports.normalizeClientPhone = exports.extractUkPostcode = exports.isGenericOrganizationName = exports.normalizeOrganizationName = exports.normalizeClientEmail = void 0;
 const node_crypto_1 = require("node:crypto");
 const GENERIC_ORGANIZATION_NAMES = new Set([
     '',
@@ -79,6 +79,8 @@ const normalizeOrganizationName = (value) => text(value)
     .replace(/\s+/g, ' ')
     .trim();
 exports.normalizeOrganizationName = normalizeOrganizationName;
+const isGenericOrganizationName = (value) => (GENERIC_ORGANIZATION_NAMES.has((0, exports.normalizeOrganizationName)(value)));
+exports.isGenericOrganizationName = isGenericOrganizationName;
 const extractUkPostcode = (value) => {
     const match = text(value).toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/);
     if (!match)
@@ -115,9 +117,10 @@ const extractAliases = (source) => {
         text(source.clientTrade),
     ]);
 };
-const organizationDomains = (emails) => unique(emails
+const extractOrganizationDomains = (emails) => unique(emails
     .map(email => email.split('@')[1] || '')
     .filter(domain => domain && !NON_ORGANIZATION_DOMAINS.has(domain)));
+exports.extractOrganizationDomains = extractOrganizationDomains;
 const isSharedMailbox = (email) => SHARED_MAILBOX_LOCAL_PARTS.has(email.split('@')[0] || '');
 class UnionFind {
     constructor(size) {
@@ -190,8 +193,8 @@ const prepareRecord = (source, input) => {
         invoiceEmail: invoiceEmails[0] || '',
         phoneNumbers,
         phoneKeys: phoneNumbers,
-        organizationDomains: organizationDomains([...contactEmails, ...invoiceEmails]),
-        domainKeys: organizationDomains([...contactEmails, ...invoiceEmails]),
+        organizationDomains: (0, exports.extractOrganizationDomains)([...contactEmails, ...invoiceEmails]),
+        domainKeys: (0, exports.extractOrganizationDomains)([...contactEmails, ...invoiceEmails]),
         sageAccountRef: text(source.sageAccountRef),
         sageKey: upperIdentity(source.sageAccountRef),
         airtableClientKey: text(source.airtableClientKey),
@@ -214,6 +217,8 @@ const tokenSimilarity = (left, right) => {
     const intersection = Array.from(leftTokens).filter(token => rightTokens.has(token)).length;
     return (2 * intersection) / (leftTokens.size + rightTokens.size || 1);
 };
+const organizationNameSimilarity = (left, right) => (tokenSimilarity((0, exports.normalizeOrganizationName)(left), (0, exports.normalizeOrganizationName)(right)));
+exports.organizationNameSimilarity = organizationNameSimilarity;
 const bestNameSimilarity = (left, right) => left.matchingNames.reduce((best, leftName) => Math.max(best, ...right.matchingNames.map(rightName => tokenSimilarity(leftName, rightName))), 0);
 const signalsFor = (left, right) => {
     const nameSimilarity = bestNameSimilarity(left, right);

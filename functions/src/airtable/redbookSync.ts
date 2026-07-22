@@ -18,12 +18,39 @@ import { createHash } from 'crypto';
 import {
   fingerprintAirtableSnapshot,
   hashAirtableRecordFields,
+  hashStableValue,
   mergeAirtableSnapshots,
 } from './recordStability';
 import {
   projectClientFinanceHierarchy,
   projectClientInvoiceLineHierarchy,
 } from '../clients/clientFinanceScope';
+import {
+  buildTranslationClientEvidence,
+  enrichTranslationClientIdentity,
+  TranslationClientEvidence,
+} from './translationClientEvidence';
+import {
+  AIRTABLE_SYNC_MAPPING_VERSION,
+  validateSyncWriteApproval,
+} from './syncWriteApproval';
+import {
+  buildClientBookProjection,
+  CLIENT_BOOK_PROJECTION_VERSION,
+  ClientBookCanonicalResolution,
+  ClientBookSourceRecord,
+} from './clientBookProjection';
+import { normalizeOrganizationName } from '../clients/clientIdentityAuditCore';
+import {
+  ClientIdentityRecommendation,
+  ClientIdentityRecommendationProfile,
+  recommendCanonicalClient,
+} from './clientIdentityRecommendations';
+import {
+  validateClientIdentityMappingBatch,
+  validateClientIdentityRecommendationRun,
+} from './clientIdentityMappingPolicy';
+import { writeAuditEvent } from '../audit/auditWriter';
 
 type AirtableRecord = {
   id: string;
@@ -41,6 +68,7 @@ type SyncMode = {
   userId?: string;
   tableOffsets?: Record<string, string>;
   sourceRecordIds?: string[];
+  approvedByDryRunId?: string;
 };
 
 type AirtableSyncStrategy =
@@ -62,6 +90,7 @@ const DEFAULT_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
 const DEFAULT_TABLE_NAME = 'REDBOOK';
 const CLIENTS_TABLE = 'Clients';
 const CLIENTS_BOOK_TABLE = 'Clients Book';
+const DEPARTMENTS_TABLE = 'Departments';
 const TRANSLATIONS_TABLE = 'Translations';
 const WEB_TRANSLATIONS_TABLE = 'Web translations';
 const CLIENT_INVOICES_TABLE = 'Invoices';
@@ -71,6 +100,7 @@ const TRANSLATOR_INVOICES_TABLE = 'INV TR';
 const MAX_DETAILS = 50;
 const MODULE_DETAIL_LIMIT = 30;
 const REDBOOK_PROCESS_CONCURRENCY = 8;
+const CLIENT_PROCESS_CONCURRENCY = 8;
 const ASSIGNMENTS_COLLECTION = 'assignments';
 const DEFAULT_SYNC_STRATEGY: AirtableSyncStrategy = 'OPEN_WORKFLOW';
 const FINANCE_PROJECTION_VERSION = 3;
@@ -388,15 +418,7 @@ const mapLocationType = (sessionType: string, location: string): 'ONSITE' | 'ONL
     : 'ONSITE';
 };
 
-const stableHash = (value: unknown): string => {
-  const json = JSON.stringify(value, Object.keys(value as Record<string, unknown>).sort());
-  let hash = 0;
-  for (let i = 0; i < json.length; i += 1) {
-    hash = ((hash << 5) - hash) + json.charCodeAt(i);
-    hash |= 0;
-  }
-  return String(hash);
-};
+const stableHash = hashStableValue;
 
 const buildSourceTracking = (
   record: AirtableRecord,
@@ -730,6 +752,27 @@ const normalizeForMatch = (value: string): string => {
     .replace(/\s+/g, ' ');
 };
 
+const GENERIC_CLIENT_NAMES = new Set([
+  '',
+  'airtable client',
+  'translation client',
+  'unknown client',
+  'client',
+  'home',
+  'me',
+  'n a',
+  'na',
+]);
+
+const GENERIC_CLIENT_IDS = new Set([
+  'airtable_client_airtable-client',
+  'airtable_client_translation-client',
+  'airtable_client_unknown-client',
+  'airtable_client_client',
+  'airtable_client_home',
+  'airtable_client_me',
+]);
+
 const uniqueValues = (...values: Array<string | undefined | null>): string[] => {
   return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)));
 };
@@ -737,6 +780,7 @@ const uniqueValues = (...values: Array<string | undefined | null>): string[] => 
 const pickClientIdentity = (fields: Record<string, unknown>) => {
   const companyName = pick(fields, [
     'Name',
+    'TR Agency',
     'Agency, institution or company',
     'Agency, institution or company  ',
     'Web Client',
@@ -799,7 +843,7 @@ const pickClientIdentity = (fields: Record<string, unknown>) => {
 const canonicalClientRef = (snapshot: admin.firestore.DocumentSnapshot) => {
   const snapshotData = snapshot.data() || {};
   const mergedIntoClientId = normalize(snapshotData.mergedIntoClientId);
-  return snapshotData.recordState === 'MERGED' && mergedIntoClientId
+  return normalize(snapshotData.recordState).toUpperCase() === 'MERGED' && mergedIntoClientId
     ? db.collection('clients').doc(mergedIntoClientId)
     : snapshot.ref;
 };
@@ -829,31 +873,36 @@ const resolveClient = async (
     return { id: clientRef.id, action: clientRef.id === existingById.id ? 'matched' : 'matched-merged-alias', created: false };
   }
 
-  if (source.uniqueClientKey) {
-    const byAirtableKey = await db.collection('clients')
-      .where('airtableClientKey', '==', source.uniqueClientKey)
-      .limit(10)
-      .get();
-    const canonicalIds = Array.from(new Set(byAirtableKey.docs.map(document => canonicalClientRef(document).id)));
-    if (canonicalIds.length === 1) return { id: canonicalIds[0], action: 'matched-airtable-key', created: false };
+  const accountKeys = uniqueValues(source.uniqueClientKey, source.sageAccountRef);
+  const accountCandidateIds = new Set<string>();
+  for (const accountKey of accountKeys) {
+    const sourceKey = slugify(accountKey);
+    const lookups = await Promise.all([
+      db.collection('clients').where('airtableClientKey', '==', accountKey).limit(10).get(),
+      db.collection('clients').where('sageAccountRef', '==', accountKey).limit(10).get(),
+      db.collection('clients').where('sourceKey', '==', sourceKey).limit(10).get(),
+      db.collection('clients').where('accountAliases', 'array-contains', accountKey).limit(10).get(),
+    ]);
+    lookups.forEach(snapshot => snapshot.docs.forEach(document => {
+      accountCandidateIds.add(canonicalClientRef(document).id);
+    }));
   }
-
-  if (source.sageAccountRef) {
-    const bySage = await db.collection('clients')
-      .where('sageAccountRef', '==', source.sageAccountRef)
-      .limit(1)
-      .get();
-    if (!bySage.empty) return { id: canonicalClientRef(bySage.docs[0]).id, action: 'matched-sage', created: false };
+  if (accountCandidateIds.size === 1) {
+    return { id: Array.from(accountCandidateIds)[0], action: 'matched-account-key', created: false };
   }
 
   const normalizedCompanyName = source.normalizedCompanyName || normalizeForMatch(source.clientName);
-  if (allowNormalizedNameMatch && normalizedCompanyName && !['airtable client', 'translation client', 'unknown client', 'client'].includes(normalizedCompanyName)) {
+  if (allowNormalizedNameMatch && normalizedCompanyName && !GENERIC_CLIENT_NAMES.has(normalizedCompanyName)) {
     const byName = await db.collection('clients')
       .where('normalizedCompanyName', '==', normalizedCompanyName)
       .limit(10)
       .get();
     const canonicalIds = Array.from(new Set(byName.docs.map(document => canonicalClientRef(document).id)));
     if (canonicalIds.length === 1) return { id: canonicalIds[0], action: 'matched-normalized-name', created: false };
+  }
+
+  if (accountCandidateIds.size > 1) {
+    return { id: clientId, action: 'unresolved-account-key-ambiguous', created: false };
   }
 
   const clientData = {
@@ -891,6 +940,14 @@ const resolveClient = async (
 
 const clientCache = new Map<string, Promise<{ id: string; action: string; created: boolean }>>();
 const bookingByAirtableRecordCache = new Map<string, Promise<admin.firestore.DocumentSnapshot | null>>();
+let platformClientDirectoryPromise: Promise<admin.firestore.QueryDocumentSnapshot[]> | null = null;
+
+const getPlatformClientDirectory = async () => {
+  if (!platformClientDirectoryPromise) {
+    platformClientDirectoryPromise = db.collection('clients').get().then(snapshot => snapshot.docs);
+  }
+  return platformClientDirectoryPromise;
+};
 
 const resolveClientCached = async (
   source: {
@@ -931,7 +988,7 @@ const resolveInvoiceClient = async (
     'invoice email', 'Invoicing email', 'Accounts email', 'Finance email', 'TR client email', 'Email',
   ]));
   const normalizedCompanyName = normalizeForMatch(clientName);
-  const placeholderName = ['airtable client', 'translation client', 'unknown client', 'client'].includes(normalizedCompanyName);
+  const placeholderName = GENERIC_CLIENT_NAMES.has(normalizedCompanyName);
   if (placeholderName && !uniqueClientKey && !sageAccountRef && !contactEmail) {
     return {
       id: `airtable_client_${slugify(clientName)}`,
@@ -956,8 +1013,23 @@ const resolveInvoiceClient = async (
 const findExistingClientRef = async (
   record: AirtableRecord,
   tableName: string,
-  identity: ReturnType<typeof pickClientIdentity>
+  identity: ReturnType<typeof pickClientIdentity>,
+  identityMappings: Map<string, ClientIdentityMapping>,
 ) => {
+  const mappingGroupKey = normalizeOrganizationName(
+    identity.sageAccountRef || identity.uniqueClientKey || identity.companyName,
+  );
+  const identityMapping = identityMappings.get(clientIdentityMappingScopeKey(tableName, mappingGroupKey));
+  if (identityMapping?.action === 'MAP_TO_CLIENT') {
+    const mapped = await db.collection('clients').doc(identityMapping.canonicalClientId).get();
+    if (!mapped.exists) throw new Error(`Mapped canonical client ${identityMapping.canonicalClientId} was not found.`);
+    const canonical = canonicalClientRef(mapped);
+    return canonical;
+  }
+  if (identityMapping?.action === 'APPROVE_NEW_CLIENT') {
+    return db.collection('clients').doc(identityMapping.canonicalClientId);
+  }
+
   const bySource = await db.collection('clients')
     .where('sourceRecordId', '==', record.id)
     .limit(1)
@@ -983,9 +1055,39 @@ const findExistingClientRef = async (
   if (identity.normalizedCompanyName) {
     const byName = await db.collection('clients')
       .where('normalizedCompanyName', '==', identity.normalizedCompanyName)
-      .limit(2)
+      .limit(10)
       .get();
-    if (byName.size === 1) return canonicalClientRef(byName.docs[0]);
+    const canonicalRefs = new Map(
+      byName.docs.map(document => {
+        const ref = canonicalClientRef(document);
+        return [ref.id, ref] as const;
+      }),
+    );
+    if (canonicalRefs.size === 1) return Array.from(canonicalRefs.values())[0];
+  }
+
+  const normalizedIdentityKeys = new Set(uniqueValues(
+    identity.companyName,
+    identity.normalizedCompanyName,
+    identity.uniqueClientKey,
+  ).map(normalizeOrganizationName).filter(Boolean));
+  if (normalizedIdentityKeys.size > 0) {
+    const directory = await getPlatformClientDirectory();
+    const canonicalRefs = new Map<string, admin.firestore.DocumentReference>();
+    directory.forEach(document => {
+      const data = document.data() || {};
+      const state = normalize(data.recordState).toUpperCase();
+      if (state === 'ARCHIVED') return;
+      const candidateKeys = uniqueValues(
+        normalize(data.companyName),
+        normalize(data.normalizedCompanyName),
+        ...(Array.isArray(data.accountAliases) ? data.accountAliases.map(normalize) : []),
+      ).map(normalizeOrganizationName).filter(Boolean);
+      if (!candidateKeys.some(key => normalizedIdentityKeys.has(key))) return;
+      const ref = canonicalClientRef(document);
+      canonicalRefs.set(ref.id, ref);
+    });
+    if (canonicalRefs.size === 1) return Array.from(canonicalRefs.values())[0];
   }
 
   return db.collection('clients').doc(`airtable_client_${slugify(identity.uniqueClientKey || identity.companyName || record.id)}`);
@@ -1031,6 +1133,335 @@ const mapClientRecord = (record: AirtableRecord, tableName: string) => {
       airtableCreatedTime: record.createdTime || '',
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     })
+  };
+};
+
+type ClientBookResolutionMethod =
+  | 'CANONICAL_ACCOUNT'
+  | 'EXACT_PLATFORM_IDENTITY'
+  | 'MANUAL_IDENTITY_MAPPING'
+  | 'APPROVED_NEW_CANONICAL_ORGANISATION'
+  | 'EXPLICIT_DEPARTMENT_LINK';
+
+type ClientIdentityMappingAction = 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
+
+type ClientIdentityMapping = {
+  id: string;
+  sourceTable: string;
+  groupKey: string;
+  action: ClientIdentityMappingAction;
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+};
+
+type CanonicalAirtableClientAccount = {
+  sourceRecordId: string;
+  clientId: string;
+  companyName: string;
+  identityKeys: string[];
+  names: string[];
+  accountKeys: string[];
+  emails: string[];
+  phones: string[];
+  addresses: string[];
+};
+
+type ClientBookResolutionConflict = {
+  sourceTable: string;
+  groupKey: string;
+  sourceRecordIds: string[];
+  companyNames: string[];
+  candidateClientIds: string[];
+  recommendation?: ClientIdentityRecommendation;
+  reason:
+    | 'AMBIGUOUS_CANONICAL_CLIENT'
+    | 'GENERIC_ORGANISATION_IDENTITY'
+    | 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED'
+    | 'MAPPED_CANONICAL_CLIENT_NOT_FOUND'
+    | 'DEPARTMENT_CLIENT_NOT_RESOLVED'
+    | 'DEPARTMENT_CLIENT_AMBIGUOUS';
+};
+
+const canonicalRecommendationProfiles = (
+  accounts: CanonicalAirtableClientAccount[],
+): ClientIdentityRecommendationProfile[] => accounts.map(account => ({
+  id: account.clientId,
+  label: account.companyName,
+  names: account.names,
+  accountKeys: account.accountKeys,
+  emails: account.emails,
+  phones: account.phones,
+  addresses: account.addresses,
+}));
+
+const recommendClientBookCanonicalAccount = (
+  sources: ClientBookSourceRecord[],
+  accounts: CanonicalAirtableClientAccount[],
+) => {
+  const representative = sources[0];
+  if (!representative) return null;
+  return recommendCanonicalClient({
+    id: `${representative.sourceTable || CLIENTS_BOOK_TABLE}:${clientBookGroupKey(representative)}`,
+    label: representative.companyName || representative.departmentName || 'Airtable client identity',
+    names: uniqueValues(
+      ...sources.flatMap(source => [source.companyName, source.departmentName, source.locationName]),
+    ),
+    accountKeys: uniqueValues(...sources.map(source => source.stableKey)),
+    emails: uniqueValues(...sources.flatMap(source => [source.bookingEmail, source.invoiceEmail])),
+    phones: uniqueValues(...sources.map(source => source.bookingPhone)),
+    addresses: uniqueValues(...sources.map(source => source.billingAddress || '')),
+  }, canonicalRecommendationProfiles(accounts));
+};
+
+const mapClientBookSourceRecord = (record: AirtableRecord): ClientBookSourceRecord => {
+  const identity = pickClientIdentity(record.fields);
+  return {
+    sourceRecordId: record.id,
+    companyName: identity.companyName,
+    stableKey: pick(record.fields, ['Unique Client Key']) || identity.companyName,
+    bookingAgent: identity.bookingAgent,
+    bookingEmail: identity.email,
+    bookingPhone: identity.phone,
+    invoiceEmail: cleanEmail(pick(record.fields, [
+      'Invoicing address/email',
+      'invoice email',
+      'Invoicing email',
+    ])),
+    invoiceContact: identity.invoiceContact,
+    departmentName: identity.departmentName,
+    locationName: identity.locationName,
+    billingAddress: identity.billingAddress,
+  };
+};
+
+const mapDepartmentSourceRecord = (
+  record: AirtableRecord,
+  canonicalCompanyName: string,
+): ClientBookSourceRecord => ({
+  sourceRecordId: record.id,
+  sourceTable: DEPARTMENTS_TABLE,
+  companyName: canonicalCompanyName,
+  stableKey: canonicalCompanyName,
+  bookingAgent: pick(record.fields, ['Contact']),
+  bookingEmail: cleanEmail(pick(record.fields, ['email', 'Email'])),
+  bookingPhone: pick(record.fields, ['Phone']),
+  invoiceEmail: '',
+  departmentName: pick(record.fields, ['Name']),
+  locationName: pick(record.fields, ['Name']),
+  billingAddress: pick(record.fields, ['Ward/dep Address', 'Ward/Dep PC']),
+});
+
+const airtableSourceRecordId = (sourceId: string) => {
+  const match = sourceId.match(/(rec[A-Za-z0-9]+)$/);
+  return match?.[1] || sourceId;
+};
+
+const clientBookGroupKey = (source: ClientBookSourceRecord) => (
+  normalizeOrganizationName(source.stableKey || source.companyName)
+);
+
+const canonicalClientDocument = async (snapshot: admin.firestore.DocumentSnapshot) => {
+  const ref = canonicalClientRef(snapshot);
+  return ref.id === snapshot.id ? snapshot : ref.get();
+};
+
+const buildCanonicalAccountIndex = (accounts: CanonicalAirtableClientAccount[]) => {
+  const index = new Map<string, CanonicalAirtableClientAccount[]>();
+  accounts.forEach(account => account.identityKeys.forEach(key => {
+    const current = index.get(key) || [];
+    if (!current.some(candidate => candidate.clientId === account.clientId)) {
+      index.set(key, [...current, account]);
+    }
+  }));
+  return index;
+};
+
+const clientIdentityMappingScopeKey = (sourceTable: string, groupKey: string) => (
+  `${normalizeOrganizationName(sourceTable)}|${normalizeOrganizationName(groupKey)}`
+);
+
+const clientIdentityMappingId = (sourceTable: string, groupKey: string) => (
+  `airtable_client_identity_${hashStableValue(clientIdentityMappingScopeKey(sourceTable, groupKey)).slice(0, 24)}`
+);
+
+const loadClientIdentityMappings = async () => {
+  const snapshot = await db.collection('airtableClientIdentityMappings').get();
+  return new Map(snapshot.docs.flatMap(document => {
+    const data = document.data() || {};
+    if (normalize(data.status).toUpperCase() !== 'ACTIVE') return [];
+    const sourceTable = normalize(data.sourceTable);
+    const groupKey = normalizeOrganizationName(data.groupKey);
+    const action = normalize(data.action).toUpperCase() as ClientIdentityMappingAction;
+    const canonicalClientId = normalize(data.canonicalClientId);
+    const canonicalCompanyName = normalize(data.canonicalCompanyName);
+    if (
+      !sourceTable
+      || !groupKey
+      || !['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT'].includes(action)
+      || !canonicalClientId
+    ) return [];
+    const mapping: ClientIdentityMapping = {
+      id: document.id,
+      sourceTable,
+      groupKey,
+      action,
+      canonicalClientId,
+      canonicalCompanyName,
+    };
+    return [[clientIdentityMappingScopeKey(sourceTable, groupKey), mapping] as const];
+  }));
+};
+
+const resolveClientBookGroup = async (
+  sources: ClientBookSourceRecord[],
+  canonicalAccountIndex: Map<string, CanonicalAirtableClientAccount[]>,
+  identityMappings: Map<string, ClientIdentityMapping>,
+) => {
+  const representative = sources[0];
+  const groupKey = clientBookGroupKey(representative);
+  const normalizedName = normalizeOrganizationName(representative.companyName);
+  const stableKey = normalize(representative.stableKey);
+  const deterministicId = `airtable_client_${slugify(groupKey || stableKey || representative.companyName)}`;
+
+  const identityMapping = identityMappings.get(clientIdentityMappingScopeKey(CLIENTS_BOOK_TABLE, groupKey));
+  if (identityMapping?.action === 'APPROVE_NEW_CLIENT') {
+    return {
+      canonicalClientId: identityMapping.canonicalClientId,
+      canonicalCompanyName: identityMapping.canonicalCompanyName || representative.companyName,
+      method: 'APPROVED_NEW_CANONICAL_ORGANISATION' as const,
+    };
+  }
+  if (identityMapping?.action === 'MAP_TO_CLIENT') {
+    const mappedSnapshot = await db.collection('clients').doc(identityMapping.canonicalClientId).get();
+    if (mappedSnapshot.exists) {
+      const canonical = await canonicalClientDocument(mappedSnapshot);
+      const state = normalize(canonical.data()?.recordState).toUpperCase();
+      if (canonical.exists && state !== 'ARCHIVED') return {
+        canonicalClientId: canonical.id,
+        canonicalCompanyName: normalize(canonical.data()?.companyName)
+          || identityMapping.canonicalCompanyName
+          || representative.companyName,
+        method: 'MANUAL_IDENTITY_MAPPING' as const,
+      };
+    }
+    return {
+      conflict: {
+        sourceTable: CLIENTS_BOOK_TABLE,
+        groupKey,
+        sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+        companyNames: uniqueValues(...sources.map(source => source.companyName)),
+        candidateClientIds: [identityMapping.canonicalClientId],
+        reason: 'MAPPED_CANONICAL_CLIENT_NOT_FOUND' as const,
+      },
+    };
+  }
+
+  if (!groupKey || GENERIC_CLIENT_NAMES.has(normalizeForMatch(groupKey))) {
+    return {
+      conflict: {
+        sourceTable: CLIENTS_BOOK_TABLE,
+        groupKey,
+        sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+        companyNames: uniqueValues(...sources.map(source => source.companyName)),
+        candidateClientIds: [],
+        reason: 'GENERIC_ORGANISATION_IDENTITY' as const,
+      },
+    };
+  }
+
+  const canonicalAccountCandidates = new Map<string, CanonicalAirtableClientAccount>();
+  uniqueValues(
+    ...sources.flatMap(source => [source.stableKey, source.companyName]),
+  ).map(normalizeOrganizationName).filter(Boolean).forEach(key => {
+    (canonicalAccountIndex.get(key) || []).forEach(account => {
+      canonicalAccountCandidates.set(account.clientId, account);
+    });
+  });
+  if (canonicalAccountCandidates.size === 1) {
+    const account = Array.from(canonicalAccountCandidates.values())[0];
+    return {
+      canonicalClientId: account.clientId,
+      canonicalCompanyName: account.companyName,
+      method: 'CANONICAL_ACCOUNT' as const,
+    };
+  }
+  if (canonicalAccountCandidates.size > 1) {
+    return {
+      conflict: {
+        sourceTable: CLIENTS_BOOK_TABLE,
+        groupKey,
+        sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+        companyNames: uniqueValues(...sources.map(source => source.companyName)),
+        candidateClientIds: Array.from(canonicalAccountCandidates.keys()).sort(),
+        reason: 'AMBIGUOUS_CANONICAL_CLIENT' as const,
+      },
+    };
+  }
+
+  const lookups: Array<Promise<admin.firestore.QuerySnapshot | admin.firestore.DocumentSnapshot>> = [
+    db.collection('clients').doc(deterministicId).get(),
+    db.collection('clients').where('airtableClientKey', '==', stableKey).limit(10).get(),
+    db.collection('clients').where('sourceKey', '==', slugify(stableKey || groupKey)).limit(10).get(),
+    db.collection('clients').where('normalizedCompanyName', '==', normalizedName).limit(10).get(),
+    db.collection('clients').where('accountAliases', 'array-contains', stableKey).limit(10).get(),
+    db.collection('clients').where('sourceRecordId', '==', representative.sourceRecordId).limit(10).get(),
+  ];
+  const lookupResults = await Promise.all(lookups);
+  const rawCandidates: admin.firestore.DocumentSnapshot[] = [];
+  lookupResults.forEach(result => {
+    if ('docs' in result) rawCandidates.push(...result.docs);
+    else if (result.exists) rawCandidates.push(result);
+  });
+  const canonicalCandidates = await Promise.all(rawCandidates.map(canonicalClientDocument));
+  const candidatesById = new Map<string, admin.firestore.DocumentSnapshot>();
+  canonicalCandidates.forEach(candidate => {
+    const state = normalize(candidate.data()?.recordState).toUpperCase();
+    if (candidate.exists && state !== 'ARCHIVED') candidatesById.set(candidate.id, candidate);
+  });
+  const candidates = Array.from(candidatesById.values());
+  const accountCandidates = candidates.filter(candidate => {
+    const data = candidate.data() || {};
+    return normalize(data.sourceTable) === CLIENTS_TABLE || Boolean(normalize(data.sageAccountRef));
+  });
+  const selected = accountCandidates.length === 1
+    ? accountCandidates[0]
+    : candidates.length === 1
+      ? candidates[0]
+      : null;
+
+  if (!selected && candidates.length > 1) {
+    return {
+      conflict: {
+        sourceTable: CLIENTS_BOOK_TABLE,
+        groupKey,
+        sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+        companyNames: uniqueValues(...sources.map(source => source.companyName)),
+        candidateClientIds: candidates.map(candidate => candidate.id).sort(),
+        reason: 'AMBIGUOUS_CANONICAL_CLIENT' as const,
+      },
+    };
+  }
+
+  if (selected) {
+    const selectedData = selected.data() || {};
+    return {
+      canonicalClientId: selected.id,
+      canonicalCompanyName: normalize(selectedData.companyName) || representative.companyName,
+      method: accountCandidates.length === 1
+        ? 'CANONICAL_ACCOUNT' as const
+        : 'EXACT_PLATFORM_IDENTITY' as const,
+    };
+  }
+
+  return {
+    conflict: {
+      sourceTable: CLIENTS_BOOK_TABLE,
+      groupKey,
+      sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+      companyNames: uniqueValues(...sources.map(source => source.companyName)),
+      candidateClientIds: [deterministicId],
+      reason: 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED' as const,
+    },
   };
 };
 
@@ -1381,6 +1812,7 @@ const assertAdmin = async (context: functions.https.CallableContext) => {
   if (!['ADMIN', 'SUPER_ADMIN'].includes(role) || user.data()?.status !== 'ACTIVE') {
     throw new functions.https.HttpsError('permission-denied', 'Only admins can sync REDBOOK.');
   }
+  return { uid: context.auth.uid, role: role as 'ADMIN' | 'SUPER_ADMIN' };
 };
 
 const normalizeSyncStrategy = (value: unknown): AirtableSyncStrategy => {
@@ -1916,14 +2348,18 @@ const parseTranslationLanguages = (rawTargetLanguage: string, rawSourceLanguage:
   };
 };
 
-const mapTranslationRecordToBooking = async (record: AirtableRecord, tableName: string) => {
+const mapTranslationRecordToBooking = async (
+  record: AirtableRecord,
+  tableName: string,
+  invoiceEvidence?: TranslationClientEvidence,
+) => {
   const fields = record.fields;
   const legacyRef = pick(fields, ['TR NUMBER', 'Web Number', 'TR ID', 'Name', 'Reference']) || `TR-${record.id}`;
   const jobNumber = legacyRef || `TR-${record.id}`;
   const language = pick(fields, ['LANGUAGE', 'web language', 'Language', 'Target Language']) || 'Unknown';
   const sourceLanguageRaw = pick(fields, ['Source Language', 'Language From', 'FROM LANGUAGE']) || 'English';
   const { sourceLanguage, targetLanguage } = parseTranslationLanguages(language, sourceLanguageRaw);
-  const clientIdentity = pickClientIdentity(fields);
+  const clientIdentity = enrichTranslationClientIdentity(pickClientIdentity(fields), invoiceEvidence);
   const translatorName = pick(fields, ['TRANSLATOR', 'Assign to TR', 'Assign to', 'Interpreters']);
   const translatorEmail = cleanEmail(pick(fields, ['EMAIL (from Assign to TR)', 'EMAIL (from assign to)', 'EMAIL', 'Translator Email']));
   const translatorPhone = pick(fields, ['PHONE (from Assign to TR)', 'PHONE (from assign to)', 'Translator Phone']);
@@ -1950,6 +2386,16 @@ const mapTranslationRecordToBooking = async (record: AirtableRecord, tableName: 
     jobNumber,
     language: targetLanguage,
     clientIdentity,
+    ...(invoiceEvidence ? {
+      clientIdentityEvidence: {
+        source: 'TRANSLATION_CLIENT_INVOICE',
+        invoiceRecordIds: invoiceEvidence.invoiceRecordIds,
+        invoiceNumbers: invoiceEvidence.invoiceNumbers,
+        accountRefs: invoiceEvidence.accountRefs,
+        accountRefAmbiguous: invoiceEvidence.accountRefAmbiguous,
+        accountRefSource: invoiceEvidence.accountRefSource,
+      },
+    } : {}),
     translatorName,
     translatorEmail,
     translatorPhone,
@@ -2159,11 +2605,43 @@ const syncClients = async (
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
+  const identityMappings = await loadClientIdentityMappings();
+  const clientIdBySourceRecordId = new Map<string, string>();
+  const clientNameBySourceRecordId = new Map<string, string>();
+  const wouldCreateCanonicalAccounts: Array<Record<string, unknown>> = [];
+  const canonicalAccounts: CanonicalAirtableClientAccount[] = [];
+  const plannedCreatedClientIds = new Set<string>();
 
-  for (const record of records) {
+  await processWithConcurrency(records, CLIENT_PROCESS_CONCURRENCY, async record => {
     try {
       const mapped = mapClientRecord(record, tableName);
-      const clientRef = await findExistingClientRef(record, tableName, mapped.identity);
+      const clientRef = await findExistingClientRef(record, tableName, mapped.identity, identityMappings);
+      clientIdBySourceRecordId.set(record.id, clientRef.id);
+      clientNameBySourceRecordId.set(record.id, mapped.identity.companyName);
+      canonicalAccounts.push({
+        sourceRecordId: record.id,
+        clientId: clientRef.id,
+        companyName: mapped.identity.companyName,
+        identityKeys: uniqueValues(
+          mapped.identity.companyName,
+          mapped.identity.normalizedCompanyName,
+          mapped.identity.uniqueClientKey,
+          mapped.identity.sageAccountRef,
+          mapped.identity.clientTrade,
+        ).map(normalizeOrganizationName).filter(Boolean),
+        names: uniqueValues(
+          mapped.identity.companyName,
+          mapped.identity.normalizedCompanyName,
+          mapped.identity.clientTrade,
+        ),
+        accountKeys: uniqueValues(
+          mapped.identity.uniqueClientKey,
+          mapped.identity.sageAccountRef,
+        ),
+        emails: uniqueValues(mapped.identity.email, mapped.identity.invoiceEmail),
+        phones: uniqueValues(mapped.identity.phone, mapped.identity.invoicePhone),
+        addresses: uniqueValues(mapped.identity.billingAddress),
+      });
       const existing = await clientRef.get();
       const existingData = existing.data();
       const sourceBackfillNeeded = existing.exists && needsSourceTrackingBackfill(existingData, mapped.client);
@@ -2172,6 +2650,22 @@ const syncClients = async (
         : 'created';
 
       stats[action] += 1;
+      if (action === 'created') {
+        plannedCreatedClientIds.add(clientRef.id);
+        const groupKey = normalizeOrganizationName(
+          mapped.identity.sageAccountRef || mapped.identity.uniqueClientKey || mapped.identity.companyName,
+        );
+        const mapping = identityMappings.get(clientIdentityMappingScopeKey(tableName, groupKey));
+        if (mapping?.action !== 'APPROVE_NEW_CLIENT') {
+          wouldCreateCanonicalAccounts.push({
+            sourceRecordId: record.id,
+            clientId: clientRef.id,
+            companyName: mapped.identity.companyName,
+            sageAccountRef: mapped.identity.sageAccountRef,
+            groupKey,
+          });
+        }
+      }
 
       if (!mode.dryRun && action !== 'skipped') {
         await clientRef.set({
@@ -2207,9 +2701,491 @@ const syncClients = async (
         });
       }
     }
+  });
+
+  return {
+    stats,
+    details,
+    clientIdBySourceRecordId,
+    clientNameBySourceRecordId,
+    canonicalAccounts: canonicalAccounts
+      .sort((left, right) => left.companyName.localeCompare(right.companyName)),
+    plannedCreatedClientIds,
+    diagnostics: {
+      sourceRecords: records.length,
+      wouldCreateCanonicalAccounts: wouldCreateCanonicalAccounts
+        .sort((left, right) => String(left.companyName).localeCompare(String(right.companyName))),
+      writeReadiness: {
+        ready: wouldCreateCanonicalAccounts.length === 0,
+        blockerCount: wouldCreateCanonicalAccounts.length,
+        blockers: wouldCreateCanonicalAccounts.length
+          ? [{ reason: 'CANONICAL_ACCOUNT_CREATE_REVIEW_REQUIRED', count: wouldCreateCanonicalAccounts.length }]
+          : [],
+      },
+    },
+  };
+};
+
+const syncClientBookHierarchy = async (
+  records: AirtableRecord[],
+  departmentRecords: AirtableRecord[],
+  clientIdBySourceRecordId: Map<string, string>,
+  clientNameBySourceRecordId: Map<string, string>,
+  canonicalAccounts: CanonicalAirtableClientAccount[],
+  plannedCreatedClientIds: Set<string>,
+  mode: SyncMode,
+  runId?: string,
+  conflictContext?: ConflictReconciliationContext,
+) => {
+  const stats: Record<SyncAction, number> = emptyActionStats();
+  const details: Array<Record<string, unknown>> = [];
+  const identityMappings = await loadClientIdentityMappings();
+  const platformClientDirectory = await getPlatformClientDirectory();
+  const platformClientNames = new Map<string, string>();
+  platformClientDirectory.forEach(document => {
+    const state = normalize(document.data()?.recordState).toUpperCase();
+    if (state === 'ARCHIVED') return;
+    const canonicalRef = canonicalClientRef(document);
+    const canonicalDocument = platformClientDirectory.find(candidate => candidate.id === canonicalRef.id);
+    platformClientNames.set(
+      canonicalRef.id,
+      normalize(canonicalDocument?.data()?.companyName) || normalize(document.data()?.companyName),
+    );
+  });
+  const reviewableCanonicalAccounts = canonicalAccounts.filter(account => (
+    !plannedCreatedClientIds.has(account.clientId)
+    && platformClientNames.has(account.clientId)
+  ));
+  const sources = records.map(mapClientBookSourceRecord);
+  const canonicalAccountIndex = buildCanonicalAccountIndex(canonicalAccounts);
+  const groupedSources = new Map<string, ClientBookSourceRecord[]>();
+  sources.forEach(source => {
+    const key = clientBookGroupKey(source) || `unresolved:${source.sourceRecordId}`;
+    groupedSources.set(key, [...(groupedSources.get(key) || []), source]);
+  });
+
+  const resolutions: ClientBookCanonicalResolution[] = [];
+  const conflicts: ClientBookResolutionConflict[] = [];
+  const resolvedGroups: Array<Record<string, unknown>> = [];
+  const resolutionMethods: Record<ClientBookResolutionMethod, number> = {
+    CANONICAL_ACCOUNT: 0,
+    EXACT_PLATFORM_IDENTITY: 0,
+    MANUAL_IDENTITY_MAPPING: 0,
+    APPROVED_NEW_CANONICAL_ORGANISATION: 0,
+    EXPLICIT_DEPARTMENT_LINK: 0,
+  };
+
+  await processWithConcurrency(Array.from(groupedSources.values()), CLIENT_PROCESS_CONCURRENCY, async group => {
+    const result = await resolveClientBookGroup(group, canonicalAccountIndex, identityMappings);
+    if (result.conflict) {
+      const conflict: ClientBookResolutionConflict = {
+        ...result.conflict,
+        recommendation: recommendClientBookCanonicalAccount(group, reviewableCanonicalAccounts) || undefined,
+      };
+      conflicts.push(conflict);
+      return;
+    }
+    if (!result.canonicalClientId || !result.canonicalCompanyName || !result.method) return;
+    resolutionMethods[result.method] += 1;
+    resolvedGroups.push({
+      method: result.method,
+      canonicalClientId: result.canonicalClientId,
+      canonicalCompanyName: result.canonicalCompanyName,
+      sourceRecordCount: group.length,
+      sourceRecordIds: group.map(source => source.sourceRecordId).sort(),
+      sourceNames: uniqueValues(...group.map(source => source.companyName)),
+    });
+    group.forEach(source => resolutions.push({
+      sourceRecordId: source.sourceRecordId,
+      canonicalClientId: result.canonicalClientId!,
+      canonicalCompanyName: result.canonicalCompanyName!,
+    }));
+  });
+
+  departmentRecords.forEach(record => {
+    const linkedClientSourceIds = pickLinkedIds(record.fields, ['Clients']);
+    let candidateClientIds = Array.from(new Set(
+      linkedClientSourceIds.map(sourceRecordId => clientIdBySourceRecordId.get(sourceRecordId)).filter(Boolean),
+    )) as string[];
+    const departmentName = pick(record.fields, ['Name']);
+    const departmentGroupKey = normalizeOrganizationName(departmentName);
+    const departmentMapping = identityMappings.get(
+      clientIdentityMappingScopeKey(DEPARTMENTS_TABLE, departmentGroupKey),
+    );
+    if (
+      candidateClientIds.length !== 1
+      && departmentMapping?.action === 'MAP_TO_CLIENT'
+      && platformClientNames.has(departmentMapping.canonicalClientId)
+    ) {
+      candidateClientIds = [departmentMapping.canonicalClientId];
+    }
+    if (candidateClientIds.length !== 1 || !departmentName) {
+      const departmentSource = mapDepartmentSourceRecord(record, departmentName || 'Airtable department');
+      conflicts.push({
+        sourceTable: DEPARTMENTS_TABLE,
+        groupKey: departmentGroupKey,
+        sourceRecordIds: [record.id],
+        companyNames: uniqueValues(
+          departmentName,
+          ...linkedClientSourceIds
+            .map(sourceRecordId => clientNameBySourceRecordId.get(sourceRecordId) || '')
+            .filter(Boolean),
+        ),
+        candidateClientIds,
+        recommendation: recommendClientBookCanonicalAccount([departmentSource], reviewableCanonicalAccounts) || undefined,
+        reason: departmentMapping && !platformClientNames.has(departmentMapping.canonicalClientId)
+          ? 'MAPPED_CANONICAL_CLIENT_NOT_FOUND'
+          : candidateClientIds.length > 1
+          ? 'DEPARTMENT_CLIENT_AMBIGUOUS'
+          : 'DEPARTMENT_CLIENT_NOT_RESOLVED',
+      });
+      return;
+    }
+    const canonicalClientId = candidateClientIds[0];
+    const linkedSourceId = linkedClientSourceIds.find(sourceRecordId => (
+      clientIdBySourceRecordId.get(sourceRecordId) === canonicalClientId
+    ));
+    const canonicalCompanyName = platformClientNames.get(canonicalClientId)
+      || (linkedSourceId && clientNameBySourceRecordId.get(linkedSourceId))
+      || departmentMapping?.canonicalCompanyName
+      || 'Client';
+    const source = mapDepartmentSourceRecord(record, canonicalCompanyName);
+    sources.push(source);
+    resolutions.push({
+      sourceRecordId: source.sourceRecordId,
+      canonicalClientId,
+      canonicalCompanyName,
+    });
+    const departmentResolutionMethod = linkedSourceId ? 'EXPLICIT_DEPARTMENT_LINK' : 'MANUAL_IDENTITY_MAPPING';
+    resolutionMethods[departmentResolutionMethod] += 1;
+    resolvedGroups.push({
+      method: departmentResolutionMethod,
+      canonicalClientId,
+      canonicalCompanyName,
+      sourceRecordCount: 1,
+      sourceRecordIds: [record.id],
+      sourceNames: [departmentName],
+    });
+  });
+
+  conflicts.sort((left, right) => left.groupKey.localeCompare(right.groupKey));
+  for (const conflict of conflicts) {
+    stats.conflict += 1;
+    conflict.sourceRecordIds.forEach(sourceRecordId => markConflictScopeProcessed(
+      conflictContext,
+      conflict.sourceTable,
+      sourceRecordId,
+    ));
+    await writeSyncConflict({
+      runId,
+      entityType: 'client',
+      sourceTable: conflict.sourceTable,
+      sourceRecordId: conflict.sourceRecordIds[0] || conflict.groupKey,
+      sourceBaseId: DEFAULT_BASE_ID,
+      severity: 'HIGH',
+      reason: conflict.reason,
+      currentValue: conflict.candidateClientIds,
+      incomingValue: {
+        companyNames: conflict.companyNames,
+        sourceRecordIds: conflict.sourceRecordIds,
+        recommendation: conflict.recommendation,
+      },
+      recommendedAction: conflict.reason === 'AMBIGUOUS_CANONICAL_CLIENT'
+        ? 'Select one canonical organisation in Client Identity Audit before rerunning Airtable sync.'
+        : conflict.reason === 'MAPPED_CANONICAL_CLIENT_NOT_FOUND'
+          ? 'Replace or revoke the stale identity mapping, then rerun Airtable sync.'
+        : conflict.reason === 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED'
+          ? 'Map this source group to an existing Client CRM organisation or explicitly approve a new canonical organisation.'
+        : conflict.sourceTable === DEPARTMENTS_TABLE
+          ? 'Link this Airtable department to exactly one Clients account before rerunning sync.'
+          : 'Replace the generic organisation label or link this contact to a canonical Client CRM organisation.',
+      dryRun: mode.dryRun,
+    });
+    if (details.length < MODULE_DETAIL_LIMIT) details.push({
+      action: 'conflict',
+      sourceTable: conflict.sourceTable,
+      sourceRecordIds: conflict.sourceRecordIds,
+      clientName: conflict.companyNames[0] || '',
+      candidateClientIds: conflict.candidateClientIds,
+      recommendation: conflict.recommendation,
+      reason: conflict.reason,
+    });
   }
 
-  return { stats, details };
+  const projectionResult = buildClientBookProjection(sources, resolutions);
+  const resolvedSourceIds = new Set(resolutions.map(resolution => resolution.sourceRecordId));
+  projectionResult.unresolvedSourceRecordIds
+    .filter(sourceRecordId => !conflicts.some(conflict => conflict.sourceRecordIds.includes(sourceRecordId)))
+    .forEach(sourceRecordId => {
+      if (!resolvedSourceIds.has(sourceRecordId)) stats.conflict += 1;
+    });
+
+  await processWithConcurrency(projectionResult.projections, Math.max(1, Math.floor(CLIENT_PROCESS_CONCURRENCY / 2)), async projection => {
+    const sourceTableByRecordId = new Map(
+      projection.sourceRecords.map(source => [source.sourceRecordId, source.sourceTable]),
+    );
+    const hierarchySourceMetadata = (sourceIds: string[]) => {
+      const sourceRecordIds = Array.from(new Set(sourceIds
+        .map(airtableSourceRecordId)
+        .filter(sourceRecordId => sourceTableByRecordId.has(sourceRecordId))));
+      const sourceTables = Array.from(new Set(sourceRecordIds
+        .map(sourceRecordId => sourceTableByRecordId.get(sourceRecordId) || '')
+        .filter(Boolean)));
+      return {
+        sourceRecordIds,
+        sourceTable: sourceTables.length === 1 ? sourceTables[0] : 'Airtable Client CRM',
+      };
+    };
+    const clientRef = db.collection('clients').doc(projection.canonicalClientId);
+    const departmentRefs = projection.hierarchy.departments.map(department => (
+      db.collection('clientDepartments').doc(department.id)
+    ));
+    const agentRefs = projection.hierarchy.agents.map(agent => db.collection('clientAgents').doc(agent.id));
+    const membershipRefs = projection.hierarchy.memberships.map(membership => (
+      db.collection('clientMemberships').doc(membership.id)
+    ));
+    const allRefs = [clientRef, ...departmentRefs, ...agentRefs, ...membershipRefs];
+    const snapshots = await db.getAll(...allRefs);
+    const snapshotByPath = new Map(snapshots.map(snapshot => [snapshot.ref.path, snapshot]));
+    const clientSnapshot = snapshotByPath.get(clientRef.path)!;
+    const clientData = clientSnapshot.data() || {};
+    const clientExistsAfterAccountPhase = clientSnapshot.exists
+      || plannedCreatedClientIds.has(projection.canonicalClientId);
+    const hierarchyComplete = allRefs.slice(1).every(ref => snapshotByPath.get(ref.path)?.exists);
+    const projectionCurrent = clientData.airtableClientBookProjectionVersion === CLIENT_BOOK_PROJECTION_VERSION
+      && normalize(clientData.airtableClientBookSnapshotHash) === projection.snapshotHash
+      && hierarchyComplete;
+    const action: SyncAction = clientExistsAfterAccountPhase
+      ? (projectionCurrent ? 'skipped' : 'updated')
+      : 'created';
+    stats[action] += 1;
+
+    projection.sourceRecords.forEach(source => markConflictScopeProcessed(
+      conflictContext,
+      source.sourceTable,
+      source.sourceRecordId,
+    ));
+
+    if (!mode.dryRun && action !== 'skipped') {
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const writes: Array<{
+        ref: admin.firestore.DocumentReference;
+        data: Record<string, unknown>;
+      }> = [];
+      const clientPatch = cleanData({
+        id: projection.canonicalClientId,
+        organizationId: normalize(clientData.organizationId) || 'lingland-main',
+        companyName: clientSnapshot.exists ? undefined : projection.canonicalCompanyName,
+        normalizedCompanyName: clientSnapshot.exists
+          ? undefined
+          : normalizeOrganizationName(projection.canonicalCompanyName),
+        status: clientSnapshot.exists ? undefined : 'ACTIVE',
+        recordState: clientSnapshot.exists ? undefined : 'ACTIVE',
+        paymentTermsDays: clientSnapshot.exists ? undefined : 30,
+        defaultCostCodeType: clientSnapshot.exists ? undefined : 'Client Name',
+        billingAddress: clientSnapshot.exists ? undefined : 'Address Pending Update',
+        sourceSystem: clientSnapshot.exists ? undefined : 'AIRTABLE',
+        sourceBaseId: clientSnapshot.exists ? undefined : DEFAULT_BASE_ID,
+        sourceTable: clientSnapshot.exists ? undefined : CLIENTS_BOOK_TABLE,
+        sourceRecordId: clientSnapshot.exists ? undefined : projection.sourceRecordIds[0],
+        sourceKey: clientSnapshot.exists
+          ? undefined
+          : slugify(projection.aliases[0] || projection.canonicalCompanyName),
+        accountAliases: projection.aliases.length
+          ? admin.firestore.FieldValue.arrayUnion(...projection.aliases)
+          : undefined,
+        airtableClientBookRecordIds: projection.sourceRecords.some(source => source.sourceTable === CLIENTS_BOOK_TABLE)
+          ? admin.firestore.FieldValue.arrayUnion(...projection.sourceRecords
+            .filter(source => source.sourceTable === CLIENTS_BOOK_TABLE)
+            .map(source => source.sourceRecordId))
+          : undefined,
+        airtableDepartmentRecordIds: projection.sourceRecords.some(source => source.sourceTable === DEPARTMENTS_TABLE)
+          ? admin.firestore.FieldValue.arrayUnion(...projection.sourceRecords
+            .filter(source => source.sourceTable === DEPARTMENTS_TABLE)
+            .map(source => source.sourceRecordId))
+          : undefined,
+        airtableClientBookProjectionVersion: CLIENT_BOOK_PROJECTION_VERSION,
+        airtableClientBookSnapshotHash: projection.snapshotHash,
+        lastSyncRunId: runId,
+        syncStatus: 'SYNCED',
+        updatedAt: now,
+        createdAt: clientSnapshot.exists ? undefined : now,
+      });
+      writes.push({ ref: clientRef, data: clientPatch });
+
+      projection.hierarchy.departments.forEach((department, index) => {
+        const ref = departmentRefs[index];
+        const current = snapshotByPath.get(ref.path);
+        const sourceMetadata = hierarchySourceMetadata(department.sourceClientIds);
+        writes.push({
+          ref,
+          data: cleanData({
+            clientId: projection.canonicalClientId,
+            name: current?.exists ? undefined : department.name,
+            normalizedName: department.normalizedName,
+            aliases: admin.firestore.FieldValue.arrayUnion(department.name),
+            status: current?.exists ? undefined : 'ACTIVE',
+            organizationId: normalize(current?.data()?.organizationId) || 'lingland-main',
+            sourceSystem: normalize(current?.data()?.sourceSystem) || 'AIRTABLE',
+            sourceBaseId: DEFAULT_BASE_ID,
+            sourceTable: sourceMetadata.sourceTable,
+            sourceAirtableRecordIds: sourceMetadata.sourceRecordIds.length
+              ? admin.firestore.FieldValue.arrayUnion(...sourceMetadata.sourceRecordIds)
+              : undefined,
+            identityConfidence: department.confidence,
+            identityEvidence: department.evidence.length
+              ? admin.firestore.FieldValue.arrayUnion(...department.evidence)
+              : undefined,
+            lastSyncRunId: runId,
+            syncStatus: 'SYNCED',
+            updatedAt: now,
+            createdAt: current?.exists ? undefined : now,
+          }),
+        });
+      });
+
+      projection.hierarchy.agents.forEach((agent, index) => {
+        const ref = agentRefs[index];
+        const current = snapshotByPath.get(ref.path);
+        const sourceMetadata = hierarchySourceMetadata(agent.sourceClientIds);
+        writes.push({
+          ref,
+          data: cleanData({
+            displayName: current?.exists ? undefined : agent.displayName,
+            names: agent.names.length ? admin.firestore.FieldValue.arrayUnion(...agent.names) : undefined,
+            email: current?.exists ? undefined : agent.email,
+            normalizedEmail: agent.normalizedEmail,
+            phoneNumbers: agent.phoneNumbers.length
+              ? admin.firestore.FieldValue.arrayUnion(...agent.phoneNumbers)
+              : undefined,
+            agentType: current?.exists ? undefined : agent.agentType,
+            roles: agent.roles.length ? admin.firestore.FieldValue.arrayUnion(...agent.roles) : undefined,
+            status: current?.exists ? undefined : 'ACTIVE',
+            organizationId: normalize(current?.data()?.organizationId) || 'lingland-main',
+            sourceSystem: normalize(current?.data()?.sourceSystem) || 'AIRTABLE',
+            sourceBaseId: DEFAULT_BASE_ID,
+            sourceTable: sourceMetadata.sourceTable,
+            sourceAirtableRecordIds: sourceMetadata.sourceRecordIds.length
+              ? admin.firestore.FieldValue.arrayUnion(...sourceMetadata.sourceRecordIds)
+              : undefined,
+            lastSyncRunId: runId,
+            syncStatus: 'SYNCED',
+            updatedAt: now,
+            createdAt: current?.exists ? undefined : now,
+          }),
+        });
+      });
+
+      projection.hierarchy.memberships.forEach((membership, index) => {
+        const ref = membershipRefs[index];
+        const current = snapshotByPath.get(ref.path);
+        const sourceMetadata = hierarchySourceMetadata(membership.sourceClientIds);
+        writes.push({
+          ref,
+          data: cleanData({
+            clientId: projection.canonicalClientId,
+            agentId: membership.agentId,
+            accessLevel: current?.exists ? undefined : membership.accessLevel,
+            roles: membership.roles.length
+              ? admin.firestore.FieldValue.arrayUnion(...membership.roles)
+              : undefined,
+            departmentIds: membership.departmentIds.length
+              ? admin.firestore.FieldValue.arrayUnion(...membership.departmentIds)
+              : undefined,
+            status: current?.exists ? undefined : 'ACTIVE',
+            organizationId: normalize(current?.data()?.organizationId) || 'lingland-main',
+            sourceSystem: normalize(current?.data()?.sourceSystem) || 'AIRTABLE',
+            sourceBaseId: DEFAULT_BASE_ID,
+            sourceTable: sourceMetadata.sourceTable,
+            sourceAirtableRecordIds: sourceMetadata.sourceRecordIds.length
+              ? admin.firestore.FieldValue.arrayUnion(...sourceMetadata.sourceRecordIds)
+              : undefined,
+            lastSyncRunId: runId,
+            syncStatus: 'SYNCED',
+            updatedAt: now,
+            createdAt: current?.exists ? undefined : now,
+          }),
+        });
+      });
+
+      for (let start = 0; start < writes.length; start += 200) {
+        const batch = db.batch();
+        writes.slice(start, start + 200).forEach(write => batch.set(write.ref, write.data, { merge: true }));
+        await batch.commit();
+      }
+    }
+
+    if (details.length < MODULE_DETAIL_LIMIT) details.push({
+      action,
+      sourceTable: CLIENTS_BOOK_TABLE,
+      clientId: projection.canonicalClientId,
+      clientName: projection.canonicalCompanyName,
+      sourceRecords: projection.sourceRecordIds.length,
+      departments: projection.hierarchy.departments.length,
+      agents: projection.hierarchy.agents.length,
+      memberships: projection.hierarchy.memberships.length,
+      unresolvedContacts: projection.hierarchy.unresolvedContacts.length,
+      message: action === 'created' && mode.dryRun
+        ? 'Would create one canonical organisation and project its contacts into CRM hierarchy.'
+        : undefined,
+    });
+  });
+
+  const diagnostics = {
+    clientsBookSourceRecords: records.length,
+    departmentSourceRecords: departmentRecords.length,
+    exactOrganisationGroups: groupedSources.size,
+    canonicalOrganisations: projectionResult.projections.length,
+    resolutionMethods,
+    ambiguousGroups: conflicts.length,
+    ambiguousSourceRecords: conflicts.reduce((total, conflict) => total + conflict.sourceRecordIds.length, 0),
+    conflictReasons: conflicts.reduce<Record<string, number>>((counts, conflict) => {
+      counts[conflict.reason] = (counts[conflict.reason] || 0) + 1;
+      return counts;
+    }, {}),
+    conflictCandidates: conflicts.map(conflict => ({
+      sourceTable: conflict.sourceTable,
+      reason: conflict.reason,
+      groupKey: conflict.groupKey,
+      sourceRecordIds: conflict.sourceRecordIds,
+      companyNames: conflict.companyNames,
+      candidateClientIds: conflict.candidateClientIds,
+      recommendation: conflict.recommendation,
+    })),
+    newCanonicalOrganisationCandidates: conflicts
+      .filter(conflict => conflict.reason === 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED')
+      .map(conflict => ({
+        groupKey: conflict.groupKey,
+        canonicalCompanyName: conflict.companyNames[0] || 'Unnamed organisation',
+        proposedClientId: conflict.candidateClientIds[0] || '',
+        sourceRecordCount: conflict.sourceRecordIds.length,
+        sourceNames: conflict.companyNames,
+        recommendation: conflict.recommendation,
+      }))
+      .sort((left, right) => left.canonicalCompanyName.localeCompare(right.canonicalCompanyName)),
+    projectedDepartments: projectionResult.projections.reduce((total, projection) => (
+      total + projection.hierarchy.departments.length
+    ), 0),
+    projectedAgents: projectionResult.projections.reduce((total, projection) => (
+      total + projection.hierarchy.agents.length
+    ), 0),
+    projectedMemberships: projectionResult.projections.reduce((total, projection) => (
+      total + projection.hierarchy.memberships.length
+    ), 0),
+    unresolvedContacts: projectionResult.projections.reduce((total, projection) => (
+      total + projection.hierarchy.unresolvedContacts.length
+    ), 0),
+    writeReadiness: {
+      ready: conflicts.length === 0,
+      blockerCount: conflicts.length,
+      blockers: Object.entries(conflicts.reduce<Record<string, number>>((counts, conflict) => {
+        counts[conflict.reason] = (counts[conflict.reason] || 0) + 1;
+        return counts;
+      }, {})).map(([reason, count]) => ({ reason, count })),
+    },
+  };
+
+  return { stats, details, diagnostics };
 };
 
 const syncTranslationBookings = async (
@@ -2218,15 +3194,40 @@ const syncTranslationBookings = async (
   mode: SyncMode,
   sourceOfTruth: string | undefined,
   runId?: string,
-  conflictContext?: ConflictReconciliationContext
+  conflictContext?: ConflictReconciliationContext,
+  clientEvidenceByTranslationId: Map<string, TranslationClientEvidence> = new Map(),
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
+  const diagnostics = {
+    conflictReasons: {} as Record<string, number>,
+    clientResolutionActions: {} as Record<string, number>,
+    wouldCreateBookings: [] as Array<Record<string, unknown>>,
+    clientCandidates: [] as Array<Record<string, unknown>>,
+    professionalCandidates: [] as Array<Record<string, unknown>>,
+  };
+  const clientCandidateMap = new Map<string, Record<string, unknown>>();
+  const professionalCandidateMap = new Map<string, Record<string, unknown>>();
+  const countDiagnostic = (bucket: Record<string, number>, key: string) => {
+    bucket[key] = (bucket[key] || 0) + 1;
+  };
 
   for (const record of records) {
     try {
-      const mapped = await mapTranslationRecordToBooking(record, tableName) as any;
+      const mapped = await mapTranslationRecordToBooking(
+        record,
+        tableName,
+        clientEvidenceByTranslationId.get(record.id),
+      ) as any;
       if (!mode.dryRun && runId) mapped.booking.lastSyncRunId = runId;
+      const clientEvidenceAmbiguous = Boolean(mapped.sourceSnapshot.clientIdentityEvidence?.accountRefAmbiguous);
+      const normalizedClientName = normalizeForMatch(mapped.sourceSnapshot.clientIdentity.companyName);
+      const genericClientName = GENERIC_CLIENT_NAMES.has(normalizedClientName);
+      const hasStableClientKey = Boolean(
+        mapped.sourceSnapshot.clientIdentity.uniqueClientKey
+        || mapped.sourceSnapshot.clientIdentity.sageAccountRef
+      );
+      const legacyWebContactOnly = tableName === WEB_TRANSLATIONS_TABLE && !hasStableClientKey;
       const clientResolution = await resolveClientCached({
         clientName: mapped.sourceSnapshot.clientIdentity.companyName,
         uniqueClientKey: mapped.sourceSnapshot.clientIdentity.uniqueClientKey || mapped.sourceSnapshot.clientIdentity.sageAccountRef,
@@ -2238,7 +3239,30 @@ const syncTranslationBookings = async (
         invoiceEmail: mapped.sourceSnapshot.clientIdentity.invoiceEmail,
         invoiceContact: mapped.sourceSnapshot.clientIdentity.invoiceContact,
         normalizedCompanyName: mapped.sourceSnapshot.clientIdentity.normalizedCompanyName
-      }, mode.dryRun);
+      }, mode.dryRun, !clientEvidenceAmbiguous && !genericClientName && !legacyWebContactOnly);
+      countDiagnostic(diagnostics.clientResolutionActions, clientResolution.action);
+      if (clientResolution.action === 'would-create' || clientResolution.action.startsWith('unresolved')) {
+        const candidateKey = clientResolution.id || [
+          mapped.sourceSnapshot.clientIdentity.sageAccountRef,
+          mapped.sourceSnapshot.clientIdentity.uniqueClientKey,
+          mapped.sourceSnapshot.clientIdentity.normalizedCompanyName,
+        ].filter(Boolean).join('|');
+        const currentCandidate = clientCandidateMap.get(candidateKey);
+        clientCandidateMap.set(candidateKey, {
+          clientId: clientResolution.id,
+          action: clientResolution.action,
+          companyName: mapped.sourceSnapshot.clientIdentity.companyName,
+          normalizedCompanyName: mapped.sourceSnapshot.clientIdentity.normalizedCompanyName,
+          sageAccountRef: mapped.sourceSnapshot.clientIdentity.sageAccountRef,
+          uniqueClientKey: mapped.sourceSnapshot.clientIdentity.uniqueClientKey,
+          email: mapped.sourceSnapshot.clientIdentity.email || mapped.sourceSnapshot.clientIdentity.invoiceEmail,
+          sourceRecordCount: Number(currentCandidate?.sourceRecordCount || 0) + 1,
+          sourceRecordIds: [
+            ...((currentCandidate?.sourceRecordIds as string[] | undefined) || []),
+            record.id,
+          ].slice(0, 20),
+        });
+      }
       mapped.booking.clientId = clientResolution.id;
 
       let existingRef: admin.firestore.DocumentReference | null = null;
@@ -2259,6 +3283,36 @@ const syncTranslationBookings = async (
       }
 
       mapped.booking.status = preserveStatusIfLocalAhead(existing?.status, mapped.booking.status, sourceOfTruth);
+      const unresolvedClient = clientResolution.action.startsWith('unresolved');
+      if (unresolvedClient) {
+        const currentClientId = normalize(existing?.clientId);
+        const currentClientName = normalizeForMatch(existing?.clientName || '');
+        const currentClientIsUsable = Boolean(currentClientId)
+          && !GENERIC_CLIENT_IDS.has(currentClientId)
+          && !GENERIC_CLIENT_NAMES.has(currentClientName);
+        mapped.booking.clientId = currentClientIsUsable ? currentClientId : undefined;
+        if (currentClientIsUsable) mapped.booking.clientName = existing?.clientName || mapped.booking.clientName;
+        mapped.booking.syncStatus = 'CONFLICT';
+        if (!clientEvidenceAmbiguous) {
+          stats.conflict += 1;
+          countDiagnostic(diagnostics.conflictReasons, 'CLIENT_NOT_RESOLVED');
+          await writeSyncConflict({
+            runId,
+            entityType: 'booking',
+            entityId: existingSnap?.id,
+            sourceTable: tableName,
+            sourceRecordId: record.id,
+            sourceBaseId: mapped.booking.sourceBaseId,
+            legacyRef: mapped.booking.legacyAirtableRef,
+            severity: 'HIGH',
+            reason: 'CLIENT_NOT_RESOLVED',
+            currentValue: { clientId: currentClientId, clientName: existing?.clientName || '' },
+            incomingValue: mapped.sourceSnapshot.clientIdentity,
+            recommendedAction: 'Link this translation to one canonical Client CRM organisation, then rerun sync.',
+            dryRun: mode.dryRun,
+          });
+        }
+      }
       const hasTranslatorSignal = Boolean(
         mapped.sourceSnapshot.translatorName
         || mapped.sourceSnapshot.translatorEmail
@@ -2267,8 +3321,31 @@ const syncTranslationBookings = async (
       );
       const unresolvedTranslator = hasTranslatorSignal && !mapped.booking.interpreterId;
       if (unresolvedTranslator) {
+        const professionalKey = mapped.sourceSnapshot.translatorAirtableRecordId
+          || mapped.sourceSnapshot.translatorEmail
+          || normalizeIdentityName(mapped.sourceSnapshot.translatorName)
+          || record.id;
+        const currentProfessional = professionalCandidateMap.get(professionalKey);
+        professionalCandidateMap.set(professionalKey, {
+          airtableRecordId: mapped.sourceSnapshot.translatorAirtableRecordId,
+          name: mapped.sourceSnapshot.translatorName,
+          email: mapped.sourceSnapshot.translatorEmail,
+          phone: mapped.sourceSnapshot.translatorPhone,
+          ambiguousCandidates: mapped.sourceSnapshot.translatorAmbiguousCandidates || [],
+          sourceRecordCount: Number(currentProfessional?.sourceRecordCount || 0) + 1,
+          sourceRecordIds: [
+            ...((currentProfessional?.sourceRecordIds as string[] | undefined) || []),
+            record.id,
+          ].slice(0, 20),
+        });
         mapped.booking.syncStatus = 'CONFLICT';
         stats.conflict += 1;
+        countDiagnostic(
+          diagnostics.conflictReasons,
+          mapped.sourceSnapshot.translatorAmbiguousCandidates?.length
+            ? 'PROFESSIONAL_MATCH_AMBIGUOUS'
+            : 'PROFESSIONAL_NOT_RESOLVED',
+        );
         await writeSyncConflict({
           runId,
           entityType: 'booking',
@@ -2290,9 +3367,30 @@ const syncTranslationBookings = async (
           dryRun: mode.dryRun
         });
       }
+      if (clientEvidenceAmbiguous) {
+        mapped.booking.syncStatus = 'CONFLICT';
+        stats.conflict += 1;
+        countDiagnostic(diagnostics.conflictReasons, 'CLIENT_ACCOUNT_REF_AMBIGUOUS');
+        await writeSyncConflict({
+          runId,
+          entityType: 'booking',
+          entityId: existingSnap?.id,
+          sourceTable: tableName,
+          sourceRecordId: record.id,
+          sourceBaseId: mapped.booking.sourceBaseId,
+          legacyRef: mapped.booking.legacyAirtableRef,
+          severity: 'HIGH',
+          reason: 'CLIENT_ACCOUNT_REF_AMBIGUOUS',
+          currentValue: mapped.sourceSnapshot.clientIdentityEvidence.invoiceNumbers,
+          incomingValue: mapped.sourceSnapshot.clientIdentityEvidence.accountRefs,
+          recommendedAction: 'Review the linked translation invoices and select one canonical client account before rerunning sync.',
+          dryRun: mode.dryRun,
+        });
+      }
       if (existing?.status && existing.status !== mapped.booking.status && sourceOfTruth !== 'AIRTABLE') {
         mapped.booking.syncStatus = 'CONFLICT';
         stats.conflict += 1;
+        countDiagnostic(diagnostics.conflictReasons, 'STATUS_SOURCE_OF_TRUTH_MISMATCH');
         await writeSyncConflict({
           runId,
           entityType: 'booking',
@@ -2316,6 +3414,20 @@ const syncTranslationBookings = async (
         : 'created';
 
       stats[action] += 1;
+      if (action === 'created') {
+        diagnostics.wouldCreateBookings.push({
+          sourceRecordId: record.id,
+          sourceTable: tableName,
+          jobNumber: mapped.booking.jobNumber,
+          clientName: mapped.booking.clientName,
+          clientId: mapped.booking.clientId || '',
+          clientAction: clientResolution.action,
+          status: mapped.booking.status,
+          interpreterName: mapped.booking.interpreterName,
+          interpreterId: mapped.booking.interpreterId,
+          syncStatus: mapped.booking.syncStatus,
+        });
+      }
       let workflowArtifacts = predictWorkflowArtifacts(mapped.booking);
 
       if (!mode.dryRun && action !== 'skipped') {
@@ -2391,7 +3503,11 @@ const syncTranslationBookings = async (
     }
   }
 
-  return { stats, details };
+  diagnostics.clientCandidates = Array.from(clientCandidateMap.values())
+    .sort((left, right) => Number(right.sourceRecordCount || 0) - Number(left.sourceRecordCount || 0));
+  diagnostics.professionalCandidates = Array.from(professionalCandidateMap.values())
+    .sort((left, right) => Number(right.sourceRecordCount || 0) - Number(left.sourceRecordCount || 0));
+  return { stats, details, diagnostics };
 };
 
 const syncClientInvoices = async (
@@ -3819,6 +4935,7 @@ const syncRecords = async (mode: SyncMode, includeFinance = true) => {
   interpreterCache.clear();
   interpreterDirectoryPromise = null;
   clientCache.clear();
+  platformClientDirectoryPromise = null;
   bookingByAirtableRecordCache.clear();
   const conflictContext = createConflictReconciliationContext();
   const platformMode = await getPlatformMode();
@@ -4152,6 +5269,15 @@ const addStats = (
   });
 };
 
+const addCounts = (
+  target: Record<string, number>,
+  incoming: Record<string, number>,
+) => {
+  Object.entries(incoming).forEach(([key, value]) => {
+    target[key] = (target[key] || 0) + Number(value || 0);
+  });
+};
+
 const normalizeModules = (input: unknown): AirtableSyncModule[] => {
   if (input === 'full') return FULL_SYNC_MODULES;
   const raw = Array.isArray(input) ? input : [input || 'redbook'];
@@ -4169,6 +5295,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
   interpreterCache.clear();
   interpreterDirectoryPromise = null;
   clientCache.clear();
+  platformClientDirectoryPromise = null;
   bookingByAirtableRecordCache.clear();
   const conflictContext = createConflictReconciliationContext();
 
@@ -4222,7 +5349,12 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
     label: string,
     tableNames: string[],
     records: number,
-    result: { stats: Record<SyncAction, number>; details: Array<Record<string, unknown>> }
+    result: {
+      stats: Record<SyncAction, number>;
+      details: Array<Record<string, unknown>>;
+      identityEvidence?: Record<string, unknown>;
+      diagnostics?: Record<string, unknown>;
+    }
   ) => {
     addStats(overallStats, result.stats);
     moduleResults.push({
@@ -4232,26 +5364,66 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       records,
       stats: result.stats,
       details: result.details,
+      ...(result.identityEvidence ? { identityEvidence: result.identityEvidence } : {}),
+      ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+      ...((result.diagnostics?.writeReadiness || (result.diagnostics?.clientsBook as Record<string, unknown> | undefined)?.writeReadiness)
+        ? {
+            writeReadiness: result.diagnostics?.writeReadiness
+              || (result.diagnostics?.clientsBook as Record<string, unknown>)?.writeReadiness,
+          }
+        : {}),
       syncStrategy: mode.syncStrategy
     });
   };
 
   if (modules.includes('clients')) {
-    const [clientsBatch, clientsBookBatch] = await Promise.all([
+    const [clientsBatch, clientsBookBatch, departmentsBatch] = await Promise.all([
       fetchModuleRecords(CLIENTS_TABLE),
-      fetchModuleRecords(CLIENTS_BOOK_TABLE)
+      fetchModuleRecords(CLIENTS_BOOK_TABLE),
+      fetchModuleRecords(DEPARTMENTS_TABLE),
     ]);
     const clients = clientsBatch.records;
     const clientsBook = clientsBookBatch.records;
+    const departments = departmentsBatch.records;
     const clientsResult = await syncClients(clients, CLIENTS_TABLE, effectiveMode, runRef.id);
-    const clientsBookResult = await syncClients(clientsBook, CLIENTS_BOOK_TABLE, effectiveMode, runRef.id);
+    const clientsBookResult = await syncClientBookHierarchy(
+      clientsBook,
+      departments,
+      clientsResult.clientIdBySourceRecordId,
+      clientsResult.clientNameBySourceRecordId,
+      clientsResult.canonicalAccounts,
+      clientsResult.plannedCreatedClientIds,
+      effectiveMode,
+      runRef.id,
+      conflictContext,
+    );
     const combined = {
       stats: emptyActionStats(),
-      details: [...clientsResult.details, ...clientsBookResult.details].slice(0, MAX_DETAILS)
+      details: [...clientsResult.details, ...clientsBookResult.details].slice(0, MAX_DETAILS),
+      diagnostics: {
+        canonicalAccounts: clientsResult.diagnostics,
+        clientsBook: clientsBookResult.diagnostics,
+        writeReadiness: {
+          ready: clientsResult.diagnostics.writeReadiness.ready
+            && clientsBookResult.diagnostics.writeReadiness.ready,
+          blockerCount: clientsResult.diagnostics.writeReadiness.blockerCount
+            + clientsBookResult.diagnostics.writeReadiness.blockerCount,
+          blockers: [
+            ...clientsResult.diagnostics.writeReadiness.blockers,
+            ...clientsBookResult.diagnostics.writeReadiness.blockers,
+          ],
+        },
+      },
     };
     addStats(combined.stats, clientsResult.stats);
     addStats(combined.stats, clientsBookResult.stats);
-    pushModule('clients', 'Clients', [CLIENTS_TABLE, CLIENTS_BOOK_TABLE], clients.length + clientsBook.length, combined);
+    pushModule(
+      'clients',
+      'Client CRM hierarchy',
+      [CLIENTS_TABLE, CLIENTS_BOOK_TABLE, DEPARTMENTS_TABLE],
+      clients.length + clientsBook.length + departments.length,
+      combined,
+    );
   }
 
   if (modules.includes('redbook')) {
@@ -4274,16 +5446,64 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       fetchModuleRecords(TRANSLATIONS_TABLE),
       fetchModuleRecords(WEB_TRANSLATIONS_TABLE)
     ]);
+    const evidenceBatch = await fetchAirtableRecordBatch(
+      Math.max(1000, Math.min(mode.limitRecords, 5000)),
+      TRANSLATION_CLIENT_INVOICES_TABLE,
+      '',
+      { strategy: 'FULL_AUDIT' },
+    );
+    const clientEvidenceByTranslationId = buildTranslationClientEvidence(evidenceBatch.records);
     const translations = translationsBatch.records;
     const webTranslations = webTranslationsBatch.records;
-    const translationResult = await syncTranslationBookings(translations, TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
-    const webTranslationResult = await syncTranslationBookings(webTranslations, WEB_TRANSLATIONS_TABLE, effectiveMode, platformMode.sourceOfTruth, runRef.id, conflictContext);
+    const translationResult = await syncTranslationBookings(
+      translations,
+      TRANSLATIONS_TABLE,
+      effectiveMode,
+      platformMode.sourceOfTruth,
+      runRef.id,
+      conflictContext,
+      clientEvidenceByTranslationId,
+    );
+    const webTranslationResult = await syncTranslationBookings(
+      webTranslations,
+      WEB_TRANSLATIONS_TABLE,
+      effectiveMode,
+      platformMode.sourceOfTruth,
+      runRef.id,
+      conflictContext,
+      clientEvidenceByTranslationId,
+    );
     const combined = {
       stats: emptyActionStats(),
-      details: [...translationResult.details, ...webTranslationResult.details].slice(0, MAX_DETAILS)
+      details: [...translationResult.details, ...webTranslationResult.details].slice(0, MAX_DETAILS),
+      identityEvidence: {
+        invoiceRecordsScanned: evidenceBatch.records.length,
+        linkedTranslations: clientEvidenceByTranslationId.size,
+        complete: !evidenceBatch.nextOffset,
+      },
+      diagnostics: {
+        conflictReasons: {} as Record<string, number>,
+        clientResolutionActions: {} as Record<string, number>,
+        wouldCreateBookings: [
+          ...translationResult.diagnostics.wouldCreateBookings,
+          ...webTranslationResult.diagnostics.wouldCreateBookings,
+        ],
+        clientCandidates: [
+          ...translationResult.diagnostics.clientCandidates,
+          ...webTranslationResult.diagnostics.clientCandidates,
+        ],
+        professionalCandidates: [
+          ...translationResult.diagnostics.professionalCandidates,
+          ...webTranslationResult.diagnostics.professionalCandidates,
+        ],
+      },
     };
     addStats(combined.stats, translationResult.stats);
     addStats(combined.stats, webTranslationResult.stats);
+    addCounts(combined.diagnostics.conflictReasons, translationResult.diagnostics.conflictReasons);
+    addCounts(combined.diagnostics.conflictReasons, webTranslationResult.diagnostics.conflictReasons);
+    addCounts(combined.diagnostics.clientResolutionActions, translationResult.diagnostics.clientResolutionActions);
+    addCounts(combined.diagnostics.clientResolutionActions, webTranslationResult.diagnostics.clientResolutionActions);
     pushModule('translations', 'Translation jobs', [TRANSLATIONS_TABLE, WEB_TRANSLATIONS_TABLE], translations.length + webTranslations.length, combined);
   }
 
@@ -4321,15 +5541,25 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
     effectiveMode.dryRun
   );
   const finishedAt = new Date().toISOString();
+  const writeBlockedModules = moduleResults
+    .filter(module => (module.writeReadiness as { ready?: boolean } | undefined)?.ready === false)
+    .map(module => ({
+      module: module.module,
+      label: module.label,
+      blockerCount: Number((module.writeReadiness as { blockerCount?: number }).blockerCount || 0),
+      blockers: (module.writeReadiness as { blockers?: unknown[] }).blockers || [],
+    }));
   const result = {
     success: overallStats.error === 0,
     syncRunId: runRef.id,
-    mappingVersion: 'airtable-sync-center-v1',
+    mappingVersion: AIRTABLE_SYNC_MAPPING_VERSION,
     syncStrategy: mode.syncStrategy,
+    limitRecords: mode.limitRecords,
     dryRun: effectiveMode.dryRun,
     importMode,
     triggeredBy: mode.triggeredBy,
     userId: mode.userId || '',
+    approvedByDryRunId: mode.approvedByDryRunId || '',
     modules,
     startedAt,
     finishedAt,
@@ -4340,6 +5570,11 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       filterActive: mode.syncStrategy !== 'FULL_AUDIT' && mode.syncStrategy !== 'CUSTOM_LIMIT' && workflowSourceRecordIds.size > 0
     },
     autoResolvedConflicts,
+    writeApproval: {
+      ready: writeBlockedModules.length === 0,
+      blockerCount: writeBlockedModules.reduce((total, module) => total + module.blockerCount, 0),
+      blockedModules: writeBlockedModules,
+    },
     moduleResults
   };
 
@@ -4521,6 +5756,285 @@ export const getAirtableSyncAuditTrail = functions.runWith({
       ...cleanReportData(doc.data())
     }))
   };
+});
+
+export const saveAirtableClientIdentityMapping = functions.runWith({
+  timeoutSeconds: 60,
+  memory: '256MB',
+}).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context);
+  const sourceTable = normalize(data?.sourceTable);
+  const groupKey = normalizeOrganizationName(data?.groupKey);
+  const action = normalize(data?.action).toUpperCase() as ClientIdentityMappingAction;
+  const requestedClientId = normalize(data?.canonicalClientId);
+  const requestedCompanyName = normalize(data?.canonicalCompanyName);
+
+  if (![CLIENTS_TABLE, CLIENTS_BOOK_TABLE, DEPARTMENTS_TABLE].includes(sourceTable)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Only Clients, Clients Book and Departments identities can be staged here.');
+  }
+  if (!groupKey) {
+    throw new functions.https.HttpsError('invalid-argument', 'A stable Airtable identity key is required.');
+  }
+  if (!['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT'].includes(action)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Choose an existing client or approve a new canonical organisation.');
+  }
+  if (action === 'APPROVE_NEW_CLIENT' && ![CLIENTS_TABLE, CLIENTS_BOOK_TABLE].includes(sourceTable)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Departments must be mapped to an existing client organisation.');
+  }
+  if (action === 'APPROVE_NEW_CLIENT' && actor.role !== 'SUPER_ADMIN') {
+    throw new functions.https.HttpsError('permission-denied', 'Only a Super Admin can approve a new canonical client organisation.');
+  }
+
+  let canonicalClientId = requestedClientId;
+  let canonicalCompanyName = requestedCompanyName;
+  if (action === 'MAP_TO_CLIENT') {
+    if (!canonicalClientId) {
+      throw new functions.https.HttpsError('invalid-argument', 'Select the canonical Client CRM organisation.');
+    }
+    const selected = await db.collection('clients').doc(canonicalClientId).get();
+    if (!selected.exists) throw new functions.https.HttpsError('not-found', 'The selected client no longer exists.');
+    const canonical = await canonicalClientDocument(selected);
+    const state = normalize(canonical.data()?.recordState).toUpperCase();
+    if (!canonical.exists || state === 'ARCHIVED') {
+      throw new functions.https.HttpsError('failed-precondition', 'The selected client is archived or unavailable.');
+    }
+    canonicalClientId = canonical.id;
+    canonicalCompanyName = normalize(canonical.data()?.companyName) || canonicalCompanyName;
+  } else {
+    canonicalClientId = `airtable_client_${slugify(groupKey)}`;
+    canonicalCompanyName = canonicalCompanyName || normalize(data?.sourceName);
+    if (!canonicalCompanyName) {
+      throw new functions.https.HttpsError('invalid-argument', 'Confirm the canonical organisation name.');
+    }
+    const existing = await db.collection('clients').doc(canonicalClientId).get();
+    if (existing.exists) {
+      throw new functions.https.HttpsError(
+        'already-exists',
+        'A client already uses this canonical identity. Map the source group to that client instead.',
+      );
+    }
+  }
+
+  const mappingId = clientIdentityMappingId(sourceTable, groupKey);
+  const mappingRef = db.collection('airtableClientIdentityMappings').doc(mappingId);
+  const before = await mappingRef.get();
+  const now = new Date().toISOString();
+  const mapping = {
+    id: mappingId,
+    sourceSystem: 'AIRTABLE',
+    sourceBaseId: DEFAULT_BASE_ID,
+    sourceTable,
+    groupKey,
+    sourceNames: uniqueValues(...(Array.isArray(data?.sourceNames) ? data.sourceNames.map(normalize) : [])),
+    action,
+    canonicalClientId,
+    canonicalCompanyName,
+    status: 'ACTIVE',
+    reason: normalize(data?.reason) || 'Reviewed in Airtable Sync Center',
+    approvedBy: actor.uid,
+    approvedRole: actor.role,
+    approvedAt: now,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: before.exists ? before.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await mappingRef.set(mapping, { merge: true });
+
+  const settings = await db.collection('system').doc('settings').get();
+  const auditRef = db.collection('auditEvents').doc();
+  await writeAuditEvent(auditRef.id, {
+    entityType: 'AIRTABLE_CLIENT_IDENTITY_MAPPING',
+    entityId: mappingId,
+    action: before.exists ? 'AIRTABLE_CLIENT_IDENTITY_MAPPING_UPDATED' : 'AIRTABLE_CLIENT_IDENTITY_MAPPING_CREATED',
+    actorId: actor.uid,
+    actorRole: actor.role,
+    source: 'AIRTABLE_SYNC_CENTER',
+    communicationMode: normalize(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase(),
+    syncRunId: '',
+    changedFields: ['action', 'canonicalClientId', 'canonicalCompanyName', 'status'],
+    before: before.exists ? cleanReportData(before.data() || {}) : null,
+    after: cleanReportData(mapping),
+    organizationId: 'lingland-main',
+    bookingId: '',
+    createdAt: now,
+  });
+
+  return {
+    success: true,
+    mappingId,
+    sourceTable,
+    groupKey,
+    action,
+    canonicalClientId,
+    canonicalCompanyName,
+  };
+});
+
+export const saveAirtableClientIdentityMappingsBatch = functions.runWith({
+  timeoutSeconds: 120,
+  memory: '256MB',
+}).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context);
+  let requests;
+  try {
+    requests = validateClientIdentityMappingBatch(data?.mappings, actor.role, data?.confirmed === true);
+  } catch (error) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      error instanceof Error ? error.message : 'Invalid batch identity review.',
+    );
+  }
+  const syncRunId = normalize(data?.syncRunId);
+  if (!syncRunId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Run a fresh Clients Dry Run before reviewing recommendations.');
+  }
+  const syncRun = await db.collection('syncRuns').doc(syncRunId).get();
+  const runValidation = validateClientIdentityRecommendationRun(
+    syncRun.exists ? cleanReportData(syncRun.data() || {}) : null,
+    requests,
+    actor.uid,
+    AIRTABLE_SYNC_MAPPING_VERSION,
+  );
+  if (!runValidation.ok) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `The recommendation audit is stale or no longer matches (${runValidation.reason}). Run a fresh Clients Dry Run.`,
+    );
+  }
+
+  const prepared = await Promise.all(requests.map(async request => {
+    const sourceTable = normalize(request.sourceTable);
+    const groupKey = normalizeOrganizationName(request.groupKey);
+    const requestedClient = await db.collection('clients').doc(request.canonicalClientId).get();
+    if (!requestedClient.exists) {
+      throw new functions.https.HttpsError('not-found', `Client ${request.canonicalClientId} no longer exists.`);
+    }
+    const canonical = await canonicalClientDocument(requestedClient);
+    const state = normalize(canonical.data()?.recordState).toUpperCase();
+    if (!canonical.exists || state === 'ARCHIVED') {
+      throw new functions.https.HttpsError('failed-precondition', `Client ${request.canonicalClientId} is archived or unavailable.`);
+    }
+
+    const mappingId = clientIdentityMappingId(sourceTable, groupKey);
+    const mappingRef = db.collection('airtableClientIdentityMappings').doc(mappingId);
+    const before = await mappingRef.get();
+    const canonicalCompanyName = normalize(canonical.data()?.companyName)
+      || normalize(request.canonicalCompanyName)
+      || canonical.id;
+    const now = new Date().toISOString();
+    const mapping = {
+      id: mappingId,
+      sourceSystem: 'AIRTABLE',
+      sourceBaseId: DEFAULT_BASE_ID,
+      sourceTable,
+      groupKey,
+      sourceNames: uniqueValues(...(request.sourceNames || [])),
+      action: 'MAP_TO_CLIENT' as const,
+      canonicalClientId: canonical.id,
+      canonicalCompanyName,
+      status: 'ACTIVE',
+      reason: normalize(request.reason) || 'Accepted high-confidence recommendation in Airtable Sync Center',
+      recommendationConfidence: 'HIGH',
+      reviewMethod: 'BATCH_RECOMMENDATION',
+      approvedBy: actor.uid,
+      approvedRole: actor.role,
+      approvedAt: now,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: before.exists ? before.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp(),
+    };
+    return { request, mappingId, mappingRef, before, mapping, canonicalCompanyName, now };
+  }));
+
+  const settings = await db.collection('system').doc('settings').get();
+  const communicationMode = normalize(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase();
+  const batch = db.batch();
+  prepared.forEach(item => {
+    batch.set(item.mappingRef, item.mapping, { merge: true });
+    const auditRef = db.collection('auditEvents').doc();
+    batch.set(auditRef, {
+      id: auditRef.id,
+      schemaVersion: 1,
+      entityType: 'AIRTABLE_CLIENT_IDENTITY_MAPPING',
+      entityId: item.mappingId,
+      action: item.before.exists
+        ? 'AIRTABLE_CLIENT_IDENTITY_MAPPING_UPDATED'
+        : 'AIRTABLE_CLIENT_IDENTITY_MAPPING_CREATED',
+      actorId: actor.uid,
+      actorRole: actor.role,
+      source: 'AIRTABLE_SYNC_CENTER_BATCH_REVIEW',
+      communicationMode,
+      syncRunId: '',
+      changedFields: ['action', 'canonicalClientId', 'canonicalCompanyName', 'status'],
+      before: item.before.exists ? cleanReportData(item.before.data() || {}) : null,
+      after: {
+        sourceTable: item.mapping.sourceTable,
+        groupKey: item.mapping.groupKey,
+        action: item.mapping.action,
+        canonicalClientId: item.mapping.canonicalClientId,
+        canonicalCompanyName: item.mapping.canonicalCompanyName,
+        status: item.mapping.status,
+        recommendationConfidence: item.mapping.recommendationConfidence,
+        reviewMethod: item.mapping.reviewMethod,
+      },
+      organizationId: 'lingland-main',
+      bookingId: '',
+      createdAt: item.now,
+      timestamp: item.now,
+    }, { merge: false });
+  });
+  await batch.commit();
+
+  return {
+    success: true,
+    saved: prepared.length,
+    mappings: prepared.map(item => ({
+      mappingId: item.mappingId,
+      sourceTable: item.mapping.sourceTable,
+      groupKey: item.mapping.groupKey,
+      canonicalClientId: item.mapping.canonicalClientId,
+      canonicalCompanyName: item.canonicalCompanyName,
+    })),
+  };
+});
+
+export const revokeAirtableClientIdentityMapping = functions.runWith({
+  timeoutSeconds: 60,
+  memory: '256MB',
+}).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context);
+  const sourceTable = normalize(data?.sourceTable);
+  const groupKey = normalizeOrganizationName(data?.groupKey);
+  if (![CLIENTS_TABLE, CLIENTS_BOOK_TABLE, DEPARTMENTS_TABLE].includes(sourceTable) || !groupKey) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid mapping scope is required.');
+  }
+  const mappingId = clientIdentityMappingId(sourceTable, groupKey);
+  const mappingRef = db.collection('airtableClientIdentityMappings').doc(mappingId);
+  const before = await mappingRef.get();
+  if (!before.exists) throw new functions.https.HttpsError('not-found', 'Identity mapping not found.');
+  const now = new Date().toISOString();
+  await mappingRef.set({
+    status: 'REVOKED',
+    revokedBy: actor.uid,
+    revokedAt: now,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  const auditRef = db.collection('auditEvents').doc();
+  await writeAuditEvent(auditRef.id, {
+    entityType: 'AIRTABLE_CLIENT_IDENTITY_MAPPING',
+    entityId: mappingId,
+    action: 'AIRTABLE_CLIENT_IDENTITY_MAPPING_REVOKED',
+    actorId: actor.uid,
+    actorRole: actor.role,
+    source: 'AIRTABLE_SYNC_CENTER',
+    communicationMode: 'SUPPRESSED',
+    syncRunId: '',
+    changedFields: ['status'],
+    before: cleanReportData(before.data() || {}),
+    after: { status: 'REVOKED' },
+    organizationId: 'lingland-main',
+    bookingId: '',
+    createdAt: now,
+  });
+  return { success: true, mappingId };
 });
 
 type FinancialAuditIssue = {
@@ -4780,15 +6294,84 @@ export const syncAirtableData = functions.runWith({
   const syncStrategy = normalizeSyncStrategy(data?.syncStrategy);
   const limitRecords = effectiveLimitForStrategy(syncStrategy, Number(data?.limitRecords || 500));
   const modules = normalizeModules(data?.modules);
+  const userId = context.auth?.uid || '';
+  const expectedDryRunId = normalize(data?.expectedDryRunId);
+  const approvalRef = expectedDryRunId ? db.collection('syncRuns').doc(expectedDryRunId) : null;
 
-  return syncAirtableOperations({
-    dryRun,
-    limitRecords,
-    syncStrategy,
-    triggeredBy: 'manual',
-    userId: context.auth?.uid,
-    tableOffsets: data?.tableOffsets || data?.offsets || {}
-  }, modules);
+  if (!dryRun) {
+    if (!approvalRef) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Run a new Dry Run with the exact same scope before writing Airtable data.',
+        { reason: 'DRY_RUN_REQUIRED' },
+      );
+    }
+
+    await db.runTransaction(async transaction => {
+      const approvalSnapshot = await transaction.get(approvalRef);
+      const validation = validateSyncWriteApproval(
+        approvalSnapshot.exists ? approvalSnapshot.data() : null,
+        {
+          userId,
+          modules,
+          syncStrategy,
+          limitRecords,
+          mappingVersion: AIRTABLE_SYNC_MAPPING_VERSION,
+        },
+      );
+
+      if (!validation.ok) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The Dry Run approval is no longer valid. Run a new Dry Run before writing data.',
+          { reason: validation.reason },
+        );
+      }
+
+      transaction.update(approvalRef, {
+        writeApprovalStatus: 'RESERVED',
+        writeReservedAt: admin.firestore.FieldValue.serverTimestamp(),
+        writeReservedBy: userId,
+        writeRequest: {
+          modules,
+          syncStrategy,
+          limitRecords,
+          mappingVersion: AIRTABLE_SYNC_MAPPING_VERSION,
+        },
+      });
+    });
+  }
+
+  try {
+    const result = await syncAirtableOperations({
+      dryRun,
+      limitRecords,
+      syncStrategy,
+      triggeredBy: 'manual',
+      userId,
+      tableOffsets: data?.tableOffsets || data?.offsets || {},
+      approvedByDryRunId: dryRun ? undefined : expectedDryRunId,
+    }, modules);
+
+    if (!dryRun && approvalRef) {
+      await approvalRef.set({
+        writeApprovalStatus: 'CONSUMED',
+        writeConsumedAt: admin.firestore.FieldValue.serverTimestamp(),
+        writeSyncRunId: 'syncRunId' in result ? result.syncRunId : '',
+        writeSucceeded: result.success === true,
+      }, { merge: true });
+    }
+
+    return result;
+  } catch (error) {
+    if (!dryRun && approvalRef) {
+      await approvalRef.set({
+        writeApprovalStatus: 'FAILED',
+        writeFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+    throw error;
+  }
 });
 
 export const syncAirtableMaintenance = functions.runWith({

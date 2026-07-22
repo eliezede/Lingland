@@ -76,6 +76,8 @@ Invoices continue to link to `clientId`; optional department and agent reference
 ### Phase 2 - Canonical mapping and merge preparation
 
 - [x] Add persistent review decisions: reject, split, defer, reopen, review history, and deterministic exclusion of rejected/split record pairs.
+- [x] Add persistent Airtable identity mappings for `Clients`, `Clients Book`, and `Departments`, with audited `MAP_TO_CLIENT` and Super Admin-only `APPROVE_NEW_CLIENT` decisions.
+- [x] Block Airtable Write Sync server-side whenever the exact dry run contains an unresolved client identity decision.
 - [x] Create canonical client, department, agent, and membership manifests with backups and rollback ownership markers.
 - [x] Preview every protected client field winner and conflict before a write.
 - [x] Produce dependency rewrite counts, concurrency fingerprint, backups, and tested rollback payload.
@@ -107,6 +109,10 @@ Invoices continue to link to `clientId`; optional department and agent reference
 - [ ] Allow authorised users to request a new client or department without creating duplicates automatically.
 - [ ] Give staff full manual control to select, create, or repair hierarchy links. Department and agent membership management, booking editor selectors, invoice identity repair and blocked-job hierarchy repair are complete; inline creation requests and the final production repair pass remain.
 - [x] Update Airtable sync to resolve organisations deterministically and report unresolved client/invoice identities without creating finance-owned client records.
+- [x] Add a Client CRM staging workspace to the Airtable Sync Center with canonical-client search, source-record evidence, durable mappings, and a zero-blocker write gate.
+- [x] Add explainable canonical-client recommendations using stable account references, organisation aliases, UK postcodes, addresses, phones, and specific corporate domains. Public/shared domains such as `nhs.net` never identify an organisation.
+- [x] Add an explicit batch-review path for unique high-confidence recommendations only. It maps to existing clients, is capped at 25, revalidates canonical records server-side, and writes a separate audit event for every mapping.
+- [ ] Deploy the recommendation contract and run a fresh production `Clients / Full audit`; review every proposed mapping before saving it and keep Write Sync locked until all remaining manual decisions are resolved.
 - [ ] Preserve the manual/hybrid operating model when an agent has no active account.
 
 ### Phase 6 - Cutover and cleanup
@@ -132,6 +138,56 @@ Before any merge can execute:
 - [ ] Backup manifest written and checksum recorded.
 - [ ] Dry-run counts equal post-write counts.
 - [ ] Rollback procedure tested in an emulator or staging project.
+
+## REDBOOK mirror identity staging
+
+The REDBOOK client import now treats the three Airtable sources according to their real business role:
+
+- `Clients` is the canonical account register and may propose a new organisation only after an explicit review.
+- `Clients Book` contains requesters and contact rows. It projects agents, memberships, departments and aliases; it cannot silently create an organisation.
+- `Departments` contains operational units. An orphan department must be assigned to an existing canonical client before a write is allowed.
+
+Manual review decisions are stored in `airtableClientIdentityMappings` and reused by every later mirror cycle. Mapping to an existing client is available to authorised admins. Approving a genuinely new organisation requires a `SUPER_ADMIN`. Every decision writes an `auditEvents` record. A mapping to an archived, redirected, deleted or otherwise unavailable client becomes a new blocker instead of silently falling back to name matching.
+
+### Validated full-audit evidence - 22 July 2026
+
+- Mapping contract: `airtable-sync-center-v7`.
+- Dry-run ID: `E7g2t4on66ZhulzP3OcF`.
+- Scope: `clients`, `FULL_AUDIT`, limit `5,000`.
+- Source rows: 51 `Clients`, 1,177 `Clients Book`, and 60 `Departments`.
+- Projection: 367 canonical organisations, 12 departments, 1,090 agents and memberships.
+- Result: 8 proposed creates, 410 updates, 138 conflicts, 0 errors.
+- Write gate: **locked** with 146 unresolved identity decisions.
+- Blockers: 8 canonical account creates, 80 new-organisation reviews, 56 orphan departments, 1 ambiguous canonical client, and 1 generic organisation identity.
+- Browser verification: desktop and 390 px mobile layouts have no global horizontal overflow; canonical search works; Write Sync remains disabled; the final rerun produced no React errors or warnings.
+- Test evidence: frontend production build passed, Functions TypeScript build passed, and 190/190 automated tests passed.
+- Production effect: no client mapping and no Write Sync was executed during validation. Email policy remains `SUPPRESSED`; the scheduled mirror configuration was not changed.
+
+### Explainable recommendation sprint - 22 July 2026
+
+- Recommendations are advisory data attached to unresolved `Clients Book` and `Departments` identities; they never resolve a conflict or permit Write Sync by themselves.
+- The recommendation release uses mapping contract `airtable-sync-center-v8`; every batch is bound to the exact Clients Dry Run, actor and recommended target for 30 minutes. Contract v7 runs cannot authorise this workflow.
+- `HIGH` requires a unique strong target. A close competing target downgrades the result to `MEDIUM`, which cannot enter batch review.
+- Batch review supports only `MAP_TO_CLIENT`. `APPROVE_NEW_CLIENT` remains an individual `SUPER_ADMIN` decision.
+- Every batch requires an active admin, explicit confirmation, 1-25 unique source scopes, `HIGH` confidence, a recent matching Dry Run, and an active canonical client. The write and its audit events are committed together.
+- A repeatable read-only Airtable audit inspected 51 `Clients`, 1,177 `Clients Book`, and 60 `Departments`. Against the canonical Airtable account register it found 9 unique strong recommendations, 21 medium suggestions, and left the rest manual. These are pre-deployment aggregate estimates; the authoritative count must come from the next production Full Audit because the live resolver also considers existing Firestore identities and durable mappings.
+- Automated coverage includes stable-account matches, public-domain exclusion, address-only manual review, close-target downgrade, confirmation, role, confidence, creation, duplicate-scope, batch-size, expired-run, changed-actor and changed-target policies.
+- Local release evidence for contract `v8`: 35 test files and 201 tests passed; the frontend typecheck/production bundle and the Functions TypeScript build both passed; `git diff --check` reported no whitespace errors.
+- No mapping, client creation, Write Sync, email, or scheduled-sync configuration was changed during this audit.
+
+### Operator procedure
+
+1. Open `Administration -> Airtable Sync Center -> Clients` and select `Full audit`.
+2. Run `Dry Run`. Do not use a previous run or a different module/strategy as write evidence.
+3. Review canonical account creates first. Use `Map existing` for aliases or duplicates; use `Approve new` only for a verified legal or operational organisation.
+4. Resolve ambiguous and generic identities against an existing canonical client.
+5. Assign every orphan department to its parent client. A department is never approved as a new client merely to clear the queue.
+6. Rerun the same dry run after each review batch. The blocker total must reach zero.
+7. Confirm counts, finance ownership and the communication policy. Write approval is bound to the exact user, run, module, strategy, limit and mapping version for 30 minutes and is single-use.
+8. Execute Write Sync only when both the UI and backend report `writeApproval.ready = true`.
+9. Rerun the identity audit and compare client, department, agent, job and invoice totals before continuing to another module.
+
+The backend rejects a write with `DRY_RUN_HAS_WRITE_BLOCKERS` even if a stale or modified frontend attempts to submit it. Client identity clearance is therefore a server-enforced prerequisite, not a visual convention.
 
 ## Current implementation boundary
 

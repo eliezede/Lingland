@@ -36,6 +36,26 @@ export type AirtableModuleResult = {
     clientInvoices: number;
     interpreterInvoices: number;
   };
+  identityEvidence?: Record<string, unknown>;
+  diagnostics?: Record<string, unknown>;
+  writeReadiness?: AirtableWriteReadiness;
+};
+
+export type AirtableWriteReadiness = {
+  ready: boolean;
+  blockerCount: number;
+  blockers?: Array<{ reason: string; count: number }>;
+};
+
+export type AirtableSyncWriteApproval = {
+  ready: boolean;
+  blockerCount: number;
+  blockedModules: Array<{
+    module: AirtableSyncModule;
+    label: string;
+    blockerCount: number;
+    blockers: Array<{ reason: string; count: number }>;
+  }>;
 };
 
 export type AirtableSyncResult = {
@@ -43,10 +63,12 @@ export type AirtableSyncResult = {
   syncRunId?: string;
   mappingVersion?: string;
   syncStrategy?: AirtableSyncStrategy;
+  limitRecords?: number;
   dryRun: boolean;
   importMode: string;
   triggeredBy?: string;
   userId?: string;
+  approvedByDryRunId?: string;
   modules: AirtableSyncModule[];
   startedAt?: string;
   finishedAt?: string;
@@ -58,6 +80,7 @@ export type AirtableSyncResult = {
     interpreterInvoicesDropped?: number;
     filterActive?: boolean;
   };
+  writeApproval?: AirtableSyncWriteApproval;
   moduleResults: AirtableModuleResult[];
 };
 
@@ -117,6 +140,48 @@ export type AirtableSyncConflict = {
 };
 
 export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type AirtableClientIdentityMappingRequest = {
+  sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+  groupKey: string;
+  sourceNames: string[];
+  action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
+  canonicalClientId?: string;
+  canonicalCompanyName?: string;
+  sourceName?: string;
+  reason?: string;
+};
+
+export type AirtableClientIdentityMappingResult = {
+  success: boolean;
+  mappingId: string;
+  sourceTable: string;
+  groupKey: string;
+  action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+};
+
+export type AirtableClientIdentityBatchMappingRequest = Omit<
+  AirtableClientIdentityMappingRequest,
+  'action' | 'canonicalClientId'
+> & {
+  action: 'MAP_TO_CLIENT';
+  canonicalClientId: string;
+  recommendationConfidence: 'HIGH';
+};
+
+export type AirtableClientIdentityBatchMappingResult = {
+  success: boolean;
+  saved: number;
+  mappings: Array<{
+    mappingId: string;
+    sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+    groupKey: string;
+    canonicalClientId: string;
+    canonicalCompanyName: string;
+  }>;
+};
 
 export type AirtableSyncAuditTrail = {
   runs: AirtableSyncRunSummary[];
@@ -258,11 +323,38 @@ export const AirtableSyncService = {
     dryRun: boolean,
     modules: AirtableSyncModule[] | 'full',
     limitRecords = 5000,
-    syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW'
+    syncStrategy: AirtableSyncStrategy = 'OPEN_WORKFLOW',
+    expectedDryRunId?: string,
   ): Promise<AirtableSyncResult> => {
     const syncFn = httpsCallable(functions, 'syncAirtableData', LONG_CALLABLE_OPTIONS);
-    const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy });
+    const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy, expectedDryRunId });
     return response.data as AirtableSyncResult;
+  },
+
+  saveClientIdentityMapping: async (
+    request: AirtableClientIdentityMappingRequest
+  ): Promise<AirtableClientIdentityMappingResult> => {
+    const saveFn = httpsCallable(functions, 'saveAirtableClientIdentityMapping', LONG_CALLABLE_OPTIONS);
+    const response = await saveFn(request);
+    return response.data as AirtableClientIdentityMappingResult;
+  },
+
+  saveClientIdentityMappingsBatch: async (
+    mappings: AirtableClientIdentityBatchMappingRequest[],
+    syncRunId: string,
+  ): Promise<AirtableClientIdentityBatchMappingResult> => {
+    const saveFn = httpsCallable(functions, 'saveAirtableClientIdentityMappingsBatch', LONG_CALLABLE_OPTIONS);
+    const response = await saveFn({ mappings, syncRunId, confirmed: true });
+    return response.data as AirtableClientIdentityBatchMappingResult;
+  },
+
+  revokeClientIdentityMapping: async (
+    sourceTable: 'Clients' | 'Clients Book' | 'Departments',
+    groupKey: string
+  ): Promise<{ success: boolean; mappingId: string }> => {
+    const revokeFn = httpsCallable(functions, 'revokeAirtableClientIdentityMapping', LONG_CALLABLE_OPTIONS);
+    const response = await revokeFn({ sourceTable, groupKey });
+    return response.data as { success: boolean; mappingId: string };
   },
 
   getMirrorAudit: async (

@@ -20,13 +20,13 @@ const canonicalize = (value: unknown): unknown => {
   return value;
 };
 
-const sha256 = (value: unknown): string => createHash('sha256')
+export const hashStableValue = (value: unknown): string => createHash('sha256')
   .update(JSON.stringify(canonicalize(value)))
   .digest('hex');
 
-export const hashAirtableRecordFields = (fields: Record<string, unknown>): string => sha256(fields);
+export const hashAirtableRecordFields = (fields: Record<string, unknown>): string => hashStableValue(fields);
 
-export const fingerprintAirtableSnapshot = <T extends AirtableLikeRecord>(records: T[]): string => sha256(
+export const fingerprintAirtableSnapshot = <T extends AirtableLikeRecord>(records: T[]): string => hashStableValue(
   records
     .map(record => ({ id: record.id, fieldsHash: hashAirtableRecordFields(record.fields) }))
     .sort((left, right) => left.id.localeCompare(right.id))

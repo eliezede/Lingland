@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fingerprintAirtableSnapshot,
   hashAirtableRecordFields,
+  hashStableValue,
   mergeAirtableSnapshots,
 } from './recordStability';
 
@@ -26,6 +27,13 @@ describe('Airtable record stability', () => {
     const after = hashAirtableRecordFields({ Status: 'Booked', 'Booking Date': '2026-07-16' });
 
     expect(after).not.toBe(before);
+  });
+
+  it('includes nested identity fields in generic sync snapshots', () => {
+    const first = hashStableValue({ tableName: 'Clients', identity: { name: 'Alpha', sage: 'A001' } });
+    const second = hashStableValue({ tableName: 'Clients', identity: { name: 'Beta', sage: 'B001' } });
+
+    expect(first).not.toBe(second);
   });
 
   it('uses the newest pass while retaining records omitted by a moving page boundary', () => {
