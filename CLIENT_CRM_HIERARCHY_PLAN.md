@@ -175,6 +175,16 @@ Manual review decisions are stored in `airtableClientIdentityMappings` and reuse
 - Local release evidence for contract `v8`: 35 test files and 201 tests passed; the frontend typecheck/production bundle and the Functions TypeScript build both passed; `git diff --check` reported no whitespace errors.
 - No mapping, client creation, Write Sync, email, or scheduled-sync configuration was changed during this audit.
 
+### Validated v8 recommendation audit - 22 July 2026
+
+- Commit `b4d250e` was deployed to Firebase Functions and Hosting and pushed to `origin/main`.
+- Authoritative Dry Run ID: `6Q4rup8GOs1oGj39iCxK`.
+- Contract and scope: `airtable-sync-center-v8`, `clients`, `FULL_AUDIT`, limit `5,000`.
+- Source read: 1,288 records covering 51 canonical Client accounts, 1,177 Clients Book rows and 60 Departments rows.
+- Result: 8 proposed creates, 410 updates, 138 conflicts and 0 errors; the hierarchy projection remains 367 clients, 12 departments and 1,090 agents.
+- Review gate: 146 identity decisions remain and Write Sync stayed disabled. The authoritative resolver exposed 4 `HIGH` recommendations whose targets already exist in Client CRM; none was selected or saved.
+- Production effect: the deployment changed application code only. The validation did not write a mapping, create or merge a client, execute Write Sync, send email, or change the scheduled mirror configuration.
+
 ### Operator procedure
 
 1. Open `Administration -> Airtable Sync Center -> Clients` and select `Full audit`.
