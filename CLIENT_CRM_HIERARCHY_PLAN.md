@@ -112,7 +112,8 @@ Invoices continue to link to `clientId`; optional department and agent reference
 - [x] Add a Client CRM staging workspace to the Airtable Sync Center with canonical-client search, source-record evidence, durable mappings, and a zero-blocker write gate.
 - [x] Add explainable canonical-client recommendations using stable account references, organisation aliases, UK postcodes, addresses, phones, and specific corporate domains. Public/shared domains such as `nhs.net` never identify an organisation.
 - [x] Add an explicit batch-review path for unique high-confidence recommendations only. It maps to existing clients, is capped at 25, revalidates canonical records server-side, and writes a separate audit event for every mapping.
-- [ ] Deploy the recommendation contract and run a fresh production `Clients / Full audit`; review every proposed mapping before saving it and keep Write Sync locked until all remaining manual decisions are resolved.
+- [x] Deploy the recommendation contract and run a fresh production `Clients / Full audit` against contract `airtable-sync-center-v8`.
+- [ ] Review every remaining client, department and generic-identity decision; keep Write Sync locked until the blocker count reaches zero.
 - [ ] Preserve the manual/hybrid operating model when an agent has no active account.
 
 ### Phase 6 - Cutover and cleanup
@@ -184,6 +185,29 @@ Manual review decisions are stored in `airtableClientIdentityMappings` and reuse
 - Result: 8 proposed creates, 410 updates, 138 conflicts and 0 errors; the hierarchy projection remains 367 clients, 12 departments and 1,090 agents.
 - Review gate: 146 identity decisions remain and Write Sync stayed disabled. The authoritative resolver exposed 4 `HIGH` recommendations whose targets already exist in Client CRM; none was selected or saved.
 - Production effect: the deployment changed application code only. The validation did not write a mapping, create or merge a client, execute Write Sync, send email, or change the scheduled mirror configuration.
+
+### Canonical account review sprint - 22 July 2026
+
+- Four unique `HIGH` recommendations were accepted first: Hampshire County Council AMHP to Hampshire County Council, Carlton Place Law department to Carlton Place Law, Churchers Solicitors department to Churchers Solicitors, and Roach Pittis department to Roach Pittis. A fresh Full Audit reduced the write blockers from 146 to 142 without errors.
+- Six active records from the official Airtable `Clients` account register were individually approved as future canonical organisations because each has a unique Sage reference and no existing canonical client match: Biscoes Solicitors (`BIS001`), Bramsdon & Childs Solicitors (`BCS001`), Davies Blunden and Evans (`DAV001`), NHS Hampshire and Isle of Wight Integrated Care Board (`HSI002`), Solent NHS Trust (`SOL002`), and Southampton AMHP service (`SOU009`).
+- Footner & Ewing Solicitors (`FOO001`) was mapped to the single existing `Footner Ewing` client (`airtable_client_footner-ewing`) so the official account data can enrich the record that already owns the operational history.
+- Hampshire Hospitals NHS Foundation (`HAM013`) and the ambiguous `Clients Book` identity `Hampshire Hospitals` were mapped to `airtable_client_hampshire-hospitals-nhs-foundation-trust` only after dependency review. That exact-name record already owns 41 jobs and 3 invoice headers; the related 19-record identity group contains 121 jobs and 5 invoice headers with no linked portal user.
+- The generic `Clients Book` identity `NHS` was not mapped by its display name or by the broad `nhs.net` domain. All nine source rows use the specific `hhft.nhs.uk` organisation domain and include HHFT/RHCH finance and requester signals, so the group was mapped to the same Hampshire Hospitals canonical client.
+- Authoritative post-review Dry Run ID: `tdQkYCzXsUTjKp9A4g5O`, completed 22 July 2026 at 20:52:30 using `clients`, `FULL_AUDIT`, limit `5,000`, and mapping contract `airtable-sync-center-v8`.
+- Final preview: 6 creates, 412 updates, 132 conflicts, 0 errors, 367 canonical clients, 15 departments, 1,118 agents and 132 unresolved identity decisions.
+- Safety state: Write Sync remains disabled. No Airtable record, client document, merge, email, scheduled-sync configuration, or finance record was written; only audited identity mapping decisions were stored in Firestore.
+
+The read-only Hampshire Hospitals merge preview confirms that consolidation must wait until after the Clients Write Sync. It covers 19 client records, 121 jobs, 2 client-invoice relationships to reassign, 73 timesheets and 196 dependent records. It would preserve 11 departments, 20 agents and 20 memberships, with deterministic department coverage for 27 jobs and requester coverage for 112 jobs; 2 hierarchy links still require review. Two functional shared mailboxes remain unassigned to historical jobs by design. The merge requires a second active Super Admin.
+
+The current canonical still has an empty Sage reference and invoice route in Firestore. The official Airtable account provides `HAM013`, `sbs.apinvoicing@nhs.net` and the RNS Payables address at Phenix House, Wakefield. Requesting merge approval now would freeze stale field winners such as `Address Pending Update`; therefore no approval was requested and no merge was executed.
+
+#### Next identity-review queue
+
+- [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
+- [ ] Review the remaining proposed organisations and classify each as canonical client, alias/department, or rejected identity.
+- [ ] Map all orphan departments to an existing canonical client; departments must never be approved merely to clear the gate.
+- [ ] Re-run `Clients / Full audit` after each reviewed batch and record the new run ID and blocker delta.
+- [ ] Execute Write Sync only after the server reports zero identity blockers and a fresh single-use approval is available.
 
 ### Operator procedure
 
