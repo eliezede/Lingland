@@ -112,6 +112,7 @@ Invoices continue to link to `clientId`; optional department and agent reference
 - [x] Add a Client CRM staging workspace to the Airtable Sync Center with canonical-client search, source-record evidence, durable mappings, and a zero-blocker write gate.
 - [x] Add explainable canonical-client recommendations using stable account references, organisation aliases, UK postcodes, addresses, phones, and specific corporate domains. Public/shared domains such as `nhs.net` never identify an organisation.
 - [x] Add an explicit batch-review path for unique high-confidence recommendations only. It maps to existing clients, is capped at 25, revalidates canonical records server-side, and writes a separate audit event for every mapping.
+- [x] Add a separate Super Admin manual-batch path for reviewed families. It maps 1-25 unresolved `Clients Book` or `Departments` scopes to one existing canonical client, binds the selection to the same actor and recent Clients Dry Run, rejects changed source evidence, and commits mappings plus audit events atomically.
 - [x] Deploy the recommendation contract and run a fresh production `Clients / Full audit` against contract `airtable-sync-center-v8`.
 - [ ] Review every remaining client, department and generic-identity decision; keep Write Sync locked until the blocker count reaches zero.
 - [ ] Preserve the manual/hybrid operating model when an agent has no active account.
@@ -200,6 +201,20 @@ Manual review decisions are stored in `airtableClientIdentityMappings` and reuse
 The read-only Hampshire Hospitals merge preview confirms that consolidation must wait until after the Clients Write Sync. It covers 19 client records, 121 jobs, 2 client-invoice relationships to reassign, 73 timesheets and 196 dependent records. It would preserve 11 departments, 20 agents and 20 memberships, with deterministic department coverage for 27 jobs and requester coverage for 112 jobs; 2 hierarchy links still require review. Two functional shared mailboxes remain unassigned to historical jobs by design. The merge requires a second active Super Admin.
 
 The current canonical still has an empty Sage reference and invoice route in Firestore. The official Airtable account provides `HAM013`, `sbs.apinvoicing@nhs.net` and the RNS Payables address at Phenix House, Wakefield. Requesting merge approval now would freeze stale field winners such as `Address Pending Update`; therefore no approval was requested and no merge was executed.
+
+### Guarded manual-batch review - 22 July 2026
+
+- Commit `f068049` added and deployed `saveAirtableClientIdentityMappingsManualBatch` plus the Airtable Sync Center selection UI. The existing high-confidence recommendation batch was not weakened or repurposed.
+- Manual batches require an active `SUPER_ADMIN`, explicit confirmation, 1-25 unique unresolved scopes, one shared existing canonical target, a successful Clients Dry Run from the same actor and mapping contract within 30 minutes, and source-name evidence identical to that run.
+- The callable rejects canonical records that are missing or archived and refuses to overwrite an active mapping created after the reviewed Dry Run. Every stored mapping carries `reviewMethod = MANUAL_BATCH`, its review run ID, actor and timestamp; the mapping and matching `auditEvents` entry are committed together.
+- Desktop, dark-mode and 390 x 844 browser checks covered entry/cancel, selection persistence, the 25-row cap, canonical search, modal close, and responsive layout. No test selection was saved.
+- The first production-data batch mapped 25 explicitly verified Hampshire Hospitals identities to `airtable_client_hampshire-hospitals-nhs-foundation-trust`. Evidence was read directly from Airtable and consisted of the specific `hhft.nhs.uk` domain, explicit Hampshire Hospitals/HHFT naming, or a corresponding RHCH/Basingstoke hospital finance address.
+- Mixed or weak identities such as `HHFT/Southernhealth`, `Hnft`, generic hospital names and unrelated NHS domains were deliberately excluded.
+- Before-run ID: `CJNr9mYQPG3vGeHkMhU5`, completed 22 July 2026 at 21:09:14 with 132 conflicts.
+- Authoritative after-run ID: `rEmLkwFttpWpFxdRCGsI`, completed 22 July 2026 at 21:20:23 using `clients`, `FULL_AUDIT`, limit `5,000`, and contract `airtable-sync-center-v8`.
+- After-run result: 6 creates, 412 updates, 107 conflicts, 0 errors. The blocker reduction is exactly 25, matching the reviewed batch; Write Sync remains locked.
+- Validation evidence: 35 test files and 205 tests passed, both frontend and Functions production builds passed, and `git diff --check` passed.
+- Production effect was limited to 25 audited Firestore identity mappings. No Airtable record, client merge, Client Write Sync, finance document, email, notification policy, or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, and communication `SUPPRESSED`.
 
 #### Next identity-review queue
 
