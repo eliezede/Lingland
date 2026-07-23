@@ -216,6 +216,20 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - Validation evidence: 35 test files and 205 tests passed, both frontend and Functions production builds passed, and `git diff --check` passed.
 - Production effect was limited to 25 audited Firestore identity mappings. No Airtable record, client merge, Client Write Sync, finance document, email, notification policy, or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, and communication `SUPPRESSED`.
 
+### Hampshire Hospitals hierarchy extension - 22 July 2026
+
+- A second production-data review mapped 24 unique `Clients Book`/`Departments` scopes to `airtable_client_hampshire-hospitals-nhs-foundation-trust`. One mapping scope represented two Airtable rows named `RHCH Nick Jonas Ward`, so the batch resolved 25 source blockers without submitting a duplicate decision.
+- The five reviewed `Clients Book` identities were Andover War Memorial Hospital Pre-assessment Clinic, Basimgstoke Hospital, Hnft, Royal Hampshire County Hospital Winchester - Orthopaedics, and Winch Hampshire Hospitals NHS Foundation Trust. Each had explicit Hampshire Hospitals naming or an `hhft.nhs.uk` requester linked to the same institution family. `Hnft` was admitted only in this second pass after the additional source-row evidence was checked; it was correctly excluded from the first, narrower batch.
+- The reviewed department scopes were Andover Endoscopy, Orthoptist and Upper GI; Basingstoke Breast & Radiotherapy Oncology, Cardiology, DTC, Fracture clinic, Haematology, Head and Neck, Maternity and Opthalmology; and RHCH Endoscopy, Nick Jonas Ward, Ophthalmology, Radiology, Surgical Unit Office, Treatment Center, Upper GI and Women's Health.
+- `HHFT/Southernhealth` remained excluded because its requester uses `southernhealth.nhs.uk`. Generic HCC, Hampshire Heart Centre, unrelated NHS/court/council rows and any department without explicit institution evidence also remained unresolved.
+- Before-run ID: `1yeV8jP2LxGTSaQwX91q`, completed 22 July 2026 at 21:33:32 with 107 conflicts.
+- Authoritative after-run ID: `aQ6UgDlzCmvncFPRSDcK`, completed 22 July 2026 at 21:39:24 using `clients`, `FULL_AUDIT`, limit `5,000`, and contract `airtable-sync-center-v8`.
+- After-run result: 82 conflicts and 0 errors. The exact reduction of 25 matches the 25 blocked source rows covered by the 24 unique mapping scopes.
+- The review UI now deduplicates rows and outgoing manual-batch payloads by `sourceTable + groupKey`. Repeated Airtable records sharing one decision scope are displayed and submitted once while the server's blocker count continues to represent every blocked source row.
+- Repeat validation run `nClx6ZO3Og7b2hHba3n5`, completed 23 July 2026 at 06:42:50, remained clean with 82 blocked source rows and 79 unique review decisions. This proves the mappings are durable and the UI now explains the record/decision difference explicitly.
+- Validation evidence: 36 frontend test files and 207 tests passed, the frontend typecheck/production bundle and Functions TypeScript build passed, and `git diff --check` reported no whitespace errors.
+- Production effects were limited to the 24 audited Firestore identity mappings. No Airtable record, client merge, Client Write Sync, finance document, email, notification policy, or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, and communication `SUPPRESSED`.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.

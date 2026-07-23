@@ -45,6 +45,7 @@ import { Client } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
+import { clientCrmReviewKey, deduplicateClientCrmReviewScopes } from '../../utils/clientCrmReview';
 
 type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
 
@@ -138,8 +139,6 @@ type ClientCrmBatchCandidate = {
   sourceNames: string[];
   recommendation: ClientCrmRecommendation;
 };
-
-const clientCrmReviewKey = (sourceTable: string, groupKey: string) => `${sourceTable}|${groupKey}`;
 
 const syncStrategyOptions: Array<{
   id: AirtableSyncStrategy;
@@ -864,7 +863,7 @@ export const AdminMigration = () => {
     const accounts = diagnostics.canonicalAccounts || {};
     const clientsBook = diagnostics.clientsBook || {};
     const newOrganisations = clientsBook.newCanonicalOrganisationCandidates || [];
-    const conflicts = clientsBook.conflictCandidates || [];
+    const conflicts = deduplicateClientCrmReviewScopes(clientsBook.conflictCandidates || []);
     const departmentConflicts = conflicts.filter(candidate => candidate.sourceTable === 'Departments');
     const identityConflicts = conflicts.filter(candidate => (
       candidate.sourceTable === 'Clients Book'
@@ -895,6 +894,7 @@ export const AdminMigration = () => {
       candidate.groupKey,
     ]));
     const reviewTotal = canonicalCreates.length + newOrganisations.length + departmentConflicts.length + identityConflicts.length;
+    const writeBlockerCount = result.writeReadiness?.blockerCount || reviewTotal;
 
     const highRecommendationCandidates: ClientCrmBatchCandidate[] = [
       ...newOrganisations.map(candidate => ({
@@ -971,11 +971,11 @@ export const AdminMigration = () => {
       recommendedClientId: candidate.recommendation?.canonicalClientId,
     });
 
-    const manualBatchCandidates: ClientCrmMappingTarget[] = [
+    const manualBatchCandidates = deduplicateClientCrmReviewScopes<ClientCrmMappingTarget>([
       ...newOrganisations.map(mappingTargetForNewOrganisation),
       ...departmentConflicts.map(mappingTargetFor),
       ...identityConflicts.map(mappingTargetFor),
-    ];
+    ]);
     const selectedManualCandidates = manualBatchCandidates.filter(candidate => (
       crmManualBatchSelection[clientCrmReviewKey(candidate.sourceTable, candidate.groupKey)]
     ));
@@ -1049,7 +1049,10 @@ export const AdminMigration = () => {
             <div className="flex items-start gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 shrink-0" size={17} />
               <p>
-                Write Sync is locked by {result.writeReadiness?.blockerCount || reviewTotal} identity decision(s). Mapping a row records an auditable rule; rerun Dry Run until this gate is clear.
+                Write Sync is locked by {writeBlockerCount} blocked source row{writeBlockerCount === 1 ? '' : 's'}
+                {writeBlockerCount !== reviewTotal
+                  ? ` across ${reviewTotal} unique review decision${reviewTotal === 1 ? '' : 's'}`
+                  : ''}. Mapping a review decision records an auditable rule; rerun Dry Run until this gate is clear.
               </p>
             </div>
           </div>
