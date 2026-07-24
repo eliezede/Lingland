@@ -241,6 +241,14 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - The fresh Full Audit after Priory reported 6 creates, 412 updates, 78 conflicts, 0 errors and 75 remaining review decisions. This is an exact reduction of 2 blocked rows and 2 decisions from the Alpha Plus checkpoint; filtering the organisation-review queue for Priory returned 0 visible results.
 - Both batches used the guarded manual-batch callable and stored auditable Firestore mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, communication `SUPPRESSED`, and Write Sync remains server-locked by the 78 unresolved source rows.
 
+### Southampton Homelessness identity batch - 24 July 2026
+
+- Official Airtable `Clients` account `rec7P5Rbtdkqa5m6O` anchors Southampton City Council - Homelessness Unit with Sage reference `SOU016` and the Civic Centre billing address.
+- The unresolved `Clients Book` scopes `Homeless Dep`, `Homeless Department` and `Homelessness department` were mapped to `airtable_client_sou016`. Source rows `recP25BPsJ9m502ML`, `recYUfSuNhZvxW8tt` and `recy0TPNQOYzYB6pr` share Elena Gheorghita and her `southampton.gov.uk` account; the already resolved SCC Homelessness rows provide the same organisation-domain evidence.
+- `HCC Homeless Department` remained unresolved. It is an orphan department in a different council family and was not grouped from the generic word `Homeless`.
+- The authoritative after-run reported 6 creates, 413 updates, 75 conflicts, 0 errors and 72 remaining review decisions. The exact reduction from 78 blocked rows and 75 decisions matches the three reviewed scopes. Filtering for `Homeless` now returns only the excluded HCC department.
+- Production effects were limited to three audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; the 75 remaining blockers continue to lock Write Sync.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
