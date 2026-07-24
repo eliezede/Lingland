@@ -21,6 +21,23 @@ export interface ClientIdentityManualBatchMappingRequest {
   reason?: string;
 }
 
+export const CLIENT_IDENTITY_DEFERRAL_CATEGORIES = [
+  'NOT_AN_ORGANISATION',
+  'INSUFFICIENT_SOURCE_EVIDENCE',
+  'SOURCE_DATA_REPAIR_REQUIRED',
+  'OUT_OF_SCOPE_LEGACY_RECORD',
+] as const;
+
+export type ClientIdentityDeferralCategory = typeof CLIENT_IDENTITY_DEFERRAL_CATEGORIES[number];
+
+export interface ClientIdentityDeferralRequest {
+  sourceTable: 'Clients Book' | 'Departments';
+  groupKey: string;
+  sourceNames: string[];
+  category: ClientIdentityDeferralCategory;
+  reason: string;
+}
+
 export interface ClientIdentityApprovedPendingCanonicalTarget {
   sourceTable: 'Clients';
   sourceRecordId: string;
@@ -141,6 +158,49 @@ export const validateClientIdentityManualMappingBatch = (
       reason: text(item.reason),
     };
   });
+};
+
+export const validateClientIdentityDeferralRequest = (
+  input: unknown,
+  actorRole: ClientIdentityMappingAdminRole,
+  confirmed: boolean,
+): ClientIdentityDeferralRequest => {
+  if (actorRole !== 'SUPER_ADMIN') {
+    throw new Error('Only a Super Admin can defer a client identity source.');
+  }
+  if (!confirmed) {
+    throw new Error('Explicit deferral confirmation is required.');
+  }
+
+  const item = (input || {}) as Record<string, unknown>;
+  const sourceTable = text(item.sourceTable);
+  const groupKey = text(item.groupKey);
+  const sourceNames = Array.isArray(item.sourceNames)
+    ? item.sourceNames.map(text).filter(Boolean)
+    : [];
+  const category = text(item.category).toUpperCase() as ClientIdentityDeferralCategory;
+  const reason = text(item.reason);
+
+  if (!MANUAL_BATCH_SOURCE_TABLES.has(sourceTable)) {
+    throw new Error('Only Clients Book and Departments identities can be deferred.');
+  }
+  if (!groupKey || sourceNames.length === 0) {
+    throw new Error('The deferred identity is missing its source evidence.');
+  }
+  if (!CLIENT_IDENTITY_DEFERRAL_CATEGORIES.includes(category)) {
+    throw new Error('Choose a valid deferral category.');
+  }
+  if (reason.length < 20) {
+    throw new Error('Explain the evidence reviewed and why this source must be deferred (at least 20 characters).');
+  }
+
+  return {
+    sourceTable: sourceTable as ClientIdentityDeferralRequest['sourceTable'],
+    groupKey,
+    sourceNames,
+    category,
+    reason,
+  };
 };
 
 export type ClientIdentityRecommendationRunValidation =
@@ -295,6 +355,54 @@ export const validateClientIdentityManualReviewRun = (
     ) {
       return { ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' };
     }
+  }
+
+  return { ok: true };
+};
+
+export const validateClientIdentityDeferralReviewRun = (
+  run: Record<string, unknown> | null | undefined,
+  request: ClientIdentityDeferralRequest,
+  actorId: string,
+  expectedMappingVersion: string,
+  nowMs = Date.now(),
+): ClientIdentityRecommendationRunValidation => {
+  const envelope = validateReviewRunEnvelope(
+    run,
+    actorId,
+    expectedMappingVersion,
+    nowMs,
+    'REVIEW',
+  );
+  if (!envelope.ok) return envelope;
+
+  const moduleResults = Array.isArray(run!.moduleResults) ? run!.moduleResults : [];
+  const clientModule = moduleResults.find(raw => (
+    raw && typeof raw === 'object' && (raw as Record<string, unknown>).module === 'clients'
+  )) as Record<string, unknown> | undefined;
+  const diagnostics = clientModule?.diagnostics as Record<string, unknown> | undefined;
+  const clientsBook = diagnostics?.clientsBook as Record<string, unknown> | undefined;
+  const conflicts = Array.isArray(clientsBook?.conflictCandidates)
+    ? clientsBook.conflictCandidates as Array<Record<string, unknown>>
+    : [];
+
+  const normalized = (value: unknown) => text(value).toLowerCase();
+  const conflict = conflicts.find(candidate => (
+    normalized(candidate.sourceTable) === normalized(request.sourceTable)
+    && normalized(candidate.groupKey) === normalized(request.groupKey)
+  ));
+  if (!conflict) return { ok: false, reason: 'IDENTITY_NO_LONGER_UNRESOLVED' };
+
+  const conflictNames = Array.isArray(conflict.companyNames)
+    ? new Set((conflict.companyNames as unknown[]).map(normalized).filter(Boolean))
+    : new Set<string>();
+  const requestNames = new Set(request.sourceNames.map(normalized).filter(Boolean));
+  if (
+    conflictNames.size === 0
+    || requestNames.size !== conflictNames.size
+    || Array.from(requestNames).some(sourceName => !conflictNames.has(sourceName))
+  ) {
+    return { ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' };
   }
 
   return { ok: true };

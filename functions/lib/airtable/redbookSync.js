@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.listAirtableClientIdentityMappings = exports.saveAirtableClientIdentityMappingsManualBatch = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
+exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.listAirtableClientIdentityMappings = exports.deferAirtableClientIdentitySource = exports.saveAirtableClientIdentityMappingsManualBatch = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const statusMapping_1 = require("./statusMapping");
@@ -958,8 +958,8 @@ const loadClientIdentityMappings = async () => {
         const canonicalCompanyName = normalize(data.canonicalCompanyName);
         if (!sourceTable
             || !groupKey
-            || !['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT'].includes(action)
-            || !canonicalClientId)
+            || !['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT', 'DEFER_SOURCE'].includes(action)
+            || (action !== 'DEFER_SOURCE' && !canonicalClientId))
             return [];
         const mapping = {
             id: document.id,
@@ -968,6 +968,8 @@ const loadClientIdentityMappings = async () => {
             action,
             canonicalClientId,
             canonicalCompanyName,
+            deferralCategory: normalize(data.deferralCategory).toUpperCase(),
+            reason: normalize(data.reason),
         };
         return [[clientIdentityMappingScopeKey(sourceTable, groupKey), mapping]];
     }));
@@ -979,6 +981,18 @@ const resolveClientBookGroup = async (sources, canonicalAccountIndex, identityMa
     const stableKey = normalize(representative.stableKey);
     const deterministicId = `airtable_client_${slugify(groupKey || stableKey || representative.companyName)}`;
     const identityMapping = identityMappings.get(clientIdentityMappingScopeKey(CLIENTS_BOOK_TABLE, groupKey));
+    if (identityMapping?.action === 'DEFER_SOURCE') {
+        return {
+            deferred: {
+                sourceTable: CLIENTS_BOOK_TABLE,
+                groupKey,
+                sourceRecordIds: sources.map(source => source.sourceRecordId).sort(),
+                sourceNames: uniqueValues(...sources.map(source => source.companyName)),
+                category: identityMapping.deferralCategory || 'INSUFFICIENT_SOURCE_EVIDENCE',
+                reason: identityMapping.reason || 'Deferred by reviewed Client CRM policy.',
+            },
+        };
+    }
     if (identityMapping?.action === 'APPROVE_NEW_CLIENT') {
         return {
             canonicalClientId: identityMapping.canonicalClientId,
@@ -2245,6 +2259,8 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
     });
     const resolutions = [];
     const conflicts = [];
+    const deferredIdentityGroups = [];
+    const deferredSourceRecordIds = new Set();
     const resolvedGroups = [];
     const resolutionMethods = {
         CANONICAL_ACCOUNT: 0,
@@ -2261,6 +2277,24 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
                 recommendation: recommendClientBookCanonicalAccount(group, reviewableCanonicalAccounts) || undefined,
             };
             conflicts.push(conflict);
+            return;
+        }
+        if (result.deferred) {
+            deferredIdentityGroups.push(result.deferred);
+            result.deferred.sourceRecordIds.forEach(sourceRecordId => {
+                deferredSourceRecordIds.add(sourceRecordId);
+                markConflictScopeProcessed(conflictContext, result.deferred.sourceTable, sourceRecordId);
+            });
+            stats.skipped += result.deferred.sourceRecordIds.length;
+            if (details.length < MODULE_DETAIL_LIMIT)
+                details.push({
+                    action: 'skipped',
+                    sourceTable: result.deferred.sourceTable,
+                    sourceRecordIds: result.deferred.sourceRecordIds,
+                    clientName: result.deferred.sourceNames[0] || result.deferred.groupKey,
+                    reason: 'DEFERRED_SOURCE',
+                    deferralCategory: result.deferred.category,
+                });
             return;
         }
         if (!result.canonicalClientId || !result.canonicalCompanyName || !result.method)
@@ -2286,6 +2320,30 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
         const departmentName = pick(record.fields, ['Name']);
         const departmentGroupKey = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(departmentName);
         const departmentMapping = identityMappings.get(clientIdentityMappingScopeKey(DEPARTMENTS_TABLE, departmentGroupKey));
+        if (departmentMapping?.action === 'DEFER_SOURCE' && departmentName) {
+            const deferred = {
+                sourceTable: DEPARTMENTS_TABLE,
+                groupKey: departmentGroupKey,
+                sourceRecordIds: [record.id],
+                sourceNames: [departmentName],
+                category: departmentMapping.deferralCategory || 'INSUFFICIENT_SOURCE_EVIDENCE',
+                reason: departmentMapping.reason || 'Deferred by reviewed Client CRM policy.',
+            };
+            deferredIdentityGroups.push(deferred);
+            deferredSourceRecordIds.add(record.id);
+            markConflictScopeProcessed(conflictContext, DEPARTMENTS_TABLE, record.id);
+            stats.skipped += 1;
+            if (details.length < MODULE_DETAIL_LIMIT)
+                details.push({
+                    action: 'skipped',
+                    sourceTable: DEPARTMENTS_TABLE,
+                    sourceRecordIds: [record.id],
+                    clientName: departmentName,
+                    reason: 'DEFERRED_SOURCE',
+                    deferralCategory: deferred.category,
+                });
+            return;
+        }
         if (candidateClientIds.length !== 1
             && departmentMapping?.action === 'MAP_TO_CLIENT'
             && (platformClientNames.has(departmentMapping.canonicalClientId)
@@ -2378,7 +2436,7 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
                 reason: conflict.reason,
             });
     }
-    const projectionResult = (0, clientBookProjection_1.buildClientBookProjection)(sources, resolutions);
+    const projectionResult = (0, clientBookProjection_1.buildClientBookProjection)(sources.filter(source => !deferredSourceRecordIds.has(source.sourceRecordId)), resolutions);
     const resolvedSourceIds = new Set(resolutions.map(resolution => resolution.sourceRecordId));
     projectionResult.unresolvedSourceRecordIds
         .filter(sourceRecordId => !conflicts.some(conflict => conflict.sourceRecordIds.includes(sourceRecordId)))
@@ -2598,6 +2656,10 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
             candidateClientIds: conflict.candidateClientIds,
             recommendation: conflict.recommendation,
         })),
+        deferredIdentityGroups: deferredIdentityGroups
+            .sort((left, right) => left.groupKey.localeCompare(right.groupKey)),
+        deferredIdentityGroupCount: deferredIdentityGroups.length,
+        deferredSourceRecordCount: deferredIdentityGroups.reduce((total, deferred) => total + deferred.sourceRecordIds.length, 0),
         newCanonicalOrganisationCandidates: conflicts
             .filter(conflict => conflict.reason === 'NEW_CANONICAL_ORGANISATION_REVIEW_REQUIRED')
             .map(conflict => ({
@@ -5297,6 +5359,86 @@ exports.saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
         })),
     };
 });
+exports.deferAirtableClientIdentitySource = functions.runWith({
+    timeoutSeconds: 60,
+    memory: '256MB',
+}).https.onCall(async (data, context) => {
+    const actor = await assertAdmin(context);
+    let request;
+    try {
+        request = (0, clientIdentityMappingPolicy_1.validateClientIdentityDeferralRequest)(data, actor.role, data?.confirmed === true);
+    }
+    catch (error) {
+        throw new functions.https.HttpsError('invalid-argument', error instanceof Error ? error.message : 'Invalid client identity deferral.');
+    }
+    const syncRunId = normalize(data?.syncRunId);
+    if (!syncRunId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Run a fresh Clients Dry Run before deferring a source identity.');
+    }
+    const syncRun = await db.collection('syncRuns').doc(syncRunId).get();
+    const syncRunData = syncRun.exists ? cleanReportData(syncRun.data() || {}) : null;
+    const runValidation = (0, clientIdentityMappingPolicy_1.validateClientIdentityDeferralReviewRun)(syncRunData, request, actor.uid, syncWriteApproval_1.AIRTABLE_SYNC_MAPPING_VERSION);
+    if (!runValidation.ok) {
+        throw new functions.https.HttpsError('failed-precondition', `The client identity review is stale or changed (${runValidation.reason}). Run a fresh Clients Dry Run.`);
+    }
+    const mappingId = clientIdentityMappingId(request.sourceTable, request.groupKey);
+    const mappingRef = db.collection('airtableClientIdentityMappings').doc(mappingId);
+    const before = await mappingRef.get();
+    if (before.exists && normalize(before.data()?.status).toUpperCase() === 'ACTIVE') {
+        throw new functions.https.HttpsError('aborted', 'This source identity already has an active decision. Refresh the mapping ledger before continuing.');
+    }
+    const now = new Date().toISOString();
+    const mapping = {
+        id: mappingId,
+        sourceSystem: 'AIRTABLE',
+        sourceBaseId: DEFAULT_BASE_ID,
+        sourceTable: request.sourceTable,
+        groupKey: (0, clientIdentityAuditCore_1.normalizeOrganizationName)(request.groupKey),
+        sourceNames: uniqueValues(...request.sourceNames.map(normalize)),
+        action: 'DEFER_SOURCE',
+        canonicalClientId: '',
+        canonicalCompanyName: '',
+        canonicalTargetState: 'DEFERRED',
+        deferralCategory: request.category,
+        status: 'ACTIVE',
+        reason: request.reason,
+        recommendationConfidence: 'MANUAL',
+        reviewMethod: 'MANUAL_DEFERRAL',
+        reviewRunId: syncRunId,
+        approvedBy: actor.uid,
+        approvedRole: actor.role,
+        approvedAt: now,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: before.exists ? before.data()?.createdAt : admin.firestore.FieldValue.serverTimestamp(),
+    };
+    await mappingRef.set(mapping, { merge: true });
+    const settings = await db.collection('system').doc('settings').get();
+    const auditRef = db.collection('auditEvents').doc();
+    await (0, auditWriter_1.writeAuditEvent)(auditRef.id, {
+        entityType: 'AIRTABLE_CLIENT_IDENTITY_MAPPING',
+        entityId: mappingId,
+        action: 'AIRTABLE_CLIENT_IDENTITY_SOURCE_DEFERRED',
+        actorId: actor.uid,
+        actorRole: actor.role,
+        source: 'AIRTABLE_SYNC_CENTER',
+        communicationMode: normalize(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase(),
+        syncRunId,
+        changedFields: ['action', 'deferralCategory', 'reason', 'status'],
+        before: before.exists ? cleanReportData(before.data() || {}) : null,
+        after: cleanReportData(mapping),
+        organizationId: 'lingland-main',
+        bookingId: '',
+        createdAt: now,
+    });
+    return {
+        success: true,
+        mappingId,
+        sourceTable: request.sourceTable,
+        groupKey: request.groupKey,
+        action: 'DEFER_SOURCE',
+        deferralCategory: request.category,
+    };
+});
 exports.listAirtableClientIdentityMappings = functions.runWith({
     timeoutSeconds: 60,
     memory: '256MB',
@@ -5322,6 +5464,7 @@ exports.listAirtableClientIdentityMappings = functions.runWith({
             canonicalClientId: normalize(mapping.canonicalClientId),
             canonicalCompanyName: normalize(mapping.canonicalCompanyName),
             canonicalTargetState: normalize(mapping.canonicalTargetState).toUpperCase(),
+            deferralCategory: normalize(mapping.deferralCategory).toUpperCase(),
             reviewMethod: normalize(mapping.reviewMethod).toUpperCase(),
             reason: normalize(mapping.reason),
             approvedAt: normalize(mapping.approvedAt),
@@ -5330,8 +5473,8 @@ exports.listAirtableClientIdentityMappings = functions.runWith({
     })
         .filter(mapping => (mapping.sourceTable
         && mapping.groupKey
-        && mapping.canonicalClientId
-        && ['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT'].includes(mapping.action)))
+        && ['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT', 'DEFER_SOURCE'].includes(mapping.action)
+        && (mapping.action === 'DEFER_SOURCE' || mapping.canonicalClientId)))
         .sort((left, right) => (right.approvedAt.localeCompare(left.approvedAt)
         || left.sourceTable.localeCompare(right.sourceTable)
         || left.groupKey.localeCompare(right.groupKey)))

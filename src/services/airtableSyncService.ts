@@ -153,6 +153,21 @@ export type AirtableClientIdentityMappingRequest = {
   syncRunId?: string;
 };
 
+export type AirtableClientIdentityDeferralCategory =
+  | 'NOT_AN_ORGANISATION'
+  | 'INSUFFICIENT_SOURCE_EVIDENCE'
+  | 'SOURCE_DATA_REPAIR_REQUIRED'
+  | 'OUT_OF_SCOPE_LEGACY_RECORD';
+
+export type AirtableClientIdentityDeferralRequest = {
+  sourceTable: 'Clients Book' | 'Departments';
+  groupKey: string;
+  sourceNames: string[];
+  category: AirtableClientIdentityDeferralCategory;
+  reason: string;
+  syncRunId: string;
+};
+
 export type AirtableClientIdentityMappingResult = {
   success: boolean;
   mappingId: string;
@@ -204,10 +219,11 @@ export type AirtableClientIdentityMappingLedgerEntry = {
   sourceTable: 'Clients' | 'Clients Book' | 'Departments';
   groupKey: string;
   sourceNames: string[];
-  action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
+  action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT' | 'DEFER_SOURCE';
   canonicalClientId: string;
   canonicalCompanyName: string;
   canonicalTargetState?: string;
+  deferralCategory?: AirtableClientIdentityDeferralCategory;
   reviewMethod?: string;
   reason?: string;
   approvedAt?: string;
@@ -397,6 +413,32 @@ export const AirtableSyncService = {
     );
     const response = await saveFn({ mappings, syncRunId, confirmed: true });
     return response.data as AirtableClientIdentityManualBatchMappingResult;
+  },
+
+  deferClientIdentitySource: async (
+    request: AirtableClientIdentityDeferralRequest,
+  ): Promise<{
+    success: boolean;
+    mappingId: string;
+    sourceTable: string;
+    groupKey: string;
+    action: 'DEFER_SOURCE';
+    deferralCategory: AirtableClientIdentityDeferralCategory;
+  }> => {
+    const deferFn = httpsCallable(
+      functions,
+      'deferAirtableClientIdentitySource',
+      LONG_CALLABLE_OPTIONS,
+    );
+    const response = await deferFn({ ...request, confirmed: true });
+    return response.data as {
+      success: boolean;
+      mappingId: string;
+      sourceTable: string;
+      groupKey: string;
+      action: 'DEFER_SOURCE';
+      deferralCategory: AirtableClientIdentityDeferralCategory;
+    };
   },
 
   revokeClientIdentityMapping: async (

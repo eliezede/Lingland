@@ -325,11 +325,27 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - A searchable active-mapping ledger is available in Client CRM staging. It lists the source scope, canonical destination, review method and review time; Super Admins can revoke a rule through a second explicit confirmation. Revocation is server-authorised, writes its own audit event and automatically reruns the Full Audit so the source returns visibly to the review queue.
 - Production effects are 19 active audited Firestore identity mappings plus one validation mapping that was created and then auditably revoked. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, communication `SUPPRESSED`, and Write Sync remains locked.
 
+### Final evidence review and reversible source deferral - 24 July 2026
+
+- The next authoritative `Clients / Full audit` began with 41 blocked source rows across 38 unique review decisions and 0 errors. Thirty reviewed decisions were saved, leaving 9 blocked rows across 8 decisions and 0 errors. The active mapping ledger now contains 134 rules.
+- Eleven additional HCC services were mapped to official Hampshire County Council account `airtable_client_ham007`, Sage `HAM007`: `The Mead`, `HCC Basingstoke Cast`, `HCC East Hants Cast`, `HCC Eastleigh and Winchester Family Support Service`, `HCC Family Connections Service`, `HCC Fareham & Gosport Family Support Service`, `HCC Hart and Rushmore`, `HCC Isle of Wight Refugee Team`, `HCC North East Care Leavers Team`, `HCC Refugee Team`, and `HCC South East Children`.
+- `Hampshire Hampshire`, `Hampshire Heart Centre`, and `HCC Breast Unit` were mapped to Hampshire Hospitals NHS Foundation Trust only after HHFT domain, facility and breast-unit evidence was checked. Their `HCC`-like wording was not treated as Hampshire County Council evidence.
+- `Respiratory centre Southampton general` was mapped to Southampton University Hospitals NHS Trust (`airtable_client_sou004`). `Winchester Coroners Office` was mapped to Hampshire, Portsmouth and Southampton Coroners Service (`airtable_client_cor001`).
+- Exact official-account or directory evidence resolved `Basingstoke Voluntary Action`, `Footner Ewing`, `SCC Corperate Services`, `Reigate and Banstead Borough Council Fraud Team`, `Basingstoke & Deane Borough Council`, and `HMPPS Probation service south centra Portsmouth courts team`.
+- Eight identities were explicitly approved as new canonical organisations after duplicate and department checks: `forever together funeral care Ltd`, `Gammon Piercy and Gaiger`, `IOW Council`, `Lip Speaker UK`, `Redhead & Jones`, `RM Legal Solicitors LLP`, `Romsey Abbey Primary School`, and `Shepherds Down School`.
+- The eight decisions intentionally left unresolved are `andreabb1972@gmail.com`, `Basingstoke Magistrates`, `Hampshire Police Witness Care`, `HCC Eastleigh Borough Council` (two source rows), `HCC Homeless Department`, `HCC Mental Health`, `NEHF Healthier Communities Team`, and `Rushmoor Borough Council`. They remain blocked because the source is personal/misclassified, lacks a parent, or conflicts with evidence belonging to more than one organisation. No guess was stored merely to reach zero blockers.
+- Mapping contract `airtable-sync-center-v10` adds an audited `DEFER_SOURCE` decision for exceptional legacy rows. It is Super Admin-only, requires an exact fresh Dry Run, unchanged source evidence, an allowed category and a material written reason. The source remains untouched in Airtable, is excluded from Client CRM writes, stays visible in staging and the mapping ledger, and returns to the unresolved queue when revoked.
+- No residual source was deferred automatically. A deferral is an explicit operational decision, not an automatic confidence threshold or a shortcut around identity review.
+- Validation covers permission, explicit confirmation, category, reason length, stale/cross-scope source evidence and revocation visibility. The focused policy suite passed 15 tests; the frontend production build and Functions TypeScript build passed.
+- No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed by this review. Platform Mode remains `HYBRID`, Airtable Import `ON`, communication `SUPPRESSED`, and the 9 residual source rows continue to lock Write Sync.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
-- [ ] Review the remaining proposed organisations and classify each as canonical client, alias/department, or rejected identity.
-- [ ] Map all orphan departments to an existing canonical client; departments must never be approved merely to clear the gate.
+- [ ] Resolve or explicitly defer each of the eight documented residual decisions. Deferral requires a written evidence trail and must not be used where a parent organisation can still be established.
+- [ ] Create or rename the canonical police parent before placing `Hampshire Police Witness Care` as a department; do not preserve the current department-shaped organisation as the permanent hierarchy.
+- [ ] Keep `HCC Eastleigh Borough Council`, `HCC Homeless Department`, `HCC Mental Health`, and `Rushmoor Borough Council` blocked until the conflicting council or NHS parent is proven by contact, domain, linked account, job or invoice evidence.
+- [ ] Classify `andreabb1972@gmail.com` as a person/source-data defect rather than creating an organisation from a personal email.
 - [ ] Re-run `Clients / Full audit` after each reviewed batch and record the new run ID and blocker delta.
 - [ ] Execute Write Sync only after the server reports zero identity blockers and a fresh single-use approval is available.
 - [ ] Upgrade the Functions runtime from Node.js 20 before its October 2026 decommission date and update `firebase-functions` in a separate, fully tested maintenance release.
@@ -341,10 +357,11 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 3. Review canonical account creates first. Use `Map existing` for aliases or duplicates; use `Approve new` only for a verified legal or operational organisation.
 4. Resolve ambiguous and generic identities against an existing canonical client.
 5. Assign every orphan department to its parent client. A department is never approved as a new client merely to clear the queue.
-6. Rerun the same dry run after each review batch. The blocker total must reach zero.
-7. Confirm counts, finance ownership and the communication policy. Write approval is bound to the exact user, run, module, strategy, limit and mapping version for 30 minutes and is single-use.
-8. Execute Write Sync only when both the UI and backend report `writeApproval.ready = true`.
-9. Rerun the identity audit and compare client, department, agent, job and invoice totals before continuing to another module.
+6. If the source is provably not an organisation or cannot be safely imported until Airtable is repaired, a Super Admin may use `Defer source` with category and written evidence. Never defer a financially active or parent-resolvable identity merely to clear the gate.
+7. Rerun the same dry run after each review batch. The blocker total must reach zero, and every deferred row must be visible in the staging count and mapping ledger.
+8. Confirm counts, finance ownership and the communication policy. Write approval is bound to the exact user, run, module, strategy, limit and mapping version for 30 minutes and is single-use.
+9. Execute Write Sync only when both the UI and backend report `writeApproval.ready = true`.
+10. Rerun the identity audit and compare client, department, agent, job and invoice totals before continuing to another module.
 
 The backend rejects a write with `DRY_RUN_HAS_WRITE_BLOCKERS` even if a stale or modified frontend attempts to submit it. Client identity clearance is therefore a server-enforced prerequisite, not a visual convention.
 

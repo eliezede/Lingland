@@ -1,6 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateClientIdentityPendingCanonicalTarget = exports.validateClientIdentityManualReviewRun = exports.validateClientIdentityRecommendationRun = exports.validateClientIdentityPendingCanonicalApproval = exports.validateClientIdentityManualMappingBatch = exports.validateClientIdentityMappingBatch = exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS = exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = void 0;
+exports.validateClientIdentityPendingCanonicalTarget = exports.validateClientIdentityDeferralReviewRun = exports.validateClientIdentityManualReviewRun = exports.validateClientIdentityRecommendationRun = exports.validateClientIdentityPendingCanonicalApproval = exports.validateClientIdentityDeferralRequest = exports.validateClientIdentityManualMappingBatch = exports.validateClientIdentityMappingBatch = exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS = exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = exports.CLIENT_IDENTITY_DEFERRAL_CATEGORIES = void 0;
+exports.CLIENT_IDENTITY_DEFERRAL_CATEGORIES = [
+    'NOT_AN_ORGANISATION',
+    'INSUFFICIENT_SOURCE_EVIDENCE',
+    'SOURCE_DATA_REPAIR_REQUIRED',
+    'OUT_OF_SCOPE_LEGACY_RECORD',
+];
 const ALLOWED_SOURCE_TABLES = new Set(['Clients', 'Clients Book', 'Departments']);
 const MANUAL_BATCH_SOURCE_TABLES = new Set(['Clients Book', 'Departments']);
 exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = 25;
@@ -101,6 +107,42 @@ const validateClientIdentityManualMappingBatch = (input, actorRole, confirmed) =
     });
 };
 exports.validateClientIdentityManualMappingBatch = validateClientIdentityManualMappingBatch;
+const validateClientIdentityDeferralRequest = (input, actorRole, confirmed) => {
+    if (actorRole !== 'SUPER_ADMIN') {
+        throw new Error('Only a Super Admin can defer a client identity source.');
+    }
+    if (!confirmed) {
+        throw new Error('Explicit deferral confirmation is required.');
+    }
+    const item = (input || {});
+    const sourceTable = text(item.sourceTable);
+    const groupKey = text(item.groupKey);
+    const sourceNames = Array.isArray(item.sourceNames)
+        ? item.sourceNames.map(text).filter(Boolean)
+        : [];
+    const category = text(item.category).toUpperCase();
+    const reason = text(item.reason);
+    if (!MANUAL_BATCH_SOURCE_TABLES.has(sourceTable)) {
+        throw new Error('Only Clients Book and Departments identities can be deferred.');
+    }
+    if (!groupKey || sourceNames.length === 0) {
+        throw new Error('The deferred identity is missing its source evidence.');
+    }
+    if (!exports.CLIENT_IDENTITY_DEFERRAL_CATEGORIES.includes(category)) {
+        throw new Error('Choose a valid deferral category.');
+    }
+    if (reason.length < 20) {
+        throw new Error('Explain the evidence reviewed and why this source must be deferred (at least 20 characters).');
+    }
+    return {
+        sourceTable: sourceTable,
+        groupKey,
+        sourceNames,
+        category,
+        reason,
+    };
+};
+exports.validateClientIdentityDeferralRequest = validateClientIdentityDeferralRequest;
 const validateClientIdentityPendingCanonicalApproval = (target, approval) => {
     if (!approval)
         return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_FOUND' };
@@ -201,6 +243,34 @@ const validateClientIdentityManualReviewRun = (run, mappings, actorId, expectedM
     return { ok: true };
 };
 exports.validateClientIdentityManualReviewRun = validateClientIdentityManualReviewRun;
+const validateClientIdentityDeferralReviewRun = (run, request, actorId, expectedMappingVersion, nowMs = Date.now()) => {
+    const envelope = validateReviewRunEnvelope(run, actorId, expectedMappingVersion, nowMs, 'REVIEW');
+    if (!envelope.ok)
+        return envelope;
+    const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
+    const clientModule = moduleResults.find(raw => (raw && typeof raw === 'object' && raw.module === 'clients'));
+    const diagnostics = clientModule?.diagnostics;
+    const clientsBook = diagnostics?.clientsBook;
+    const conflicts = Array.isArray(clientsBook?.conflictCandidates)
+        ? clientsBook.conflictCandidates
+        : [];
+    const normalized = (value) => text(value).toLowerCase();
+    const conflict = conflicts.find(candidate => (normalized(candidate.sourceTable) === normalized(request.sourceTable)
+        && normalized(candidate.groupKey) === normalized(request.groupKey)));
+    if (!conflict)
+        return { ok: false, reason: 'IDENTITY_NO_LONGER_UNRESOLVED' };
+    const conflictNames = Array.isArray(conflict.companyNames)
+        ? new Set(conflict.companyNames.map(normalized).filter(Boolean))
+        : new Set();
+    const requestNames = new Set(request.sourceNames.map(normalized).filter(Boolean));
+    if (conflictNames.size === 0
+        || requestNames.size !== conflictNames.size
+        || Array.from(requestNames).some(sourceName => !conflictNames.has(sourceName))) {
+        return { ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' };
+    }
+    return { ok: true };
+};
+exports.validateClientIdentityDeferralReviewRun = validateClientIdentityDeferralReviewRun;
 const validateClientIdentityPendingCanonicalTarget = (run, canonicalClientId, actorId, expectedMappingVersion, nowMs = Date.now()) => {
     const envelope = validateReviewRunEnvelope(run, actorId, expectedMappingVersion, nowMs, 'REVIEW');
     if (!envelope.ok)

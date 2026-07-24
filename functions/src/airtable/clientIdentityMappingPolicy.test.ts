@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_CLIENT_IDENTITY_BATCH_MAPPINGS,
   CLIENT_IDENTITY_RECOMMENDATION_TTL_MS,
+  validateClientIdentityDeferralRequest,
+  validateClientIdentityDeferralReviewRun,
   validateClientIdentityMappingBatch,
   validateClientIdentityManualMappingBatch,
   validateClientIdentityManualReviewRun,
@@ -243,6 +245,80 @@ describe('manual client identity batch mapping policy', () => {
       'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'REVIEW_RUN_EXPIRED' });
+  });
+});
+
+describe('client identity source deferral policy', () => {
+  const now = Date.parse('2026-07-24T12:00:00.000Z');
+  const request = {
+    sourceTable: 'Departments',
+    groupKey: 'unknown legacy unit',
+    sourceNames: ['Unknown Legacy Unit'],
+    category: 'INSUFFICIENT_SOURCE_EVIDENCE',
+    reason: 'The Airtable row has no parent, contact, domain, address or linked workflow evidence.',
+  };
+  const run = {
+    kind: 'AIRTABLE_SYNC_CENTER',
+    dryRun: true,
+    success: true,
+    mappingVersion: 'airtable-sync-center-v10',
+    userId: 'super-admin-1',
+    finishedAt: new Date(now - 60_000).toISOString(),
+    moduleResults: [{
+      module: 'clients',
+      diagnostics: {
+        clientsBook: {
+          conflictCandidates: [{
+            sourceTable: 'Departments',
+            groupKey: 'unknown legacy unit',
+            companyNames: ['Unknown Legacy Unit'],
+            reason: 'DEPARTMENT_CLIENT_NOT_RESOLVED',
+          }],
+        },
+      },
+    }],
+  };
+
+  it('requires Super Admin, an allowed category and a material reason', () => {
+    expect(() => validateClientIdentityDeferralRequest(request, 'ADMIN', true))
+      .toThrow(/Super Admin/i);
+    expect(() => validateClientIdentityDeferralRequest(request, 'SUPER_ADMIN', false))
+      .toThrow(/confirmation/i);
+    expect(() => validateClientIdentityDeferralRequest(
+      { ...request, category: 'UNKNOWN' },
+      'SUPER_ADMIN',
+      true,
+    )).toThrow(/category/i);
+    expect(() => validateClientIdentityDeferralRequest(
+      { ...request, reason: 'No evidence' },
+      'SUPER_ADMIN',
+      true,
+    )).toThrow(/at least 20/i);
+  });
+
+  it('binds a deferral to the exact unresolved source evidence in a fresh dry run', () => {
+    const validated = validateClientIdentityDeferralRequest(request, 'SUPER_ADMIN', true);
+    expect(validateClientIdentityDeferralReviewRun(
+      run,
+      validated,
+      'super-admin-1',
+      'airtable-sync-center-v10',
+      now,
+    )).toEqual({ ok: true });
+    expect(validateClientIdentityDeferralReviewRun(
+      run,
+      { ...validated, sourceNames: ['Changed Unit'] },
+      'super-admin-1',
+      'airtable-sync-center-v10',
+      now,
+    )).toEqual({ ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' });
+    expect(validateClientIdentityDeferralReviewRun(
+      run,
+      { ...validated, groupKey: 'different unit' },
+      'super-admin-1',
+      'airtable-sync-center-v10',
+      now,
+    )).toEqual({ ok: false, reason: 'IDENTITY_NO_LONGER_UNRESOLVED' });
   });
 });
 

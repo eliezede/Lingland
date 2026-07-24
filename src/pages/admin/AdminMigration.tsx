@@ -38,6 +38,7 @@ import {
   AirtableSyncStrategy,
   AirtableSyncResult,
   AirtableMirrorAudit,
+  AirtableClientIdentityDeferralCategory,
   AirtableClientIdentityMappingLedgerEntry,
   FinancialReconciliationAudit,
   AirtableSyncService
@@ -126,6 +127,16 @@ type ClientCrmDiagnostics = {
     projectedAgents?: number;
     projectedMemberships?: number;
     unresolvedContacts?: number;
+    deferredIdentityGroups?: Array<{
+      sourceTable: 'Clients Book' | 'Departments';
+      groupKey: string;
+      sourceRecordIds: string[];
+      sourceNames: string[];
+      category: AirtableClientIdentityDeferralCategory;
+      reason: string;
+    }>;
+    deferredIdentityGroupCount?: number;
+    deferredSourceRecordCount?: number;
     writeReadiness?: {
       ready: boolean;
       blockerCount: number;
@@ -331,6 +342,10 @@ export const AdminMigration = () => {
   const [crmMappingLedgerTotal, setCrmMappingLedgerTotal] = useState(0);
   const [crmMappingLedgerSearch, setCrmMappingLedgerSearch] = useState('');
   const [crmRevokingMappingId, setCrmRevokingMappingId] = useState('');
+  const [crmDeferralTarget, setCrmDeferralTarget] = useState<ClientCrmMappingTarget | null>(null);
+  const [crmDeferralCategory, setCrmDeferralCategory] = useState<AirtableClientIdentityDeferralCategory>('INSUFFICIENT_SOURCE_EVIDENCE');
+  const [crmDeferralReason, setCrmDeferralReason] = useState('');
+  const [crmDeferralLoading, setCrmDeferralLoading] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const interpreterStatsRequestedRef = useRef(false);
@@ -439,6 +454,8 @@ export const AdminMigration = () => {
       ...mapping.sourceNames,
       mapping.canonicalCompanyName,
       mapping.canonicalClientId,
+      mapping.action,
+      mapping.deferralCategory,
       mapping.reviewMethod,
       mapping.reason,
     ].some(value => String(value || '').toLowerCase().includes(query)));
@@ -788,15 +805,64 @@ export const AdminMigration = () => {
     setCrmManualBatchMode(false);
     setCrmManualBatchSelection({});
     setCrmManualBatchTargets([]);
+    setCrmDeferralTarget(null);
+    setCrmDeferralReason('');
     await runSync(true, ['clients']);
+  };
+
+  const openClientIdentityDeferral = (target: ClientCrmMappingTarget) => {
+    if (target.sourceTable === 'Clients') return;
+    setCrmMappingTarget(null);
+    setCrmManualBatchTargets([]);
+    setCrmDeferralTarget(target);
+    setCrmDeferralCategory('INSUFFICIENT_SOURCE_EVIDENCE');
+    setCrmDeferralReason('');
+  };
+
+  const saveClientIdentityDeferral = async () => {
+    if (!crmDeferralTarget || crmDeferralLoading) return;
+    if (!syncResult?.dryRun || !syncResult.syncRunId) {
+      showToast('Run a fresh Clients Dry Run before deferring a source identity.', 'error');
+      return;
+    }
+    const reason = crmDeferralReason.trim();
+    if (reason.length < 20) {
+      showToast('Explain the reviewed evidence in at least 20 characters.', 'error');
+      return;
+    }
+
+    setCrmDeferralLoading(true);
+    try {
+      await AirtableSyncService.deferClientIdentitySource({
+        sourceTable: crmDeferralTarget.sourceTable as 'Clients Book' | 'Departments',
+        groupKey: crmDeferralTarget.groupKey,
+        sourceNames: crmDeferralTarget.sourceNames,
+        category: crmDeferralCategory,
+        reason,
+        syncRunId: syncResult.syncRunId,
+      });
+      showToast(
+        `${crmDeferralTarget.displayName} was deferred without creating or changing a client.`,
+        'success',
+      );
+      setCrmDeferralTarget(null);
+      setCrmDeferralReason('');
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not defer the source identity.', 'error');
+    } finally {
+      setCrmDeferralLoading(false);
+    }
   };
 
   const revokeClientIdentityMapping = async (mapping: AirtableClientIdentityMappingLedgerEntry) => {
     if (crmRevokingMappingId) return;
     const confirmed = await confirm({
-      title: 'Revoke client identity mapping',
-      message: `Return "${mapping.sourceNames[0] || mapping.groupKey}" to review instead of mapping it to ${mapping.canonicalCompanyName || mapping.canonicalClientId}? The revocation is audited and future mirror cycles will stop using this rule.`,
-      confirmLabel: 'Revoke mapping',
+      title: mapping.action === 'DEFER_SOURCE' ? 'Revoke source deferral' : 'Revoke client identity mapping',
+      message: mapping.action === 'DEFER_SOURCE'
+        ? `Return "${mapping.sourceNames[0] || mapping.groupKey}" to the unresolved review queue? Future mirror cycles will stop deferring this source.`
+        : `Return "${mapping.sourceNames[0] || mapping.groupKey}" to review instead of mapping it to ${mapping.canonicalCompanyName || mapping.canonicalClientId}? The revocation is audited and future mirror cycles will stop using this rule.`,
+      confirmLabel: mapping.action === 'DEFER_SOURCE' ? 'Return to review' : 'Revoke mapping',
       variant: 'warning',
     });
     if (!confirmed) return;
@@ -993,6 +1059,7 @@ export const AdminMigration = () => {
     const accounts = diagnostics.canonicalAccounts || {};
     const clientsBook = diagnostics.clientsBook || {};
     const newOrganisations = clientsBook.newCanonicalOrganisationCandidates || [];
+    const deferredIdentities = clientsBook.deferredIdentityGroups || [];
     const conflicts = deduplicateClientCrmReviewScopes(clientsBook.conflictCandidates || []);
     const departmentConflicts = conflicts.filter(candidate => candidate.sourceTable === 'Departments');
     const identityConflicts = conflicts.filter(candidate => (
@@ -1015,6 +1082,12 @@ export const AdminMigration = () => {
       candidate.reason,
       ...candidate.companyNames,
       ...candidate.candidateClientIds,
+    ]));
+    const visibleDeferredIdentities = deferredIdentities.filter(candidate => matchesQuery([
+      candidate.groupKey,
+      candidate.category,
+      candidate.reason,
+      ...candidate.sourceNames,
     ]));
     const canonicalCreates = accounts.wouldCreateCanonicalAccounts || [];
     const visibleCanonicalCreates = canonicalCreates.filter(candidate => matchesQuery([
@@ -1136,6 +1209,17 @@ export const AdminMigration = () => {
       </label>
     ) : reviewCheckbox(recommendationCandidate);
 
+    const deferralControl = (target: ClientCrmMappingTarget) => (
+      isSuperAdmin && target.sourceTable !== 'Clients' ? (
+        <button
+          onClick={() => openClientIdentityDeferral(target)}
+          className="h-9 rounded-lg border border-amber-200 px-3 text-sm font-black text-amber-800 hover:bg-amber-50 dark:border-amber-900/60 dark:text-amber-300 dark:hover:bg-amber-950/30"
+        >
+          Defer source
+        </button>
+      ) : null
+    );
+
     return (
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
@@ -1158,7 +1242,7 @@ export const AdminMigration = () => {
           </Link>
         </div>
 
-        <div className="grid grid-cols-2 border-b border-slate-200 dark:border-slate-800 md:grid-cols-4 lg:grid-cols-6">
+        <div className="grid grid-cols-2 border-b border-slate-200 dark:border-slate-800 md:grid-cols-4 lg:grid-cols-7">
           {[
             ['Account records', accounts.sourceRecords || 0],
             ['Contact rows', clientsBook.clientsBookSourceRecords || 0],
@@ -1166,6 +1250,7 @@ export const AdminMigration = () => {
             ['Departments', clientsBook.projectedDepartments || 0],
             ['Agents', clientsBook.projectedAgents || 0],
             ['Needs review', reviewTotal],
+            ['Deferred', clientsBook.deferredSourceRecordCount || 0],
           ].map(([label, value], index) => (
             <div key={String(label)} className={`px-4 py-3 ${index ? 'border-l border-slate-200 dark:border-slate-800' : ''}`}>
               <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</p>
@@ -1182,7 +1267,7 @@ export const AdminMigration = () => {
                 Write Sync is locked by {writeBlockerCount} blocked source row{writeBlockerCount === 1 ? '' : 's'}
                 {writeBlockerCount !== reviewTotal
                   ? ` across ${reviewTotal} unique review decision${reviewTotal === 1 ? '' : 's'}`
-                  : ''}. Mapping a review decision records an auditable rule; rerun Dry Run until this gate is clear.
+                  : ''}. Resolving a review decision records an auditable rule; rerun Dry Run until this gate is clear.
               </p>
             </div>
           </div>
@@ -1200,7 +1285,7 @@ export const AdminMigration = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <p className="mr-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length} visible
+              {visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length + visibleDeferredIdentities.length} visible
             </p>
             {!crmManualBatchMode && visibleHighRecommendations.length > 0 && (
               <button
@@ -1317,6 +1402,7 @@ export const AdminMigration = () => {
                     >
                       {candidate.recommendation ? 'Review mapping' : 'Map client'}
                     </button>
+                    {deferralControl(mappingTargetFor(candidate))}
                   </div>
                 </div>
               ))}
@@ -1354,6 +1440,7 @@ export const AdminMigration = () => {
                     >
                       Approve new
                     </button>
+                    {deferralControl(mappingTargetForNewOrganisation(candidate))}
                   </div>
                 </div>
               ))}
@@ -1384,20 +1471,57 @@ export const AdminMigration = () => {
                     >
                       {candidate.recommendation ? 'Review client' : 'Assign client'}
                     </button>
+                    {deferralControl(mappingTargetFor(candidate))}
                   </div>
                 </div>
               ))}
             </div>
           )}
 
+          {visibleDeferredIdentities.length > 0 && (
+            <details className="border-b border-slate-200 dark:border-slate-800">
+              <summary className="flex cursor-pointer list-none items-center justify-between bg-amber-50/70 px-4 py-3 text-xs font-black uppercase tracking-wider text-amber-900 hover:bg-amber-50 dark:bg-amber-950/20 dark:text-amber-200">
+                <span>Deferred source identities</span>
+                <span>{visibleDeferredIdentities.length}</span>
+              </summary>
+              {visibleDeferredIdentities.map(candidate => (
+                <div
+                  key={`${candidate.sourceTable}-${candidate.groupKey}`}
+                  className="grid gap-2 border-t border-amber-100 px-4 py-3 dark:border-amber-900/30 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-center"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-slate-950 dark:text-white">
+                      {candidate.sourceNames[0] || candidate.groupKey}
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                      {candidate.category.replaceAll('_', ' ')}
+                    </p>
+                  </div>
+                  <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                    {candidate.reason}
+                  </p>
+                  <button
+                    onClick={openClientIdentityMappingLedger}
+                    className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    View ledger
+                  </button>
+                </div>
+              ))}
+            </details>
+          )}
+
           {reviewTotal === 0 && (
             <div className="flex min-h-36 flex-col items-center justify-center gap-2 p-6 text-center">
               <CheckCircle2 className="text-emerald-600" size={26} />
               <p className="font-black text-slate-950 dark:text-white">Client identities are ready for write review</p>
-              <p className="text-sm text-slate-500">No organisation, department or generic client identity is unresolved in this dry run.</p>
+              <p className="text-sm text-slate-500">
+                No organisation, department or generic client identity is unresolved in this dry run.
+                {deferredIdentities.length > 0 ? ` ${deferredIdentities.length} audited source group${deferredIdentities.length === 1 ? ' remains' : 's remain'} deferred from write.` : ''}
+              </p>
             </div>
           )}
-          {reviewTotal > 0 && visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length === 0 && (
+          {reviewTotal > 0 && visibleCanonicalCreates.length + visibleNewOrganisations.length + visibleDepartmentConflicts.length + visibleIdentityConflicts.length + visibleDeferredIdentities.length === 0 && (
             <div className="p-8 text-center text-sm font-semibold text-slate-500">No staging rows match this search.</div>
           )}
         </div>
@@ -2682,11 +2806,15 @@ export const AdminMigration = () => {
                       </p>
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-black text-blue-700 dark:text-blue-300">
-                        {mapping.canonicalCompanyName || mapping.canonicalClientId}
+                      <p className={`truncate text-sm font-black ${mapping.action === 'DEFER_SOURCE' ? 'text-amber-800 dark:text-amber-300' : 'text-blue-700 dark:text-blue-300'}`}>
+                        {mapping.action === 'DEFER_SOURCE'
+                          ? 'Deferred from client write'
+                          : mapping.canonicalCompanyName || mapping.canonicalClientId}
                       </p>
-                      <p className="mt-1 truncate text-xs text-slate-500" title={mapping.canonicalClientId}>
-                        {mapping.canonicalClientId}
+                      <p className="mt-1 truncate text-xs text-slate-500" title={mapping.action === 'DEFER_SOURCE' ? mapping.reason : mapping.canonicalClientId}>
+                        {mapping.action === 'DEFER_SOURCE'
+                          ? mapping.deferralCategory?.replaceAll('_', ' ') || 'MANUAL DEFERRAL'
+                          : mapping.canonicalClientId}
                         {mapping.reviewMethod ? ` · ${mapping.reviewMethod.replaceAll('_', ' ')}` : ''}
                         {mapping.approvedAt ? ` · ${formatDateTime(mapping.approvedAt)}` : ''}
                       </p>
@@ -2829,6 +2957,109 @@ export const AdminMigration = () => {
               >
                 {crmMappingLoading && <Loader2 className="animate-spin" size={16} />}
                 {isManualCrmMappingBatch ? `Save ${activeCrmMappingTargets.length} mappings` : 'Save mapping'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {crmDeferralTarget && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !crmDeferralLoading) {
+              setCrmDeferralTarget(null);
+              setCrmDeferralReason('');
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="crm-deferral-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                  Audited source deferral
+                </p>
+                <h2 id="crm-deferral-title" className="mt-1 truncate text-lg font-black text-slate-950 dark:text-white">
+                  {crmDeferralTarget.displayName}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  {crmDeferralTarget.sourceTable} / {crmDeferralTarget.groupKey}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setCrmDeferralTarget(null);
+                  setCrmDeferralReason('');
+                }}
+                disabled={crmDeferralLoading}
+                aria-label="Close source deferral"
+                title="Close"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="border border-amber-200 bg-amber-50 px-3 py-3 text-sm leading-6 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                This does not delete or alter Airtable data. The source is excluded from Client CRM writes until this audited decision is revoked.
+              </div>
+
+              <label htmlFor="crm-deferral-category" className="block">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-500">Deferral category</span>
+                <select
+                  id="crm-deferral-category"
+                  value={crmDeferralCategory}
+                  onChange={event => setCrmDeferralCategory(event.target.value as AirtableClientIdentityDeferralCategory)}
+                  className="mt-2 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                >
+                  <option value="NOT_AN_ORGANISATION">Not an organisation</option>
+                  <option value="INSUFFICIENT_SOURCE_EVIDENCE">Insufficient source evidence</option>
+                  <option value="SOURCE_DATA_REPAIR_REQUIRED">Source data repair required</option>
+                  <option value="OUT_OF_SCOPE_LEGACY_RECORD">Out-of-scope legacy record</option>
+                </select>
+              </label>
+
+              <div>
+                <label htmlFor="crm-deferral-reason" className="block text-xs font-black uppercase tracking-wider text-slate-500">
+                  Reviewed evidence and reason
+                </label>
+                <textarea
+                  id="crm-deferral-reason"
+                  value={crmDeferralReason}
+                  onChange={event => setCrmDeferralReason(event.target.value)}
+                  placeholder="State what was checked and why mapping or creating an organisation would be unsafe."
+                  className="mt-2 min-h-28 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+                <span className="mt-1 block text-xs font-semibold text-slate-500">
+                  {crmDeferralReason.trim().length}/20 minimum characters
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:justify-end">
+              <button
+                onClick={() => {
+                  setCrmDeferralTarget(null);
+                  setCrmDeferralReason('');
+                }}
+                disabled={crmDeferralLoading}
+                className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-black text-slate-700 hover:bg-white disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveClientIdentityDeferral}
+                disabled={crmDeferralLoading || crmDeferralReason.trim().length < 20}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 text-sm font-black text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {crmDeferralLoading && <Loader2 className="animate-spin" size={16} />}
+                Defer source
               </button>
             </div>
           </div>

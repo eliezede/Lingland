@@ -1,4 +1,4 @@
-export const AIRTABLE_SYNC_MAPPING_VERSION = 'airtable-sync-center-v9';
+export const AIRTABLE_SYNC_MAPPING_VERSION = 'airtable-sync-center-v10';
 export const AIRTABLE_WRITE_APPROVAL_TTL_MS = 30 * 60 * 1000;
 
 export type SyncWriteApprovalRun = {
