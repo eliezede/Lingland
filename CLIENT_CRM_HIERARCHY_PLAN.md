@@ -274,6 +274,13 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - Official general account `recNLbFrcHOsm80U7` provides Sage reference `SOU006`, but that approved Airtable account is still one of the six pending creates while Write Sync is locked. The existing exact-name canonical was therefore used as the operational target and must receive the official account reference during the protected Write Sync instead of forming a second client tree.
 - The Mental Wellbeing after-run reduced the gate to 68 blocked rows across 65 review decisions with 0 errors. Production effects across both batches were limited to two audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
 
+### Southern Health identity batch - 24 July 2026
+
+- Official Airtable `Clients` account `rec7G4Rit3vkEdk0V` anchors Southern Health NHSFT with Sage reference `SOU10` and the NHS shared-services invoice route.
+- `Southern Health NHS FT` record `recitq0jXqi1DTWG5` and `HHFT/Southernhealth` record `recu0MakSqtUh80EU` were mapped to `airtable_client_sou10`. Both use requesters at `southernhealth.nhs.uk`; the latter was intentionally excluded from the earlier HHFT batch until this institution evidence was reviewed.
+- The authoritative after-run reduced the gate from 68 blocked rows / 65 decisions to 66 / 63 with 0 errors. Filtering for `Southern` returned 0 remaining review results.
+- Production effects were limited to two audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
