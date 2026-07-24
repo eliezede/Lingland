@@ -281,6 +281,14 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - The authoritative after-run reduced the gate from 68 blocked rows / 65 decisions to 66 / 63 with 0 errors. Filtering for `Southern` returned 0 remaining review results.
 - Production effects were limited to two audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
 
+### Crown Prosecution Service Witness Care batch - 24 July 2026
+
+- Official Airtable `Clients` account `rec0UCcGgj8M4Ts7c` anchors Crown Prosecution Service with Sage reference `CRO001` and the Wessex Business Support Managers invoice route.
+- `Police Witness Care Unit`, `Witness Care - Hampshire Police`, and `Hampshire & Isle of Wight Police (for the Crown Prosecution Service)` were mapped to `airtable_client_cro001`.
+- Supporting `Clients Book` records `recpHftB6LUKicXq2`, `recrjWhYwKsWnCxqK`, `recxpN6bHM2IKDNx3`, `recXXXd0zxMejpL8K` and `recZa5HAHpdjZYJxb` share the Witness Care telephone and requester mailbox. Their invoice route is the same `cps.gov.uk` address as the official CRO001 account, so they are treated as CPS departments/agents rather than a second police client.
+- Orphan department `Hampshire Police Witness Care` remained unresolved because its Airtable row contains only a name and no client link, contact, address or job dependency.
+- The authoritative after-run reduced the gate from 66 blocked rows / 63 decisions to 63 / 60 with 0 errors. Production effects were limited to three audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
