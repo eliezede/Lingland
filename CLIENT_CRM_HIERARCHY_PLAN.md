@@ -289,6 +289,13 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - Orphan department `Hampshire Police Witness Care` remained unresolved because its Airtable row contains only a name and no client link, contact, address or job dependency.
 - The authoritative after-run reduced the gate from 66 blocked rows / 63 decisions to 63 / 60 with 0 errors. Production effects were limited to three audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
 
+### Hampshire County Council account-specific aliases - 24 July 2026
+
+- `Independent Appeals Service - Hampshire County Council` record `recutvTdsWM5X54Ik` was mapped to `airtable_client_ham015`, not the general HCC account. Its exact `independent.appeals.service@hants.gov.uk` identity and invoice route match official account `recT6GcO6hpgYAoEd`, Sage `HAM015`.
+- The Appeals after-run reduced the gate from 63 blocked rows / 60 decisions to 62 / 59 with 0 errors.
+- `AHMP Service` record `recuqoEWse13nIfe7` was treated as a transposed AMHP acronym and mapped to `airtable_client_ham019`. It uses a `hants.gov.uk` requester and aligns with official Hampshire AMHP services account `recjM5HyJBppBNJrP`, Sage `HAM019`; other HCC services were not included.
+- The AHMP after-run reduced the gate to 61 blocked rows across 58 review decisions with 0 errors. Production effects across both decisions were limited to two audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
