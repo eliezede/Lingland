@@ -56,7 +56,7 @@ export const AdminInterpreters = () => {
 
   const [textFilter, setTextFilter] = useState('');
   const [langFilter, setLangFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'ONLY_TRANSL' | 'ONBOARDING' | 'SUSPENDED' | 'IMPORTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PASSIVE' | Interpreter['status']>('ALL');
   const [queueFilter, setQueueFilter] = useState<'ALL' | 'CLAIMS' | 'PAYABLES'>('ALL');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const crmReturnState = { returnTo: `${location.pathname}${location.search}`, returnLabel: 'Interpreter CRM' };
@@ -158,8 +158,10 @@ export const AdminInterpreters = () => {
       paidInvoices: invoices.filter(inv => inv.status === InvoiceStatus.PAID).length,
       lastJobDate: sortedDates[0]?.toISOString(),
       accountMode: interpreter.status === 'IMPORTED'
-        ? (interpreter.activationEmailSentAt ? 'Activation sent' : 'Passive import')
-        : 'Platform active',
+        ? (interpreter.activationEmailSentAt ? 'Activation sent' : 'Imported profile')
+        : ['INACTIVE', 'ON_LEAVE', 'UNRELIABLE', 'APPLICANT', 'BLOCKED'].includes(interpreter.status)
+          ? 'Staff managed'
+          : 'Platform enabled',
     };
   };
 
@@ -168,7 +170,11 @@ export const AdminInterpreters = () => {
     const matchesText = i.name.toLowerCase().includes(query) || i.email.toLowerCase().includes(query);
     const languageSource = i.languages?.length ? i.languages : i.languageProficiencies?.map(p => p.language) || [];
     const matchesLang = langFilter ? languageSource.some(l => l.toLowerCase().includes(langFilter.toLowerCase())) : true;
-    const matchesStatus = statusFilter === 'ALL' ? true : i.status === statusFilter;
+    const matchesStatus = statusFilter === 'ALL'
+      ? true
+      : statusFilter === 'PASSIVE'
+        ? ['INACTIVE', 'ON_LEAVE', 'UNRELIABLE', 'APPLICANT', 'IMPORTED', 'BLOCKED'].includes(i.status)
+        : i.status === statusFilter;
     const matchesQueue = queueFilter === 'ALL'
       ? true
       : queueFilter === 'CLAIMS'
@@ -180,7 +186,7 @@ export const AdminInterpreters = () => {
   const summary = {
     total: interpreters.length,
     active: interpreters.filter(i => i.status === 'ACTIVE' || i.status === 'ONLY_TRANSL').length,
-    passive: interpreters.filter(i => i.status === 'IMPORTED').length,
+    passive: interpreters.filter(i => ['INACTIVE', 'ON_LEAVE', 'UNRELIABLE', 'APPLICANT', 'IMPORTED', 'BLOCKED'].includes(i.status)).length,
     claims: interpreters.reduce((sum, i) => sum + i.claimsInReview + i.missingClaims, 0),
     payables: interpreters.reduce((sum, i) => sum + i.payablePending, 0),
   };
@@ -188,7 +194,7 @@ export const AdminInterpreters = () => {
   const filterChips = [
     { label: 'All', value: summary.total, active: statusFilter === 'ALL' && queueFilter === 'ALL', onClick: () => { setStatusFilter('ALL'); setQueueFilter('ALL'); } },
     { label: 'Active', value: summary.active, active: statusFilter === 'ACTIVE' && queueFilter === 'ALL', onClick: () => { setStatusFilter('ACTIVE'); setQueueFilter('ALL'); } },
-    { label: 'Passive', value: summary.passive, active: statusFilter === 'IMPORTED' && queueFilter === 'ALL', onClick: () => { setStatusFilter('IMPORTED'); setQueueFilter('ALL'); } },
+    { label: 'Passive', value: summary.passive, active: statusFilter === 'PASSIVE' && queueFilter === 'ALL', onClick: () => { setStatusFilter('PASSIVE'); setQueueFilter('ALL'); } },
     { label: 'Claims', value: summary.claims, active: queueFilter === 'CLAIMS', onClick: () => { setStatusFilter('ALL'); setQueueFilter('CLAIMS'); } },
     { label: 'Payables', value: money(summary.payables), active: queueFilter === 'PAYABLES', onClick: () => { setStatusFilter('ALL'); setQueueFilter('PAYABLES'); } },
   ];
@@ -340,7 +346,17 @@ export const AdminInterpreters = () => {
       header: 'Status',
       accessor: (i: InterpreterWithStats) => (
         <div className="min-w-[125px]">
-          <Badge variant={i.status === 'ACTIVE' || i.status === 'ONLY_TRANSL' ? 'success' : i.status === 'SUSPENDED' ? 'danger' : i.status === 'IMPORTED' ? 'info' : 'warning'}>
+          <Badge variant={
+            i.status === 'ACTIVE' || i.status === 'ONLY_TRANSL'
+              ? 'success'
+              : ['SUSPENDED', 'BLOCKED', 'UNRELIABLE'].includes(i.status)
+                ? 'danger'
+                : i.status === 'IMPORTED'
+                  ? 'info'
+                  : i.status === 'INACTIVE'
+                    ? 'neutral'
+                    : 'warning'
+          }>
             {i.status}
           </Badge>
           <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -403,14 +419,20 @@ export const AdminInterpreters = () => {
           <select
             className="h-full w-full cursor-pointer appearance-none bg-transparent px-4 py-2 text-sm font-medium text-slate-900 outline-none focus:ring-0 dark:text-white"
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as any)}
+            onChange={e => setStatusFilter(e.target.value as 'ALL' | 'PASSIVE' | Interpreter['status'])}
           >
             <option value="ALL" className="dark:bg-slate-900">All Statuses</option>
+            <option value="PASSIVE" className="dark:bg-slate-900">All staff-managed</option>
             <option value="ACTIVE" className="dark:bg-slate-900">Active</option>
             <option value="ONLY_TRANSL" className="dark:bg-slate-900">Translation only</option>
+            <option value="INACTIVE" className="dark:bg-slate-900">Inactive</option>
+            <option value="ON_LEAVE" className="dark:bg-slate-900">On leave</option>
+            <option value="UNRELIABLE" className="dark:bg-slate-900">Unreliable</option>
+            <option value="APPLICANT" className="dark:bg-slate-900">Applicant</option>
             <option value="IMPORTED" className="dark:bg-slate-900">Imported</option>
             <option value="ONBOARDING" className="dark:bg-slate-900">Onboarding</option>
             <option value="SUSPENDED" className="dark:bg-slate-900">Suspended</option>
+            <option value="BLOCKED" className="dark:bg-slate-900">Blocked</option>
           </select>
         </div>
         {queueFilter !== 'ALL' && (

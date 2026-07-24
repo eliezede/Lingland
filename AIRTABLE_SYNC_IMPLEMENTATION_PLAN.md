@@ -20,6 +20,7 @@
 - [14. Definition of Done geral](#14-definition-of-done-geral)
 - [15. Checklist mestre](#15-checklist-mestre)
 - [16. Prova de reconciliacao financeira](#16-prova-de-reconciliacao-financeira)
+- [17. Prova de identidade profissional](#17-prova-de-identidade-profissional)
 
 ## 1. Objetivo operacional
 
@@ -177,11 +178,20 @@ Tabelas:
 
 Implementacao:
 
-- [ ] Garantir match por email.
-- [ ] Garantir match por nome normalizado quando email faltar.
-- [ ] Marcar usuarios importados como passivos quando nao ativados.
-- [ ] Permitir assignment manual para usuario passivo.
-- [ ] Bloquear emails externos em Test Mode.
+- [x] Importar o diretorio profissional completo, incluindo `inactive`, `on leave`, `unreliable`, `only transl`, `Applicant` e status vazio.
+- [x] Deduplicar somente com pares fortes de identidade: email+telefone, email+nome ou telefone+nome.
+- [x] Preservar todos os Airtable record IDs e idiomas do mesmo profissional.
+- [x] Garantir match deterministico por `sourceRecordId` e `airtableRecordIds`.
+- [x] Manter perfis historicos/passivos mesmo sem email.
+- [x] Criar conta somente para `active` e `only transl`.
+- [x] Suspender acesso existente quando o status final deixar de ser elegivel para portal.
+- [x] Preservar bloqueios locais `BLOCKED`, `SUSPENDED` e `ONBOARDING`.
+- [x] Impedir merge automatico quando a evidencia de identidade conecta perfis diferentes.
+- [x] Permitir vinculo manual revisado pelo Super Admin, com motivo e audit trail.
+- [x] Permitir assignment manual para usuario passivo.
+- [x] Bloquear a acao de activation email na UI enquanto Communication Mode nao for `LIVE`.
+- [ ] Executar Dry Run de producao do diretorio completo e registrar os contadores.
+- [ ] Executar Write Sync aprovado e repetir REDBOOK/Translations para fechar conflitos profissionais.
 
 Aceite:
 
@@ -580,7 +590,7 @@ Uma fase so esta pronta quando:
 
 - [ ] Clients.
 - [ ] Clients Book.
-- [ ] Interpreters.
+- [x] Professional directory (interpreters/translators, ativos e passivos).
 - [ ] REDBOOK.
 - [ ] Translations.
 - [ ] Web translations.
@@ -680,3 +690,81 @@ Backlog financeiro de alta prioridade:
 - [ ] Revisar 107 divergencias reais de status.
 - [ ] Separar no audit os fluxos de interpretacao, traducao e cancellation fee.
 - [ ] Adicionar contadores por motivo ao resultado do Dry Run, nao apenas ao Financial Proof.
+
+## 17. Prova de identidade profissional
+
+### Causa raiz confirmada em 24/07/2026
+
+- O importador anterior lia apenas linhas com `{active!} = active`.
+- Jobs historicos e atuais podem apontar diretamente para profissionais `inactive`, `on leave`, `unreliable`, `only transl`, `Applicant` ou sem status.
+- Exemplo confirmado: `LING26.16101 Polish` aponta para o registro profissional Airtable `recYDgdk20Pi20SmE`, que estava `inactive` e por isso nao existia no diretorio da plataforma.
+- O resultado era `PROFESSIONAL_NOT_RESOLVED`, mesmo quando REDBOOK continha um link profissional valido.
+
+### Arquitetura implementada
+
+- O Airtable continua estritamente read-only.
+- Toda pessoa com nome valido vira um perfil operacional/historico.
+- O perfil preserva `sourceRecordId`, `airtableRecordIds`, `airtableStatus`, idiomas e snapshot de origem.
+- Somente status elegiveis podem criar conta; os demais permanecem staff-managed.
+- Uma conta existente e suspensa quando o perfil final deixa de ser elegivel.
+- Evidencia ambigua nunca faz merge automatico.
+- O Super Admin pode confirmar um vinculo pelo Sync Center; a decisao grava motivo, ator, timestamp e audit log.
+- O conflito permanece aberto ate um novo Dry Run/Write Sync comprovar o match.
+- A UI de activation email fica bloqueada em `SUPPRESSED`, `INTERNAL_ONLY` e `SELECTIVE_LIVE`.
+
+### Prova pendente de producao
+
+- [x] Dry Run do diretorio profissional com zero erros.
+- [x] Revisar `ambiguousSourceRows` e `accountConflicts`.
+- [x] Write Sync do diretorio aprovado.
+- [x] Dry Run e Write Sync REDBOOK depois do diretorio.
+- [x] Dry Run e Write Sync de Translations depois do diretorio.
+- [x] Medir reducao de `PROFESSIONAL_NOT_RESOLVED` e `PROFESSIONAL_MATCH_AMBIGUOUS`.
+- [ ] Resolver manualmente apenas os casos restantes com evidencia suficiente.
+- [x] Confirmar que nenhum email foi criado ou enviado durante a prova.
+
+### Resultado validado em producao em 24/07/2026
+
+Modo da prova:
+
+- `HYBRID`
+- Airtable Import `ON`
+- Email `SUPPRESSED`
+- Airtable estritamente read-only
+
+Diretorio profissional:
+
+| Indicador | Resultado |
+| --- | ---: |
+| Linhas Airtable lidas | 408 |
+| Perfis profissionais consolidados | 274 |
+| Elegiveis para portal | 217 |
+| Perfis passivos/staff-managed | 57 |
+| Perfis sem email | 12 |
+| Linhas ambiguas | 0 |
+| Perfis criados | 86 |
+| Perfis atualizados | 188 |
+| Perfis sem conta de portal | 62 |
+| Contas criadas | 24 |
+| Conflitos de conta | 2 |
+| Erros | 0 |
+
+REDBOOK:
+
+- Dry Run limpo: `0` conflitos e `0` erros.
+- Write Sync persistido no historico duravel.
+- Reexecucao idempotente: `0` criados, `2` atualizados, `2.204` ignorados, `0` conflitos e `0` erros.
+- Nenhum conflito profissional aberto permaneceu no modulo de interpretacao.
+
+Translations:
+
+- Dry Run: `5` criados, `425` atualizados, `0` erros.
+- Write Sync: `5` criados, `425` atualizados, `16` conflitos de cliente e `0` erros.
+- `PROFESSIONAL_NOT_RESOLVED`: `50` antes, `0` depois.
+- `PROFESSIONAL_MATCH_AMBIGUOUS`: `0` depois.
+- Os conflitos restantes pertencem a identidade de cliente e integridade financeira; nao devem ser tratados como falha do diretorio profissional.
+
+Pendencia profissional residual:
+
+- [x] Nenhum vinculo profissional manual e necessario no baseline atual.
+- [ ] Manter o resolvedor manual apenas para novos casos futuros com evidencia forte.

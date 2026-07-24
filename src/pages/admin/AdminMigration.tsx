@@ -25,7 +25,10 @@ import {
   Wallet,
   X
 } from 'lucide-react';
-import { MigrationService } from '../../services/migrationService';
+import {
+  AirtableProfessionalStats,
+  MigrationService
+} from '../../services/migrationService';
 import {
   AIRTABLE_SYNC_MODULES,
   AirtableModuleResult,
@@ -44,7 +47,8 @@ import {
   AirtableSyncService
 } from '../../services/airtableSyncService';
 import { ClientService } from '../../services/clientService';
-import { Client } from '../../types';
+import { InterpreterService } from '../../services/interpreterService';
+import { Client, Interpreter } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -169,6 +173,13 @@ type ClientCrmBatchCandidate = {
   recommendation: ClientCrmRecommendation;
 };
 
+type ProfessionalIdentityEvidence = {
+  professionalRecordId: string;
+  name: string;
+  email: string;
+  phone: string;
+};
+
 const syncStrategyOptions: Array<{
   id: AirtableSyncStrategy;
   label: string;
@@ -268,6 +279,28 @@ const safeInlineText = (value: unknown, fallback = 'N/A') => {
   return fallback;
 };
 
+const getProfessionalIdentityEvidence = (
+  conflict: AirtableSyncConflict,
+): ProfessionalIdentityEvidence | null => {
+  if (!['PROFESSIONAL_NOT_RESOLVED', 'PROFESSIONAL_MATCH_AMBIGUOUS'].includes(String(conflict.reason || ''))) {
+    return null;
+  }
+  const incoming = (
+    conflict.incomingValue && typeof conflict.incomingValue === 'object'
+      ? conflict.incomingValue
+      : {}
+  ) as Record<string, unknown>;
+  const professionalRecordId = safeInlineText(incoming.airtableRecordId, '');
+  if (!/^rec[a-zA-Z0-9]{14}$/.test(professionalRecordId)) return null;
+
+  return {
+    professionalRecordId,
+    name: safeInlineText(incoming.name, ''),
+    email: safeInlineText(incoming.email, ''),
+    phone: safeInlineText(incoming.phone, ''),
+  };
+};
+
 const StatPill = ({ label, value, className = '' }: { label: string; value: number; className?: string }) => (
   <div className={`rounded-lg border px-3 py-2 ${className || 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200'}`}>
     <p className="text-[10px] font-black uppercase tracking-wider opacity-70">{label}</p>
@@ -303,7 +336,7 @@ export const AdminMigration = () => {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('clients');
   const [loading, setLoading] = useState(false);
   const [interpreterLoading, setInterpreterLoading] = useState(false);
-  const [stats, setStats] = useState<{ total: number; deduplicated: number } | null>(null);
+  const [stats, setStats] = useState<AirtableProfessionalStats | null>(null);
   const [syncStrategy, setSyncStrategy] = useState<AirtableSyncStrategy>('OPEN_WORKFLOW');
   const [recordLimit, setRecordLimit] = useState(() => getStrategyConfig('OPEN_WORKFLOW').defaultLimit);
   const [syncResult, setSyncResult] = useState<AirtableSyncResult | null>(null);
@@ -346,7 +379,13 @@ export const AdminMigration = () => {
   const [crmDeferralCategory, setCrmDeferralCategory] = useState<AirtableClientIdentityDeferralCategory>('INSUFFICIENT_SOURCE_EVIDENCE');
   const [crmDeferralReason, setCrmDeferralReason] = useState('');
   const [crmDeferralLoading, setCrmDeferralLoading] = useState(false);
-  const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
+  const [professionalMappingConflict, setProfessionalMappingConflict] = useState<AirtableSyncConflict | null>(null);
+  const [professionalDirectory, setProfessionalDirectory] = useState<Interpreter[]>([]);
+  const [professionalSearch, setProfessionalSearch] = useState('');
+  const [selectedProfessionalId, setSelectedProfessionalId] = useState('');
+  const [professionalMappingReason, setProfessionalMappingReason] = useState('');
+  const [professionalMappingLoading, setProfessionalMappingLoading] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<AirtableProfessionalStats | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const interpreterStatsRequestedRef = useRef(false);
   const { showToast } = useToast();
@@ -358,6 +397,9 @@ export const AdminMigration = () => {
   const communicationMode = platformMode?.communicationMode || 'SUPPRESSED';
   const operatingMode = platformMode?.operatingMode || 'AIRTABLE_MIRROR';
   const importLocked = importMode !== 'ON';
+  const professionalDryRunBlocked = Boolean(
+    stats && (stats.errors > 0 || stats.conflict > 0 || stats.ambiguousSourceRows > 0),
+  );
 
   const moduleResults = useMemo(() => {
     const map = new Map<AirtableSyncModule, AirtableModuleResult>();
@@ -409,6 +451,43 @@ export const AdminMigration = () => {
     }, {});
     return { bySeverity, byReason };
   }, [openConflicts]);
+  const professionalMappingEvidence = useMemo(
+    () => professionalMappingConflict
+      ? getProfessionalIdentityEvidence(professionalMappingConflict)
+      : null,
+    [professionalMappingConflict],
+  );
+  const visibleProfessionals = useMemo(() => {
+    const queryValue = professionalSearch.trim().toLowerCase();
+    const sourceName = professionalMappingEvidence?.name.trim().toLowerCase() || '';
+    const sourceEmail = professionalMappingEvidence?.email.trim().toLowerCase() || '';
+    const sourcePhone = professionalMappingEvidence?.phone.replace(/\D/g, '') || '';
+    const score = (interpreter: Interpreter) => {
+      const name = String(interpreter.name || '').trim().toLowerCase();
+      const email = String(interpreter.email || '').trim().toLowerCase();
+      const phone = String(interpreter.phone || '').replace(/\D/g, '');
+      let value = 0;
+      if (sourceEmail && email === sourceEmail) value += 120;
+      if (sourcePhone && phone && (phone === sourcePhone || phone.endsWith(sourcePhone.slice(-10)))) value += 90;
+      if (sourceName && name === sourceName) value += 80;
+      else if (sourceName && (name.includes(sourceName) || sourceName.includes(name))) value += 35;
+      return value;
+    };
+
+    return professionalDirectory
+      .filter(interpreter => {
+        if (!queryValue) return true;
+        return [
+          interpreter.name,
+          interpreter.email,
+          interpreter.phone,
+          interpreter.id,
+          ...(interpreter.languages || []),
+        ].some(value => String(value || '').toLowerCase().includes(queryValue));
+      })
+      .sort((left, right) => score(right) - score(left) || left.name.localeCompare(right.name))
+      .slice(0, 80);
+  }, [professionalDirectory, professionalMappingEvidence, professionalSearch]);
   const crmCanonicalTargets = useMemo<ClientCrmCanonicalTarget[]>(() => {
     const diagnostics = moduleResults.get('clients')?.diagnostics as ClientCrmDiagnostics | undefined;
     const pending = diagnostics?.canonicalAccounts?.approvedPendingCanonicalAccounts || [];
@@ -464,9 +543,9 @@ export const AdminMigration = () => {
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
     try {
-      setStats(await MigrationService.getActiveInterpreterStats());
+      setStats(await MigrationService.getProfessionalDirectoryStats());
     } catch {
-      showToast('Error loading Airtable interpreter stats', 'error');
+      showToast('Error loading the Airtable professional directory preview', 'error');
     } finally {
       setInterpreterLoading(false);
     }
@@ -500,6 +579,94 @@ export const AdminMigration = () => {
       console.warn('Failed to load Airtable sync audit trail', err);
       setRecentRuns([]);
       setOpenConflicts([]);
+    }
+  };
+
+  const closeProfessionalIdentityMapping = () => {
+    if (professionalMappingLoading) return;
+    setProfessionalMappingConflict(null);
+    setProfessionalSearch('');
+    setSelectedProfessionalId('');
+    setProfessionalMappingReason('');
+  };
+
+  const openProfessionalIdentityMapping = async (conflict: AirtableSyncConflict) => {
+    if (!isSuperAdmin) {
+      showToast('Only a Super Admin can confirm professional identity mappings.', 'error');
+      return;
+    }
+    const evidence = getProfessionalIdentityEvidence(conflict);
+    if (!evidence) {
+      showToast('This conflict does not contain a valid Airtable professional record ID.', 'error');
+      return;
+    }
+
+    setProfessionalMappingConflict(conflict);
+    setProfessionalSearch(evidence.name || evidence.email || evidence.phone);
+    setProfessionalMappingReason(
+      `Confirmed against Airtable professional evidence for ${safeInlineText(conflict.legacyRef, 'the mirrored job')}.`,
+    );
+    setSelectedProfessionalId('');
+    setProfessionalMappingLoading(true);
+    try {
+      const directory = professionalDirectory.length
+        ? professionalDirectory
+        : await InterpreterService.getAll();
+      if (!professionalDirectory.length) setProfessionalDirectory(directory);
+
+      const normalizedName = evidence.name.trim().toLowerCase();
+      const normalizedEmail = evidence.email.trim().toLowerCase();
+      const normalizedPhone = evidence.phone.replace(/\D/g, '');
+      const exactMatches = directory.filter(interpreter => {
+        const profileName = String(interpreter.name || '').trim().toLowerCase();
+        const profileEmail = String(interpreter.email || '').trim().toLowerCase();
+        const profilePhone = String(interpreter.phone || '').replace(/\D/g, '');
+        return Boolean(
+          (normalizedEmail && profileEmail === normalizedEmail)
+          || (normalizedPhone && profilePhone && profilePhone === normalizedPhone)
+          || (normalizedName && profileName === normalizedName),
+        );
+      });
+      if (exactMatches.length === 1) setSelectedProfessionalId(exactMatches[0].id);
+    } catch (error) {
+      console.warn('Failed to load professional directory for identity review', error);
+      showToast('Could not load the professional directory.', 'error');
+      setProfessionalMappingConflict(null);
+    } finally {
+      setProfessionalMappingLoading(false);
+    }
+  };
+
+  const saveProfessionalIdentityMapping = async () => {
+    const evidence = professionalMappingEvidence;
+    if (!professionalMappingConflict || !evidence || !selectedProfessionalId) {
+      showToast('Choose one professional profile before saving the mapping.', 'error');
+      return;
+    }
+    if (professionalMappingReason.trim().length < 8) {
+      showToast('Record a short audit reason before saving the mapping.', 'error');
+      return;
+    }
+
+    setProfessionalMappingLoading(true);
+    try {
+      await AirtableSyncService.linkProfessionalIdentity({
+        professionalRecordId: evidence.professionalRecordId,
+        interpreterId: selectedProfessionalId,
+        sourceName: evidence.name,
+        reason: professionalMappingReason.trim(),
+      });
+      showToast('Professional identity linked. Rerun the affected module to verify and close the conflict.', 'success');
+      setProfessionalMappingConflict(null);
+      setProfessionalSearch('');
+      setSelectedProfessionalId('');
+      setProfessionalMappingReason('');
+      await loadSyncAuditTrail();
+    } catch (error: any) {
+      console.warn('Failed to save professional identity mapping', error);
+      showToast(error?.message || 'Professional identity mapping failed.', 'error');
+    } finally {
+      setProfessionalMappingLoading(false);
     }
   };
 
@@ -617,21 +784,35 @@ export const AdminMigration = () => {
       showToast(`Airtable import is ${importMode}. Enable import in Platform Mode settings first.`, 'error');
       return;
     }
-    if (!window.confirm('Start interpreter import from Airtable? This will create/update imported profiles.')) return;
+    if (professionalDryRunBlocked) {
+      showToast('Resolve the professional Dry preview blockers before writing the directory.', 'error');
+      return;
+    }
+    if (!window.confirm(
+      'Sync the complete Airtable professional directory? All statuses are mirrored as profiles. Only active or translation-only professionals can receive an imported account, and no email will be sent.',
+    )) return;
 
     setInterpreterLoading(true);
     try {
-      const result = await MigrationService.migrateActiveInterpreters();
+      const result = await MigrationService.syncProfessionalDirectory();
       setMigrationResult(result);
-      showToast(`Interpreter import complete: ${result.created} created, ${result.skipped} skipped.`, 'success');
+      setStats(result);
+      showToast(
+        `Professional mirror complete: ${result.created} created, ${result.updated} updated, ${result.profileOnly} profile-only.`,
+        result.errors || result.conflict ? 'error' : 'success',
+      );
     } catch {
-      showToast('Interpreter import failed', 'error');
+      showToast('Professional directory sync failed', 'error');
     } finally {
       setInterpreterLoading(false);
     }
   };
 
   const handleSendInvites = async () => {
+    if (communicationMode !== 'LIVE') {
+      showToast(`Activation emails are disabled while communication mode is ${communicationMode}.`, 'error');
+      return;
+    }
     if (!window.confirm('Process activation emails for imported interpreters? Communication mode still controls delivery.')) return;
 
     setInterpreterLoading(true);
@@ -1736,7 +1917,7 @@ export const AdminMigration = () => {
     || (activeTab === 'interpreters' ? 'Interpreters' : activeTab === 'reconciliation' ? 'Reconciliation' : 'Full Sync');
   const activeSubtitle = activeModule?.description
     || (activeTab === 'interpreters'
-      ? 'Active team import and activation'
+      ? 'Complete professional mirror with controlled portal eligibility'
       : activeTab === 'reconciliation'
         ? 'Open discrepancies, severity and next action'
         : 'All modules in dependency order');
@@ -1987,7 +2168,7 @@ export const AdminMigration = () => {
             <div className="space-y-1">
               {([
                 { id: 'overview' as WorkspaceTab, label: 'Overview', description: 'Full workflow and dependency order' },
-                { id: 'interpreters' as WorkspaceTab, label: 'Interpreters', description: 'Active team import and activation' },
+                { id: 'interpreters' as WorkspaceTab, label: 'Interpreters', description: 'Complete professional mirror with controlled portal eligibility' },
                 { id: 'reconciliation' as WorkspaceTab, label: 'Reconciliation', description: 'Open discrepancies and export' }
               ]).map(item => {
                 const Icon = moduleIcons[item.id];
@@ -2203,73 +2384,134 @@ export const AdminMigration = () => {
 
             {activeTab === 'interpreters' && (
               <div className="space-y-5">
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-3">
                       <div className="rounded-lg bg-blue-100 p-2 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                         <Users size={20} />
                       </div>
                       <div>
-                        <h2 className="font-black text-slate-950 dark:text-white">Interpreters</h2>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Active team import</p>
+                        <h2 className="font-black text-slate-950 dark:text-white">Professional directory mirror</h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          All Airtable professionals remain available for historical jobs and staff-led operations.
+                        </p>
                       </div>
                     </div>
-                    <div className="mt-5">
-                      {interpreterLoading && !stats ? (
-                        <div className="flex items-center gap-2 text-sm text-slate-500">
-                          <Loader2 size={16} className="animate-spin" /> Checking records...
-                        </div>
-                      ) : (
-                        <>
-                          <p className="text-4xl font-black text-slate-950 dark:text-white">{stats?.total || 0}</p>
-                          <p className="text-sm text-slate-500 dark:text-slate-400">Unique active interpreters found</p>
-                          {stats?.deduplicated ? (
-                            <p className="mt-2 inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                              {stats.deduplicated} merged from multiple rows
-                            </p>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                    <h2 className="font-black text-slate-950 dark:text-white">Actions</h2>
-                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-                      <div className="flex gap-3">
-                        <AlertCircle size={18} className="mt-0.5 shrink-0" />
-                        <div>
-                          <p className="font-black">Transition rule</p>
-                          <p>Imported interpreters can remain passive. Admin can assign and mark acceptance manually while emails are suppressed/internal.</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      <button
-                        onClick={handleMigrateInterpreters}
-                        disabled={interpreterLoading || !stats || importLocked}
-                        className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-                      >
-                        {interpreterLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
-                        Import interpreters
-                      </button>
+                    <div className="flex flex-wrap gap-2">
                       <button
                         onClick={loadInterpreterStats}
                         disabled={interpreterLoading}
                         className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
-                        <RefreshCw size={16} />
-                        Refresh stats
+                        <RefreshCw size={16} className={interpreterLoading ? 'animate-spin' : ''} />
+                        Dry preview
                       </button>
                       <button
-                        onClick={handleSendInvites}
-                        disabled={interpreterLoading}
-                        className="inline-flex h-10 items-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                        onClick={handleMigrateInterpreters}
+                        disabled={interpreterLoading || !stats || importLocked || professionalDryRunBlocked}
+                        title={professionalDryRunBlocked ? 'Resolve Dry preview blockers before writing' : 'Write the reviewed professional mirror'}
+                        className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
                       >
-                        <Mail size={16} />
-                        Process activation emails
+                        {interpreterLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
+                        Sync directory
                       </button>
                     </div>
+                  </div>
+
+                  {interpreterLoading && !stats ? (
+                    <div className="flex min-h-36 items-center justify-center gap-2 text-sm font-semibold text-slate-500">
+                      <Loader2 size={17} className="animate-spin" /> Reading the Airtable professional directory...
+                    </div>
+                  ) : (
+                    <div className="p-5">
+                      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                        <StatPill label="Source rows" value={stats?.sourceRows || 0} />
+                        <StatPill label="Profiles" value={stats?.total || 0} className="border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200" />
+                        <StatPill label="Portal eligible" value={stats?.portalEligible || 0} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200" />
+                        <StatPill label="Passive profiles" value={stats?.passiveProfiles || 0} />
+                        <StatPill label="Without email" value={stats?.profilesWithoutEmail || 0} />
+                        <StatPill label="Ambiguous rows" value={stats?.ambiguousSourceRows || 0} className={stats?.ambiguousSourceRows ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200' : ''} />
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {Object.entries(stats?.bySourceStatus || {}).map(([status, count]) => (
+                          <span key={status} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-black text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                            {status.replaceAll('_', ' ')} {count}
+                          </span>
+                        ))}
+                        {stats?.deduplicated ? (
+                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+                            {stats.deduplicated} multi-row profiles merged
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-black uppercase tracking-widest text-slate-500">If written now</p>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
+                            professionalDryRunBlocked
+                              ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          }`}>
+                            {professionalDryRunBlocked ? 'BLOCKED' : 'READY'}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                          <StatPill label="Create" value={stats?.created || 0} />
+                          <StatPill label="Update" value={stats?.updated || 0} />
+                          <StatPill label="Profile only" value={stats?.profileOnly || 0} />
+                          <StatPill label="Account conflicts" value={stats?.accountConflicts || 0} className={stats?.accountConflicts ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200' : ''} />
+                          <StatPill label="Identity conflicts" value={stats?.conflict || 0} className={stats?.conflict ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200' : ''} />
+                          <StatPill label="Errors" value={stats?.errors || 0} className={stats?.errors ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200' : ''} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/25 dark:text-blue-100">
+                    <div className="flex gap-3">
+                      <ShieldCheck size={19} className="mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-black">Hybrid directory rules</p>
+                        <p className="mt-1 leading-6">
+                          Active and translation-only records may have an imported portal account. Inactive, on-leave,
+                          unreliable, applicant and incomplete records stay profile-only. Every Airtable status and source
+                          record ID is preserved for job matching and audit.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-black text-slate-950 dark:text-white">Account activation</p>
+                        <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          {communicationMode === 'LIVE'
+                            ? 'External delivery is enabled.'
+                            : `Disabled in ${communicationMode} mode. No email can be sent.`}
+                        </p>
+                      </div>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-black ${
+                        communicationMode === 'LIVE'
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                      }`}>
+                        {communicationMode}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleSendInvites}
+                      disabled={interpreterLoading || communicationMode !== 'LIVE'}
+                      title={communicationMode === 'LIVE' ? 'Process activation emails' : 'Activation emails are disabled by Platform Mode'}
+                      className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <Mail size={16} />
+                      {communicationMode === 'LIVE' ? 'Process activation emails' : 'Activation emails disabled'}
+                    </button>
                   </div>
                 </div>
 
@@ -2277,9 +2519,13 @@ export const AdminMigration = () => {
                   <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                     {migrationResult && (
                       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">Import results</p>
-                        <div className="mt-3 grid grid-cols-3 gap-3">
+                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">Directory sync results</p>
+                        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
                           <StatPill label="Created" value={migrationResult.created} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
+                          <StatPill label="Updated" value={migrationResult.updated} />
+                          <StatPill label="Profile only" value={migrationResult.profileOnly} />
+                          <StatPill label="Accounts created" value={migrationResult.usersCreated} />
+                          <StatPill label="Account conflicts" value={migrationResult.accountConflicts} className={migrationResult.accountConflicts ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200' : ''} />
                           <StatPill label="Skipped" value={migrationResult.skipped} />
                           <StatPill label="Errors" value={migrationResult.errors} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
                         </div>
@@ -2689,7 +2935,21 @@ export const AdminMigration = () => {
                           <p className="truncate font-black text-slate-800 dark:text-slate-100">{safeInlineText(conflict.reason, 'UNCLASSIFIED')}</p>
                           <p className="truncate text-xs text-slate-500">{safeInlineText(conflict.entityType, 'entity')} · {conflict.lastSeenAt ? formatDateTime(conflict.lastSeenAt) : 'No timestamp'}</p>
                         </div>
-                        <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">{safeInlineText(conflict.recommendedAction, 'Review source record and rerun sync.')}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">
+                            {safeInlineText(conflict.recommendedAction, 'Review source record and rerun sync.')}
+                          </p>
+                          {isSuperAdmin && getProfessionalIdentityEvidence(conflict) && (
+                            <button
+                              type="button"
+                              onClick={() => openProfessionalIdentityMapping(conflict)}
+                              className="mt-2 inline-flex h-8 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-black text-blue-700 hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-950/70"
+                            >
+                              <UserCog size={14} />
+                              Resolve identity
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )) : (
                       <div className="p-6 text-sm font-semibold text-slate-500 dark:text-slate-400">
@@ -2771,6 +3031,157 @@ export const AdminMigration = () => {
           </main>
         </div>
       </div>
+
+      {professionalMappingConflict && professionalMappingEvidence && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) closeProfessionalIdentityMapping();
+          }}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="professional-identity-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-wider text-blue-700 dark:text-blue-300">
+                  Reviewed professional identity
+                </p>
+                <h2 id="professional-identity-title" className="mt-1 text-lg font-black text-slate-950 dark:text-white">
+                  Link Airtable professional to one platform profile
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  {safeInlineText(professionalMappingConflict.legacyRef)} · {professionalMappingEvidence.professionalRecordId}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeProfessionalIdentityMapping}
+                disabled={professionalMappingLoading}
+                aria-label="Close professional identity review"
+                title="Close"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              <div className="grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800 sm:grid-cols-3">
+                {[
+                  ['Airtable name', professionalMappingEvidence.name],
+                  ['Email', professionalMappingEvidence.email],
+                  ['Phone', professionalMappingEvidence.phone],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0 bg-slate-50 px-3 py-3 dark:bg-slate-950">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</p>
+                    <p className="mt-1 truncate text-sm font-black text-slate-900 dark:text-white">{value || 'Not provided'}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <label htmlFor="professional-directory-search" className="text-xs font-black uppercase tracking-wider text-slate-500">
+                  Find platform profile
+                </label>
+                <div className="relative mt-2">
+                  <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="professional-directory-search"
+                    value={professionalSearch}
+                    onChange={event => setProfessionalSearch(event.target.value)}
+                    placeholder="Search name, email, phone, language or profile ID"
+                    className="h-11 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                {professionalMappingLoading && !professionalDirectory.length ? (
+                  <div className="flex h-28 items-center justify-center gap-2 text-sm font-semibold text-slate-500">
+                    <Loader2 size={17} className="animate-spin" /> Loading professional profiles...
+                  </div>
+                ) : visibleProfessionals.length ? (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {visibleProfessionals.map(interpreter => (
+                      <label
+                        key={interpreter.id}
+                        className={`flex cursor-pointer items-center gap-3 px-3 py-3 transition-colors ${
+                          selectedProfessionalId === interpreter.id
+                            ? 'bg-blue-50 dark:bg-blue-950/30'
+                            : 'bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="professional-identity-target"
+                          checked={selectedProfessionalId === interpreter.id}
+                          onChange={() => setSelectedProfessionalId(interpreter.id)}
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-black text-slate-950 dark:text-white">{interpreter.name}</p>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              {interpreter.status}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">
+                            {[interpreter.email, interpreter.phone, ...(interpreter.languages || []).slice(0, 3)].filter(Boolean).join(' · ') || interpreter.id}
+                          </p>
+                        </div>
+                        <span className="hidden text-[10px] font-black text-slate-400 md:block">{interpreter.id}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-5 text-sm font-semibold text-slate-500">
+                    No professional profile matches this search.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="professional-mapping-reason" className="text-xs font-black uppercase tracking-wider text-slate-500">
+                  Audit reason
+                </label>
+                <textarea
+                  id="professional-mapping-reason"
+                  value={professionalMappingReason}
+                  onChange={event => setProfessionalMappingReason(event.target.value)}
+                  className="mt-2 min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  This writes only to the platform audit trail. Airtable remains read-only.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeProfessionalIdentityMapping}
+                disabled={professionalMappingLoading}
+                className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveProfessionalIdentityMapping}
+                disabled={professionalMappingLoading || !selectedProfessionalId || professionalMappingReason.trim().length < 8}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-black text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {professionalMappingLoading && <Loader2 size={16} className="animate-spin" />}
+                Confirm identity link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {crmMappingLedgerOpen && (
         <div

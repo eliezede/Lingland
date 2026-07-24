@@ -34,6 +34,7 @@ import {
   AIRTABLE_SYNC_MAPPING_VERSION,
   validateSyncWriteApproval,
 } from './syncWriteApproval';
+import { validateProfessionalIdentityLinkRequest } from './professionalIdentityLinkPolicy';
 import {
   buildClientBookProjection,
   CLIENT_BOOK_PROJECTION_VERSION,
@@ -100,6 +101,7 @@ type AirtableFetchOptions = {
 const db = admin.firestore();
 const DEFAULT_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
 const DEFAULT_TABLE_NAME = 'REDBOOK';
+const INTERPRETERS_TABLE = 'Interpreters';
 const CLIENTS_TABLE = 'Clients';
 const CLIENTS_BOOK_TABLE = 'Clients Book';
 const DEPARTMENTS_TABLE = 'Departments';
@@ -7119,6 +7121,116 @@ export const syncAirtableData = functions.runWith({
     }
     throw error;
   }
+});
+
+export const linkAirtableProfessionalIdentity = functions.runWith({
+  timeoutSeconds: 60,
+  memory: '256MB',
+}).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context);
+  let request;
+  try {
+    request = validateProfessionalIdentityLinkRequest(data, actor.role);
+  } catch (error) {
+    throw new functions.https.HttpsError(
+      actor.role === 'SUPER_ADMIN' ? 'invalid-argument' : 'permission-denied',
+      error instanceof Error ? error.message : 'Invalid professional identity mapping.',
+    );
+  }
+
+  const targetRef = db.collection('interpreters').doc(request.interpreterId);
+  const mappingRef = db.collection('professionalIdentityMappings')
+    .doc(`airtable_professional_identity_${request.professionalRecordId}`);
+  const [targetSnapshot, directMatches, linkedMatches, existingMapping] = await Promise.all([
+    targetRef.get(),
+    db.collection('interpreters')
+      .where('sourceRecordId', '==', request.professionalRecordId)
+      .limit(3)
+      .get(),
+    db.collection('interpreters')
+      .where('airtableRecordIds', 'array-contains', request.professionalRecordId)
+      .limit(3)
+      .get(),
+    mappingRef.get(),
+  ]);
+
+  if (!targetSnapshot.exists) {
+    throw new functions.https.HttpsError('not-found', 'The selected interpreter profile no longer exists.');
+  }
+
+  const conflictingProfileIds = Array.from(new Set(
+    [...directMatches.docs, ...linkedMatches.docs]
+      .map(profile => profile.id)
+      .filter(profileId => profileId !== request.interpreterId),
+  ));
+  if (conflictingProfileIds.length > 0) {
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'This Airtable professional identity is already linked to another profile.',
+      { conflictingProfileIds },
+    );
+  }
+
+  const existingData = existingMapping.data();
+  if (
+    existingMapping.exists
+    && existingData?.active !== false
+    && normalize(existingData?.interpreterId) !== request.interpreterId
+  ) {
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'This Airtable professional identity already has an active reviewed mapping.',
+      { conflictingProfileIds: [normalize(existingData?.interpreterId)].filter(Boolean) },
+    );
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+  const targetUpdate: admin.firestore.DocumentData = {
+    airtableRecordIds: admin.firestore.FieldValue.arrayUnion(request.professionalRecordId),
+    professionalIdentityConfirmedAt: now,
+    professionalIdentityConfirmedBy: actor.uid,
+    professionalIdentityReason: request.reason,
+    updatedAt: now,
+  };
+  if (request.sourceName) {
+    targetUpdate.identityAliases = admin.firestore.FieldValue.arrayUnion(request.sourceName);
+  }
+  batch.set(targetRef, targetUpdate, { merge: true });
+  batch.set(mappingRef, {
+    id: mappingRef.id,
+    sourceSystem: 'AIRTABLE',
+    sourceBaseId: DEFAULT_BASE_ID,
+    sourceTable: INTERPRETERS_TABLE,
+    professionalRecordId: request.professionalRecordId,
+    sourceName: request.sourceName,
+    interpreterId: request.interpreterId,
+    interpreterName: normalize(targetSnapshot.data()?.name),
+    reason: request.reason,
+    active: true,
+    mappedBy: actor.uid,
+    mappedAt: now,
+    updatedAt: now,
+    createdAt: existingMapping.exists ? existingData?.createdAt || now : now,
+  }, { merge: true });
+  batch.set(db.collection('auditLogs').doc(), {
+    action: 'AIRTABLE_PROFESSIONAL_IDENTITY_LINKED',
+    actorUserId: actor.uid,
+    professionalRecordId: request.professionalRecordId,
+    interpreterId: request.interpreterId,
+    sourceName: request.sourceName,
+    reason: request.reason,
+    createdAt: now,
+  });
+  await batch.commit();
+
+  return {
+    success: true,
+    mappingId: mappingRef.id,
+    professionalRecordId: request.professionalRecordId,
+    interpreterId: request.interpreterId,
+    requiresResync: true,
+  };
 });
 
 export const syncAirtableMaintenance = functions.runWith({

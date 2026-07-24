@@ -139,6 +139,21 @@ export type AirtableSyncConflict = {
   lastSeenAt?: string;
 };
 
+export type AirtableProfessionalIdentityLinkRequest = {
+  professionalRecordId: string;
+  interpreterId: string;
+  sourceName: string;
+  reason: string;
+};
+
+export type AirtableProfessionalIdentityLinkResult = {
+  success: boolean;
+  mappingId: string;
+  professionalRecordId: string;
+  interpreterId: string;
+  requiresResync: boolean;
+};
+
 export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
 
 export type AirtableClientIdentityMappingRequest = {
@@ -405,6 +420,18 @@ export const AirtableSyncService = {
     const syncFn = httpsCallable(functions, 'syncAirtableData', LONG_CALLABLE_OPTIONS);
     const response = await syncFn({ dryRun, modules, limitRecords, syncStrategy, expectedDryRunId });
     return response.data as AirtableSyncResult;
+  },
+
+  linkProfessionalIdentity: async (
+    request: AirtableProfessionalIdentityLinkRequest,
+  ): Promise<AirtableProfessionalIdentityLinkResult> => {
+    const linkFn = httpsCallable(
+      functions,
+      'linkAirtableProfessionalIdentity',
+      LONG_CALLABLE_OPTIONS,
+    );
+    const response = await linkFn(request);
+    return response.data as AirtableProfessionalIdentityLinkResult;
   },
 
   saveClientIdentityMapping: async (
