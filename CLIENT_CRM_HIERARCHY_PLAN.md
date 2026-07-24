@@ -230,6 +230,17 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - Validation evidence: 36 frontend test files and 207 tests passed, the frontend typecheck/production bundle and Functions TypeScript build passed, and `git diff --check` reported no whitespace errors.
 - Production effects were limited to the 24 audited Firestore identity mappings. No Airtable record, client merge, Client Write Sync, finance document, email, notification policy, or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, and communication `SUPPRESSED`.
 
+### Alpha Plus and Priory identity batches - 24 July 2026
+
+- The Alpha Plus review used the official Airtable `Clients` account `rec3dPXLbBq4Xmi4R` as the account anchor. It provides Sage reference `ALP001`, invoice email `office@alphapluslanguages.co.uk`, Jamie Robertson and the Stogumber billing address.
+- The unresolved `Clients Book` scopes `AlphaPlus` and `AlphaPlus Languages` were mapped to `airtable_client_alp001`. Supporting source rows `rec5RqMUkXEyo6ZAB`, `recIyEEipMQqG13t6` and `recOUIrxLzNS1EFcS` share the account mailbox and phone, while the latter also names Miriam Robertson in the same organisation family.
+- `Wiltshire County Council` row `recCF1dfW7wHEPBU2` was deliberately excluded. Its organisation identity contradicts the Alpha Plus account name, so a shared email address alone was not accepted as sufficient evidence.
+- The fresh Full Audit before Alpha Plus reported 82 blocked source rows across 79 unique decisions. The authoritative after-run reported 80 blocked rows, 77 decisions and 0 errors. Both reviewed scopes disappeared from the organisation-review queue.
+- The Priory review used official Airtable `Clients` account `reccUX45YPOC7ucZP` as the account anchor. It provides Sage reference `PRIORYHO`, the Hythe Road, Marchwood address and the reviewed invoice contacts.
+- The unresolved scopes `Marchwood Priory Hospital` and `Priory Hospitals` were mapped to `airtable_client_prioryho`. Source rows `recw15PLe1OBedh8x` and `recyseIkNwbFIn4oh` use the `priorygroup.com` organisation domain and align with the Marchwood/Sandpiper location evidence already present in the canonical Priory hierarchy.
+- The fresh Full Audit after Priory reported 6 creates, 412 updates, 78 conflicts, 0 errors and 75 remaining review decisions. This is an exact reduction of 2 blocked rows and 2 decisions from the Alpha Plus checkpoint; filtering the organisation-review queue for Priory returned 0 visible results.
+- Both batches used the guarded manual-batch callable and stored auditable Firestore mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, communication `SUPPRESSED`, and Write Sync remains server-locked by the 78 unresolved source rows.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
