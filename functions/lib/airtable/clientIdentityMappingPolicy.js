@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateClientIdentityManualReviewRun = exports.validateClientIdentityRecommendationRun = exports.validateClientIdentityManualMappingBatch = exports.validateClientIdentityMappingBatch = exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS = exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = void 0;
+exports.validateClientIdentityPendingCanonicalTarget = exports.validateClientIdentityManualReviewRun = exports.validateClientIdentityRecommendationRun = exports.validateClientIdentityPendingCanonicalApproval = exports.validateClientIdentityManualMappingBatch = exports.validateClientIdentityMappingBatch = exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS = exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = void 0;
 const ALLOWED_SOURCE_TABLES = new Set(['Clients', 'Clients Book', 'Departments']);
 const MANUAL_BATCH_SOURCE_TABLES = new Set(['Clients Book', 'Departments']);
 exports.MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = 25;
@@ -101,23 +101,47 @@ const validateClientIdentityManualMappingBatch = (input, actorRole, confirmed) =
     });
 };
 exports.validateClientIdentityManualMappingBatch = validateClientIdentityManualMappingBatch;
-const validateClientIdentityRecommendationRun = (run, mappings, actorId, expectedMappingVersion, nowMs = Date.now()) => {
-    if (!run)
-        return { ok: false, reason: 'RECOMMENDATION_RUN_NOT_FOUND' };
-    if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
-        return { ok: false, reason: 'RECOMMENDATION_RUN_INVALID' };
+const validateClientIdentityPendingCanonicalApproval = (target, approval) => {
+    if (!approval)
+        return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_FOUND' };
+    if (text(approval.status).toUpperCase() !== 'ACTIVE') {
+        return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_ACTIVE' };
     }
-    if (run.mappingVersion !== expectedMappingVersion)
-        return { ok: false, reason: 'RECOMMENDATION_CONTRACT_CHANGED' };
+    if (text(approval.action).toUpperCase() !== 'APPROVE_NEW_CLIENT') {
+        return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_ACTION_CHANGED' };
+    }
+    if (text(approval.canonicalClientId) !== target.clientId
+        || text(approval.sourceTable) !== target.sourceTable
+        || text(approval.groupKey).toLowerCase() !== target.groupKey.toLowerCase()) {
+        return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_EVIDENCE_CHANGED' };
+    }
+    return { ok: true };
+};
+exports.validateClientIdentityPendingCanonicalApproval = validateClientIdentityPendingCanonicalApproval;
+const validateReviewRunEnvelope = (run, actorId, expectedMappingVersion, nowMs, reasonPrefix) => {
+    if (!run)
+        return { ok: false, reason: `${reasonPrefix}_RUN_NOT_FOUND` };
+    if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
+        return { ok: false, reason: `${reasonPrefix}_RUN_INVALID` };
+    }
+    if (run.mappingVersion !== expectedMappingVersion) {
+        return { ok: false, reason: `${reasonPrefix}_CONTRACT_CHANGED` };
+    }
     if (run.userId !== actorId)
-        return { ok: false, reason: 'RECOMMENDATION_ACTOR_CHANGED' };
+        return { ok: false, reason: `${reasonPrefix}_ACTOR_CHANGED` };
     const finishedAtMs = typeof run.finishedAt === 'string' ? Date.parse(run.finishedAt) : Number.NaN;
     if (!Number.isFinite(finishedAtMs) || finishedAtMs > nowMs + 60000) {
-        return { ok: false, reason: 'RECOMMENDATION_RUN_TIME_INVALID' };
+        return { ok: false, reason: `${reasonPrefix}_RUN_TIME_INVALID` };
     }
     if (nowMs - finishedAtMs > exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS) {
-        return { ok: false, reason: 'RECOMMENDATION_RUN_EXPIRED' };
+        return { ok: false, reason: `${reasonPrefix}_RUN_EXPIRED` };
     }
+    return { ok: true };
+};
+const validateClientIdentityRecommendationRun = (run, mappings, actorId, expectedMappingVersion, nowMs = Date.now()) => {
+    const envelope = validateReviewRunEnvelope(run, actorId, expectedMappingVersion, nowMs, 'RECOMMENDATION');
+    if (!envelope.ok)
+        return envelope;
     const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
     const clientModule = moduleResults.find(raw => (raw && typeof raw === 'object' && raw.module === 'clients'));
     const diagnostics = clientModule?.diagnostics;
@@ -144,22 +168,9 @@ const validateClientIdentityRecommendationRun = (run, mappings, actorId, expecte
 };
 exports.validateClientIdentityRecommendationRun = validateClientIdentityRecommendationRun;
 const validateClientIdentityManualReviewRun = (run, mappings, actorId, expectedMappingVersion, nowMs = Date.now()) => {
-    if (!run)
-        return { ok: false, reason: 'REVIEW_RUN_NOT_FOUND' };
-    if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
-        return { ok: false, reason: 'REVIEW_RUN_INVALID' };
-    }
-    if (run.mappingVersion !== expectedMappingVersion)
-        return { ok: false, reason: 'REVIEW_CONTRACT_CHANGED' };
-    if (run.userId !== actorId)
-        return { ok: false, reason: 'REVIEW_ACTOR_CHANGED' };
-    const finishedAtMs = typeof run.finishedAt === 'string' ? Date.parse(run.finishedAt) : Number.NaN;
-    if (!Number.isFinite(finishedAtMs) || finishedAtMs > nowMs + 60000) {
-        return { ok: false, reason: 'REVIEW_RUN_TIME_INVALID' };
-    }
-    if (nowMs - finishedAtMs > exports.CLIENT_IDENTITY_RECOMMENDATION_TTL_MS) {
-        return { ok: false, reason: 'REVIEW_RUN_EXPIRED' };
-    }
+    const envelope = validateReviewRunEnvelope(run, actorId, expectedMappingVersion, nowMs, 'REVIEW');
+    if (!envelope.ok)
+        return envelope;
     const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
     const clientModule = moduleResults.find(raw => (raw && typeof raw === 'object' && raw.module === 'clients'));
     const diagnostics = clientModule?.diagnostics;
@@ -190,4 +201,44 @@ const validateClientIdentityManualReviewRun = (run, mappings, actorId, expectedM
     return { ok: true };
 };
 exports.validateClientIdentityManualReviewRun = validateClientIdentityManualReviewRun;
+const validateClientIdentityPendingCanonicalTarget = (run, canonicalClientId, actorId, expectedMappingVersion, nowMs = Date.now()) => {
+    const envelope = validateReviewRunEnvelope(run, actorId, expectedMappingVersion, nowMs, 'REVIEW');
+    if (!envelope.ok)
+        return envelope;
+    const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
+    const clientModule = moduleResults.find(raw => (raw && typeof raw === 'object' && raw.module === 'clients'));
+    const diagnostics = clientModule?.diagnostics;
+    const canonicalAccounts = diagnostics?.canonicalAccounts;
+    const pendingTargets = Array.isArray(canonicalAccounts?.approvedPendingCanonicalAccounts)
+        ? canonicalAccounts.approvedPendingCanonicalAccounts
+        : [];
+    const requestedId = text(canonicalClientId);
+    const rawTarget = pendingTargets.find(candidate => text(candidate.clientId) === requestedId);
+    if (!rawTarget)
+        return { ok: false, reason: 'PENDING_CANONICAL_TARGET_NOT_APPROVED_IN_RUN' };
+    const sourceTable = text(rawTarget.sourceTable);
+    const sourceRecordId = text(rawTarget.sourceRecordId);
+    const groupKey = text(rawTarget.groupKey);
+    const clientId = text(rawTarget.clientId);
+    const companyName = text(rawTarget.companyName);
+    if (sourceTable !== 'Clients'
+        || !sourceRecordId
+        || !groupKey
+        || !clientId
+        || !companyName) {
+        return { ok: false, reason: 'PENDING_CANONICAL_TARGET_EVIDENCE_INVALID' };
+    }
+    return {
+        ok: true,
+        target: {
+            sourceTable: 'Clients',
+            sourceRecordId,
+            groupKey,
+            clientId,
+            companyName,
+            sageAccountRef: text(rawTarget.sageAccountRef) || undefined,
+        },
+    };
+};
+exports.validateClientIdentityPendingCanonicalTarget = validateClientIdentityPendingCanonicalTarget;
 //# sourceMappingURL=clientIdentityMappingPolicy.js.map

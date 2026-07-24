@@ -50,6 +50,8 @@ import {
   validateClientIdentityMappingBatch,
   validateClientIdentityManualMappingBatch,
   validateClientIdentityManualReviewRun,
+  validateClientIdentityPendingCanonicalApproval,
+  validateClientIdentityPendingCanonicalTarget,
   validateClientIdentityRecommendationRun,
 } from './clientIdentityMappingPolicy';
 import { writeAuditEvent } from '../audit/auditWriter';
@@ -1318,6 +1320,7 @@ const resolveClientBookGroup = async (
   sources: ClientBookSourceRecord[],
   canonicalAccountIndex: Map<string, CanonicalAirtableClientAccount[]>,
   identityMappings: Map<string, ClientIdentityMapping>,
+  approvedPendingCanonicalAccounts: Map<string, CanonicalAirtableClientAccount>,
 ) => {
   const representative = sources[0];
   const groupKey = clientBookGroupKey(representative);
@@ -1334,6 +1337,16 @@ const resolveClientBookGroup = async (
     };
   }
   if (identityMapping?.action === 'MAP_TO_CLIENT') {
+    const pendingCanonical = approvedPendingCanonicalAccounts.get(identityMapping.canonicalClientId);
+    if (pendingCanonical) {
+      return {
+        canonicalClientId: pendingCanonical.clientId,
+        canonicalCompanyName: pendingCanonical.companyName
+          || identityMapping.canonicalCompanyName
+          || representative.companyName,
+        method: 'MANUAL_IDENTITY_MAPPING' as const,
+      };
+    }
     const mappedSnapshot = await db.collection('clients').doc(identityMapping.canonicalClientId).get();
     if (mappedSnapshot.exists) {
       const canonical = await canonicalClientDocument(mappedSnapshot);
@@ -2611,6 +2624,14 @@ const syncClients = async (
   const clientIdBySourceRecordId = new Map<string, string>();
   const clientNameBySourceRecordId = new Map<string, string>();
   const wouldCreateCanonicalAccounts: Array<Record<string, unknown>> = [];
+  const approvedPendingCanonicalAccounts: Array<{
+    sourceTable: 'Clients';
+    sourceRecordId: string;
+    groupKey: string;
+    clientId: string;
+    companyName: string;
+    sageAccountRef: string;
+  }> = [];
   const canonicalAccounts: CanonicalAirtableClientAccount[] = [];
   const plannedCreatedClientIds = new Set<string>();
 
@@ -2666,6 +2687,15 @@ const syncClients = async (
             sageAccountRef: mapped.identity.sageAccountRef,
             groupKey,
           });
+        } else if (tableName === CLIENTS_TABLE && mapping.canonicalClientId === clientRef.id) {
+          approvedPendingCanonicalAccounts.push({
+            sourceTable: CLIENTS_TABLE,
+            sourceRecordId: record.id,
+            groupKey,
+            clientId: clientRef.id,
+            companyName: mapping.canonicalCompanyName || mapped.identity.companyName,
+            sageAccountRef: mapped.identity.sageAccountRef,
+          });
         }
       }
 
@@ -2705,6 +2735,15 @@ const syncClients = async (
     }
   });
 
+  const approvedPendingCanonicalAccountIds = new Set(
+    approvedPendingCanonicalAccounts.map(account => account.clientId),
+  );
+  const approvedPendingCanonicalAccountsById = new Map(
+    canonicalAccounts
+      .filter(account => approvedPendingCanonicalAccountIds.has(account.clientId))
+      .map(account => [account.clientId, account] as const),
+  );
+
   return {
     stats,
     details,
@@ -2713,8 +2752,12 @@ const syncClients = async (
     canonicalAccounts: canonicalAccounts
       .sort((left, right) => left.companyName.localeCompare(right.companyName)),
     plannedCreatedClientIds,
+    approvedPendingCanonicalAccountsById,
     diagnostics: {
       sourceRecords: records.length,
+      approvedPendingCanonicalAccounts: Array.from(new Map(
+        approvedPendingCanonicalAccounts.map(account => [account.clientId, account] as const),
+      ).values()).sort((left, right) => left.companyName.localeCompare(right.companyName)),
       wouldCreateCanonicalAccounts: wouldCreateCanonicalAccounts
         .sort((left, right) => String(left.companyName).localeCompare(String(right.companyName))),
       writeReadiness: {
@@ -2735,6 +2778,7 @@ const syncClientBookHierarchy = async (
   clientNameBySourceRecordId: Map<string, string>,
   canonicalAccounts: CanonicalAirtableClientAccount[],
   plannedCreatedClientIds: Set<string>,
+  approvedPendingCanonicalAccountsById: Map<string, CanonicalAirtableClientAccount>,
   mode: SyncMode,
   runId?: string,
   conflictContext?: ConflictReconciliationContext,
@@ -2778,7 +2822,12 @@ const syncClientBookHierarchy = async (
   };
 
   await processWithConcurrency(Array.from(groupedSources.values()), CLIENT_PROCESS_CONCURRENCY, async group => {
-    const result = await resolveClientBookGroup(group, canonicalAccountIndex, identityMappings);
+    const result = await resolveClientBookGroup(
+      group,
+      canonicalAccountIndex,
+      identityMappings,
+      approvedPendingCanonicalAccountsById,
+    );
     if (result.conflict) {
       const conflict: ClientBookResolutionConflict = {
         ...result.conflict,
@@ -2817,7 +2866,10 @@ const syncClientBookHierarchy = async (
     if (
       candidateClientIds.length !== 1
       && departmentMapping?.action === 'MAP_TO_CLIENT'
-      && platformClientNames.has(departmentMapping.canonicalClientId)
+      && (
+        platformClientNames.has(departmentMapping.canonicalClientId)
+        || approvedPendingCanonicalAccountsById.has(departmentMapping.canonicalClientId)
+      )
     ) {
       candidateClientIds = [departmentMapping.canonicalClientId];
     }
@@ -2835,7 +2887,9 @@ const syncClientBookHierarchy = async (
         ),
         candidateClientIds,
         recommendation: recommendClientBookCanonicalAccount([departmentSource], reviewableCanonicalAccounts) || undefined,
-        reason: departmentMapping && !platformClientNames.has(departmentMapping.canonicalClientId)
+        reason: departmentMapping
+          && !platformClientNames.has(departmentMapping.canonicalClientId)
+          && !approvedPendingCanonicalAccountsById.has(departmentMapping.canonicalClientId)
           ? 'MAPPED_CANONICAL_CLIENT_NOT_FOUND'
           : candidateClientIds.length > 1
           ? 'DEPARTMENT_CLIENT_AMBIGUOUS'
@@ -2848,6 +2902,7 @@ const syncClientBookHierarchy = async (
       clientIdBySourceRecordId.get(sourceRecordId) === canonicalClientId
     ));
     const canonicalCompanyName = platformClientNames.get(canonicalClientId)
+      || approvedPendingCanonicalAccountsById.get(canonicalClientId)?.companyName
       || (linkedSourceId && clientNameBySourceRecordId.get(linkedSourceId))
       || departmentMapping?.canonicalCompanyName
       || 'Client';
@@ -5395,6 +5450,7 @@ const syncAirtableOperations = async (mode: SyncMode, modules: AirtableSyncModul
       clientsResult.clientNameBySourceRecordId,
       clientsResult.canonicalAccounts,
       clientsResult.plannedCreatedClientIds,
+      clientsResult.approvedPendingCanonicalAccountsById,
       effectiveMode,
       runRef.id,
       conflictContext,
@@ -5760,6 +5816,91 @@ export const getAirtableSyncAuditTrail = functions.runWith({
   };
 });
 
+type AuditedClientIdentityTarget = {
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+  targetState: 'EXISTING' | 'PENDING_APPROVED';
+  targetApprovalMappingId?: string;
+  reviewRunId?: string;
+};
+
+const resolveAuditedClientIdentityTarget = async (
+  requestedClientId: string,
+  requestedCompanyName: string,
+  actorId: string,
+  syncRunId?: string,
+  suppliedRun?: Record<string, unknown> | null,
+): Promise<AuditedClientIdentityTarget> => {
+  const selected = await db.collection('clients').doc(requestedClientId).get();
+  if (selected.exists) {
+    const canonical = await canonicalClientDocument(selected);
+    const state = normalize(canonical.data()?.recordState).toUpperCase();
+    if (!canonical.exists || state === 'ARCHIVED') {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'The selected client is archived or unavailable.',
+      );
+    }
+    return {
+      canonicalClientId: canonical.id,
+      canonicalCompanyName: normalize(canonical.data()?.companyName)
+        || requestedCompanyName
+        || canonical.id,
+      targetState: 'EXISTING',
+    };
+  }
+
+  const reviewRunId = normalize(syncRunId);
+  if (!reviewRunId) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'This client does not exist yet. Run a fresh Clients Dry Run and select an approved pending account.',
+    );
+  }
+  let run = suppliedRun;
+  if (!run) {
+    const runSnapshot = await db.collection('syncRuns').doc(reviewRunId).get();
+    run = runSnapshot.exists ? cleanReportData(runSnapshot.data() || {}) : null;
+  }
+  const targetValidation = validateClientIdentityPendingCanonicalTarget(
+    run,
+    requestedClientId,
+    actorId,
+    AIRTABLE_SYNC_MAPPING_VERSION,
+  );
+  if (!targetValidation.ok) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `The pending canonical account is not safely approved in this review (${targetValidation.reason}). Run a fresh Clients Dry Run.`,
+    );
+  }
+
+  const target = targetValidation.target;
+  const approvalMappingId = clientIdentityMappingId(target.sourceTable, target.groupKey);
+  const approvalSnapshot = await db.collection('airtableClientIdentityMappings').doc(approvalMappingId).get();
+  const approval = approvalSnapshot.data() || {};
+  const approvalValidation = validateClientIdentityPendingCanonicalApproval(
+    target,
+    approvalSnapshot.exists ? approval : null,
+  );
+  if (!approvalValidation.ok) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `The official account approval changed after the Dry Run (${approvalValidation.reason}). Run a fresh Clients Dry Run.`,
+    );
+  }
+
+  return {
+    canonicalClientId: target.clientId,
+    canonicalCompanyName: normalize(approval.canonicalCompanyName)
+      || target.companyName
+      || requestedCompanyName,
+    targetState: 'PENDING_APPROVED',
+    targetApprovalMappingId: approvalMappingId,
+    reviewRunId,
+  };
+};
+
 export const saveAirtableClientIdentityMapping = functions.runWith({
   timeoutSeconds: 60,
   memory: '256MB',
@@ -5789,19 +5930,24 @@ export const saveAirtableClientIdentityMapping = functions.runWith({
 
   let canonicalClientId = requestedClientId;
   let canonicalCompanyName = requestedCompanyName;
+  let targetState: AuditedClientIdentityTarget['targetState'] | undefined;
+  let targetApprovalMappingId = '';
+  let reviewRunId = '';
   if (action === 'MAP_TO_CLIENT') {
     if (!canonicalClientId) {
       throw new functions.https.HttpsError('invalid-argument', 'Select the canonical Client CRM organisation.');
     }
-    const selected = await db.collection('clients').doc(canonicalClientId).get();
-    if (!selected.exists) throw new functions.https.HttpsError('not-found', 'The selected client no longer exists.');
-    const canonical = await canonicalClientDocument(selected);
-    const state = normalize(canonical.data()?.recordState).toUpperCase();
-    if (!canonical.exists || state === 'ARCHIVED') {
-      throw new functions.https.HttpsError('failed-precondition', 'The selected client is archived or unavailable.');
-    }
-    canonicalClientId = canonical.id;
-    canonicalCompanyName = normalize(canonical.data()?.companyName) || canonicalCompanyName;
+    const target = await resolveAuditedClientIdentityTarget(
+      canonicalClientId,
+      canonicalCompanyName,
+      actor.uid,
+      normalize(data?.syncRunId),
+    );
+    canonicalClientId = target.canonicalClientId;
+    canonicalCompanyName = target.canonicalCompanyName;
+    targetState = target.targetState;
+    targetApprovalMappingId = target.targetApprovalMappingId || '';
+    reviewRunId = target.reviewRunId || '';
   } else {
     canonicalClientId = `airtable_client_${slugify(groupKey)}`;
     canonicalCompanyName = canonicalCompanyName || normalize(data?.sourceName);
@@ -5831,6 +5977,11 @@ export const saveAirtableClientIdentityMapping = functions.runWith({
     action,
     canonicalClientId,
     canonicalCompanyName,
+    canonicalTargetState: action === 'APPROVE_NEW_CLIENT' ? 'PENDING_APPROVED' : targetState,
+    canonicalTargetApprovalMappingId: action === 'APPROVE_NEW_CLIENT'
+      ? mappingId
+      : targetApprovalMappingId,
+    reviewRunId,
     status: 'ACTIVE',
     reason: normalize(data?.reason) || 'Reviewed in Airtable Sync Center',
     approvedBy: actor.uid,
@@ -5851,7 +6002,7 @@ export const saveAirtableClientIdentityMapping = functions.runWith({
     actorRole: actor.role,
     source: 'AIRTABLE_SYNC_CENTER',
     communicationMode: normalize(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED').toUpperCase(),
-    syncRunId: '',
+    syncRunId: reviewRunId,
     changedFields: ['action', 'canonicalClientId', 'canonicalCompanyName', 'status'],
     before: before.exists ? cleanReportData(before.data() || {}) : null,
     after: cleanReportData(mapping),
@@ -6032,8 +6183,9 @@ export const saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
     );
   }
   const syncRun = await db.collection('syncRuns').doc(syncRunId).get();
+  const syncRunData = syncRun.exists ? cleanReportData(syncRun.data() || {}) : null;
   const runValidation = validateClientIdentityManualReviewRun(
-    syncRun.exists ? cleanReportData(syncRun.data() || {}) : null,
+    syncRunData,
     requests,
     actor.uid,
     AIRTABLE_SYNC_MAPPING_VERSION,
@@ -6045,21 +6197,14 @@ export const saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
     );
   }
 
-  const requestedClient = await db.collection('clients').doc(requests[0].canonicalClientId).get();
-  if (!requestedClient.exists) {
-    throw new functions.https.HttpsError('not-found', 'The selected canonical client no longer exists.');
-  }
-  const canonical = await canonicalClientDocument(requestedClient);
-  const canonicalState = normalize(canonical.data()?.recordState).toUpperCase();
-  if (!canonical.exists || canonicalState === 'ARCHIVED') {
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      'The selected canonical client is archived or unavailable.',
-    );
-  }
-  const canonicalCompanyName = normalize(canonical.data()?.companyName)
-    || normalize(requests[0].canonicalCompanyName)
-    || canonical.id;
+  const target = await resolveAuditedClientIdentityTarget(
+    requests[0].canonicalClientId,
+    normalize(requests[0].canonicalCompanyName),
+    actor.uid,
+    syncRunId,
+    syncRunData,
+  );
+  const canonicalCompanyName = target.canonicalCompanyName;
 
   const prepared = await Promise.all(requests.map(async request => {
     const sourceTable = normalize(request.sourceTable);
@@ -6082,8 +6227,10 @@ export const saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
       groupKey,
       sourceNames: uniqueValues(...request.sourceNames.map(normalize)),
       action: 'MAP_TO_CLIENT' as const,
-      canonicalClientId: canonical.id,
+      canonicalClientId: target.canonicalClientId,
       canonicalCompanyName,
+      canonicalTargetState: target.targetState,
+      canonicalTargetApprovalMappingId: target.targetApprovalMappingId || '',
       status: 'ACTIVE',
       reason: normalize(request.reason) || 'Manually mapped in an audited Airtable Sync Center batch',
       recommendationConfidence: 'MANUAL',
@@ -6144,13 +6291,13 @@ export const saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
     success: true,
     saved: prepared.length,
     reviewRunId: syncRunId,
-    canonicalClientId: canonical.id,
+    canonicalClientId: target.canonicalClientId,
     canonicalCompanyName,
     mappings: prepared.map(item => ({
       mappingId: item.mappingId,
       sourceTable: item.mapping.sourceTable,
       groupKey: item.mapping.groupKey,
-      canonicalClientId: canonical.id,
+      canonicalClientId: target.canonicalClientId,
       canonicalCompanyName,
     })),
   };

@@ -296,6 +296,18 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - `AHMP Service` record `recuqoEWse13nIfe7` was treated as a transposed AMHP acronym and mapped to `airtable_client_ham019`. It uses a `hants.gov.uk` requester and aligns with official Hampshire AMHP services account `recjM5HyJBppBNJrP`, Sage `HAM019`; other HCC services were not included.
 - The AHMP after-run reduced the gate to 61 blocked rows across 58 review decisions with 0 errors. Production effects across both decisions were limited to two audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
 
+### Approved pending canonical target bridge - 24 July 2026
+
+- Mapping contract `airtable-sync-center-v9` resolves the review deadlock in which an alias belongs to an official Airtable account that is approved for creation but cannot exist in Firestore until the zero-blocker Write Sync.
+- A pending target is selectable only when the same admin has a successful `Clients / Full audit` run less than 30 minutes old and that run explicitly lists the official `Clients` record in `approvedPendingCanonicalAccounts`. The evidence must include the exact Airtable record ID, source table, group key, proposed client ID and organisation name.
+- The server revalidates the active `APPROVE_NEW_CLIENT` mapping when the alias rule is saved and again during every dry run. Arbitrary missing IDs, cross-admin runs, expired runs, malformed evidence, revoked approvals and approvals whose target changed are rejected.
+- Write ordering remains account, department and agent. An alias may therefore resolve to the planned account ID during preview, while no client document is created before the protected Write Sync.
+- Official Airtable `Clients` record `recrTzPLqK6pE9g9D` approved `NHS HAMPSHIRE AND ISLE OF WIGHT INTEGRATED CARE BOARD`, Sage `HSI002`, as pending canonical target `airtable_client_hsi002`.
+- `Hampshire & IOW ICB` source record `rech1I3qlyfoyZLzu` was mapped to that approved target. The authoritative after-run changed 61 blocked source rows / 58 decisions / 0 errors to 60 / 57 / 0. It also changed 417 updates to 418, 372 canonical clients to 373 and 1164 agents to 1165, while the searched alias disappeared from the review queue.
+- Browser validation confirmed the `Pending approved` state, the explanatory creation-on-Write-Sync message and a disabled Write Sync before and after the fresh Full Audit.
+- Automated validation covers exact pending-target acceptance and arbitrary, cross-admin, expired, malformed, revoked and changed-approval rejection. All 54 Airtable tests, the frontend typecheck/production build, the Functions TypeScript build and `git diff --check` passed.
+- Production effects were limited to one audited Firestore identity mapping and deployment of the guarded resolver. No Airtable write, Client Write Sync, client creation, merge, job, invoice, email, notification or scheduled mirror configuration was changed. Platform Mode remained `HYBRID`, Airtable Import `ON`, communication `SUPPRESSED`, and the remaining 60 blocked rows continue to lock Write Sync.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
@@ -303,6 +315,7 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - [ ] Map all orphan departments to an existing canonical client; departments must never be approved merely to clear the gate.
 - [ ] Re-run `Clients / Full audit` after each reviewed batch and record the new run ID and blocker delta.
 - [ ] Execute Write Sync only after the server reports zero identity blockers and a fresh single-use approval is available.
+- [ ] Upgrade the Functions runtime from Node.js 20 before its October 2026 decommission date and update `firebase-functions` in a separate, fully tested maintenance release.
 
 ### Operator procedure
 

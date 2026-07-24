@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateSyncWriteApproval = exports.AIRTABLE_WRITE_APPROVAL_TTL_MS = exports.AIRTABLE_SYNC_MAPPING_VERSION = void 0;
-exports.AIRTABLE_SYNC_MAPPING_VERSION = 'airtable-sync-center-v8';
+exports.AIRTABLE_SYNC_MAPPING_VERSION = 'airtable-sync-center-v9';
 exports.AIRTABLE_WRITE_APPROVAL_TTL_MS = 30 * 60 * 1000;
 const normalizedModules = (value) => (Array.isArray(value)
     ? Array.from(new Set(value.filter((item) => typeof item === 'string' && Boolean(item.trim())))).sort()

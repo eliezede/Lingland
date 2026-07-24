@@ -90,6 +90,14 @@ type ClientCrmNewOrganisationCandidate = {
 type ClientCrmDiagnostics = {
   canonicalAccounts?: {
     sourceRecords?: number;
+    approvedPendingCanonicalAccounts?: Array<{
+      sourceTable: 'Clients';
+      sourceRecordId: string;
+      groupKey: string;
+      clientId: string;
+      companyName: string;
+      sageAccountRef?: string;
+    }>;
     wouldCreateCanonicalAccounts?: Array<{
       companyName: string;
       sageAccountRef: string;
@@ -121,6 +129,13 @@ type ClientCrmDiagnostics = {
       blockers: Array<{ reason: string; count: number }>;
     };
   };
+};
+
+type ClientCrmCanonicalTarget = {
+  id: string;
+  companyName: string;
+  sageAccountRef?: string;
+  targetState: 'EXISTING' | 'PENDING_APPROVED';
 };
 
 type ClientCrmMappingTarget = {
@@ -369,19 +384,42 @@ export const AdminMigration = () => {
     }, {});
     return { bySeverity, byReason };
   }, [openConflicts]);
+  const crmCanonicalTargets = useMemo<ClientCrmCanonicalTarget[]>(() => {
+    const diagnostics = moduleResults.get('clients')?.diagnostics as ClientCrmDiagnostics | undefined;
+    const pending = diagnostics?.canonicalAccounts?.approvedPendingCanonicalAccounts || [];
+    const targets = new Map<string, ClientCrmCanonicalTarget>();
+    pending.forEach(target => targets.set(target.clientId, {
+      id: target.clientId,
+      companyName: target.companyName,
+      sageAccountRef: target.sageAccountRef,
+      targetState: 'PENDING_APPROVED',
+    }));
+    crmClientDirectory.forEach(client => targets.set(client.id, {
+      id: client.id,
+      companyName: client.companyName,
+      sageAccountRef: client.sageAccountRef,
+      targetState: 'EXISTING',
+    }));
+    return Array.from(targets.values()).sort((left, right) => (
+      left.companyName.localeCompare(right.companyName)
+    ));
+  }, [crmClientDirectory, moduleResults]);
   const visibleCrmClients = useMemo(() => {
     const query = crmClientSearch.trim().toLowerCase();
-    return crmClientDirectory
+    return crmCanonicalTargets
       .filter(client => !query || [client.companyName, client.sageAccountRef, client.id]
         .some(value => String(value || '').toLowerCase().includes(query)))
       .slice(0, 60);
-  }, [crmClientDirectory, crmClientSearch]);
+  }, [crmCanonicalTargets, crmClientSearch]);
   const activeCrmMappingTargets = crmManualBatchTargets.length > 0
     ? crmManualBatchTargets
     : crmMappingTarget
       ? [crmMappingTarget]
       : [];
   const isManualCrmMappingBatch = crmManualBatchTargets.length > 0;
+  const selectedCrmCanonicalTarget = crmCanonicalTargets.find(target => (
+    target.id === crmSelectedClientId
+  ));
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -749,8 +787,12 @@ export const AdminMigration = () => {
 
   const saveClientIdentityMapping = async () => {
     if (!crmMappingTarget || !crmSelectedClientId) return;
-    const selected = crmClientDirectory.find(client => client.id === crmSelectedClientId);
+    const selected = crmCanonicalTargets.find(client => client.id === crmSelectedClientId);
     if (!selected) return;
+    if (selected.targetState === 'PENDING_APPROVED' && (!syncResult?.dryRun || !syncResult.syncRunId)) {
+      showToast('Run a fresh Clients Dry Run before mapping to an approved pending account.', 'error');
+      return;
+    }
     setCrmMappingLoading(true);
     try {
       await AirtableSyncService.saveClientIdentityMapping({
@@ -761,6 +803,7 @@ export const AdminMigration = () => {
         canonicalClientId: selected.id,
         canonicalCompanyName: selected.companyName,
         reason: `Mapped ${crmMappingTarget.displayName} to ${selected.companyName} in Airtable Sync Center`,
+        syncRunId: selected.targetState === 'PENDING_APPROVED' ? syncResult?.syncRunId : undefined,
       });
       setCrmMappingTarget(null);
       showToast(`${crmMappingTarget.displayName} is now mapped to ${selected.companyName}.`, 'success');
@@ -778,7 +821,7 @@ export const AdminMigration = () => {
       showToast('Run a fresh Clients Dry Run before saving a manual batch.', 'error');
       return;
     }
-    const selected = crmClientDirectory.find(client => client.id === crmSelectedClientId);
+    const selected = crmCanonicalTargets.find(client => client.id === crmSelectedClientId);
     if (!selected) return;
     const confirmed = window.confirm(
       `Map ${crmManualBatchTargets.length} selected Airtable identit${crmManualBatchTargets.length === 1 ? 'y' : 'ies'} to ${selected.companyName}? This audited rule will be reused by future mirror cycles.`,
@@ -2527,7 +2570,7 @@ export const AdminMigration = () => {
             </div>
 
             <div className="min-h-48 flex-1 overflow-y-auto">
-              {crmMappingLoading && crmClientDirectory.length === 0 ? (
+              {crmMappingLoading && crmCanonicalTargets.length === 0 ? (
                 <div className="flex min-h-48 items-center justify-center gap-2 text-sm font-semibold text-slate-500">
                   <Loader2 className="animate-spin" size={18} /> Loading Client CRM...
                 </div>
@@ -2538,7 +2581,14 @@ export const AdminMigration = () => {
                   className={`flex w-full items-center justify-between gap-4 border-b border-slate-100 px-5 py-3 text-left dark:border-slate-800 ${crmSelectedClientId === client.id ? 'bg-blue-50 dark:bg-blue-950/30' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-black text-slate-950 dark:text-white">{client.companyName}</p>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="truncate font-black text-slate-950 dark:text-white">{client.companyName}</p>
+                      {client.targetState === 'PENDING_APPROVED' && (
+                        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
+                          Pending approved
+                        </span>
+                      )}
+                    </div>
                     <p className="truncate text-xs text-slate-500">{client.sageAccountRef || 'No Sage ref'} · {client.id}</p>
                   </div>
                   <span className={`h-4 w-4 shrink-0 rounded-full border-2 ${crmSelectedClientId === client.id ? 'border-blue-600 bg-blue-600 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-slate-300 dark:border-slate-600'}`} />
@@ -2551,8 +2601,12 @@ export const AdminMigration = () => {
             <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
                 {isManualCrmMappingBatch
-                  ? 'All selected identities will map to this client. The batch is audited against the current Dry Run.'
-                  : 'This rule is audited and reused by future mirror cycles.'}
+                  ? selectedCrmCanonicalTarget?.targetState === 'PENDING_APPROVED'
+                    ? 'All selected identities will map to this approved official account. The account is created during the same Write Sync.'
+                    : 'All selected identities will map to this client. The batch is audited against the current Dry Run.'
+                  : selectedCrmCanonicalTarget?.targetState === 'PENDING_APPROVED'
+                    ? 'This official Airtable account is approved and will be created during Write Sync.'
+                    : 'This rule is audited and reused by future mirror cycles.'}
               </p>
               <button
                 onClick={isManualCrmMappingBatch ? saveManualClientIdentityMappings : saveClientIdentityMapping}

@@ -150,6 +150,7 @@ export type AirtableClientIdentityMappingRequest = {
   canonicalCompanyName?: string;
   sourceName?: string;
   reason?: string;
+  syncRunId?: string;
 };
 
 export type AirtableClientIdentityMappingResult = {

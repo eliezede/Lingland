@@ -5,6 +5,8 @@ import {
   validateClientIdentityMappingBatch,
   validateClientIdentityManualMappingBatch,
   validateClientIdentityManualReviewRun,
+  validateClientIdentityPendingCanonicalApproval,
+  validateClientIdentityPendingCanonicalTarget,
   validateClientIdentityRecommendationRun,
 } from './clientIdentityMappingPolicy';
 
@@ -17,6 +19,126 @@ const recommendation = (overrides: Record<string, unknown> = {}) => ({
   canonicalCompanyName: 'Example Trust',
   recommendationConfidence: 'HIGH',
   ...overrides,
+});
+
+describe('approved pending canonical target policy', () => {
+  const now = Date.parse('2026-07-22T12:00:00.000Z');
+  const run = {
+    kind: 'AIRTABLE_SYNC_CENTER',
+    dryRun: true,
+    success: true,
+    mappingVersion: 'airtable-sync-center-v9',
+    userId: 'super-admin-1',
+    finishedAt: new Date(now - 60_000).toISOString(),
+    moduleResults: [{
+      module: 'clients',
+      diagnostics: {
+        canonicalAccounts: {
+          approvedPendingCanonicalAccounts: [{
+            sourceTable: 'Clients',
+            sourceRecordId: 'rec-official-1',
+            groupKey: 'hsi002',
+            clientId: 'airtable_client_hsi002',
+            companyName: 'NHS Hampshire and Isle of Wight Integrated Care Board',
+            sageAccountRef: 'HSI002',
+          }],
+        },
+      },
+    }],
+  };
+
+  it('accepts only the exact pending account approved in the same fresh client review', () => {
+    expect(validateClientIdentityPendingCanonicalTarget(
+      run,
+      'airtable_client_hsi002',
+      'super-admin-1',
+      'airtable-sync-center-v9',
+      now,
+    )).toEqual({
+      ok: true,
+      target: expect.objectContaining({
+        sourceTable: 'Clients',
+        sourceRecordId: 'rec-official-1',
+        groupKey: 'hsi002',
+        clientId: 'airtable_client_hsi002',
+        sageAccountRef: 'HSI002',
+      }),
+    });
+    expect(validateClientIdentityPendingCanonicalTarget(
+      run,
+      'airtable_client_arbitrary',
+      'super-admin-1',
+      'airtable-sync-center-v9',
+      now,
+    )).toEqual({ ok: false, reason: 'PENDING_CANONICAL_TARGET_NOT_APPROVED_IN_RUN' });
+  });
+
+  it('rejects cross-admin, stale and malformed pending target evidence', () => {
+    expect(validateClientIdentityPendingCanonicalTarget(
+      run,
+      'airtable_client_hsi002',
+      'other-admin',
+      'airtable-sync-center-v9',
+      now,
+    )).toEqual({ ok: false, reason: 'REVIEW_ACTOR_CHANGED' });
+    expect(validateClientIdentityPendingCanonicalTarget(
+      { ...run, finishedAt: new Date(now - CLIENT_IDENTITY_RECOMMENDATION_TTL_MS - 1).toISOString() },
+      'airtable_client_hsi002',
+      'super-admin-1',
+      'airtable-sync-center-v9',
+      now,
+    )).toEqual({ ok: false, reason: 'REVIEW_RUN_EXPIRED' });
+    const malformedRun = {
+      ...run,
+      moduleResults: [{
+        module: 'clients',
+        diagnostics: {
+          canonicalAccounts: {
+            approvedPendingCanonicalAccounts: [{
+              sourceTable: 'Clients',
+              groupKey: 'hsi002',
+              clientId: 'airtable_client_hsi002',
+              companyName: 'NHS Hampshire and Isle of Wight Integrated Care Board',
+            }],
+          },
+        },
+      }],
+    };
+    expect(validateClientIdentityPendingCanonicalTarget(
+      malformedRun,
+      'airtable_client_hsi002',
+      'super-admin-1',
+      'airtable-sync-center-v9',
+      now,
+    )).toEqual({ ok: false, reason: 'PENDING_CANONICAL_TARGET_EVIDENCE_INVALID' });
+  });
+
+  it('rejects a revoked or changed official approval before an alias can use it', () => {
+    const target = {
+      sourceTable: 'Clients' as const,
+      sourceRecordId: 'rec-official-1',
+      groupKey: 'hsi002',
+      clientId: 'airtable_client_hsi002',
+      companyName: 'NHS Hampshire and Isle of Wight Integrated Care Board',
+      sageAccountRef: 'HSI002',
+    };
+    const approval = {
+      status: 'ACTIVE',
+      action: 'APPROVE_NEW_CLIENT',
+      sourceTable: 'Clients',
+      groupKey: 'hsi002',
+      canonicalClientId: 'airtable_client_hsi002',
+    };
+    expect(validateClientIdentityPendingCanonicalApproval(target, approval)).toEqual({ ok: true });
+    expect(validateClientIdentityPendingCanonicalApproval(
+      target,
+      { ...approval, status: 'REVOKED' },
+    )).toEqual({ ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_ACTIVE' });
+    expect(validateClientIdentityPendingCanonicalApproval(
+      target,
+      { ...approval, canonicalClientId: 'airtable_client_other' },
+    )).toEqual({ ok: false, reason: 'PENDING_CANONICAL_APPROVAL_EVIDENCE_CHANGED' });
+  });
 });
 
 describe('manual client identity batch mapping policy', () => {
@@ -34,7 +156,7 @@ describe('manual client identity batch mapping policy', () => {
     kind: 'AIRTABLE_SYNC_CENTER',
     dryRun: true,
     success: true,
-    mappingVersion: 'airtable-sync-center-v8',
+    mappingVersion: 'airtable-sync-center-v9',
     userId: 'super-admin-1',
     finishedAt,
     moduleResults: [{
@@ -85,28 +207,28 @@ describe('manual client identity batch mapping policy', () => {
       run,
       mappings,
       'super-admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: true });
     expect(validateClientIdentityManualReviewRun(
       run,
       [{ ...mappings[0], groupKey: 'changed identity' }],
       'super-admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'IDENTITY_NO_LONGER_UNRESOLVED' });
     expect(validateClientIdentityManualReviewRun(
       run,
       [{ ...mappings[0], sourceNames: ['Changed evidence'] }],
       'super-admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'IDENTITY_SOURCE_EVIDENCE_CHANGED' });
     expect(validateClientIdentityManualReviewRun(
       run,
       mappings,
       'super-admin-2',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'REVIEW_ACTOR_CHANGED' });
   });
@@ -118,7 +240,7 @@ describe('manual client identity batch mapping policy', () => {
       reviewRun(new Date(now - CLIENT_IDENTITY_RECOMMENDATION_TTL_MS - 1).toISOString()),
       mappings,
       'super-admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'REVIEW_RUN_EXPIRED' });
   });
@@ -163,7 +285,7 @@ describe('client identity batch mapping policy', () => {
       kind: 'AIRTABLE_SYNC_CENTER',
       dryRun: true,
       success: true,
-      mappingVersion: 'airtable-sync-center-v8',
+      mappingVersion: 'airtable-sync-center-v9',
       userId: 'admin-1',
       finishedAt: new Date(now - 60_000).toISOString(),
       moduleResults: [{
@@ -189,14 +311,14 @@ describe('client identity batch mapping policy', () => {
       run,
       mappings,
       'admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: true });
     expect(validateClientIdentityRecommendationRun(
       run,
       [{ ...mappings[0], canonicalClientId: 'client-other' }],
       'admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'RECOMMENDATION_NO_LONGER_MATCHES' });
   });
@@ -208,7 +330,7 @@ describe('client identity batch mapping policy', () => {
       kind: 'AIRTABLE_SYNC_CENTER',
       dryRun: true,
       success: true,
-      mappingVersion: 'airtable-sync-center-v8',
+      mappingVersion: 'airtable-sync-center-v9',
       userId: 'admin-1',
       finishedAt: new Date(now - CLIENT_IDENTITY_RECOMMENDATION_TTL_MS - 1).toISOString(),
       moduleResults: [],
@@ -217,14 +339,14 @@ describe('client identity batch mapping policy', () => {
       run,
       mappings,
       'admin-1',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'RECOMMENDATION_RUN_EXPIRED' });
     expect(validateClientIdentityRecommendationRun(
       { ...run, finishedAt: new Date(now - 60_000).toISOString() },
       mappings,
       'admin-2',
-      'airtable-sync-center-v8',
+      'airtable-sync-center-v9',
       now,
     )).toEqual({ ok: false, reason: 'RECOMMENDATION_ACTOR_CHANGED' });
   });

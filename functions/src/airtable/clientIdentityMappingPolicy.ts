@@ -21,6 +21,15 @@ export interface ClientIdentityManualBatchMappingRequest {
   reason?: string;
 }
 
+export interface ClientIdentityApprovedPendingCanonicalTarget {
+  sourceTable: 'Clients';
+  sourceRecordId: string;
+  groupKey: string;
+  clientId: string;
+  companyName: string;
+  sageAccountRef?: string;
+}
+
 const ALLOWED_SOURCE_TABLES = new Set(['Clients', 'Clients Book', 'Departments']);
 const MANUAL_BATCH_SOURCE_TABLES = new Set(['Clients Book', 'Departments']);
 export const MAX_CLIENT_IDENTITY_BATCH_MAPPINGS = 25;
@@ -138,6 +147,57 @@ export type ClientIdentityRecommendationRunValidation =
   | { ok: true }
   | { ok: false; reason: string };
 
+export type ClientIdentityPendingCanonicalTargetValidation =
+  | { ok: true; target: ClientIdentityApprovedPendingCanonicalTarget }
+  | { ok: false; reason: string };
+
+export const validateClientIdentityPendingCanonicalApproval = (
+  target: ClientIdentityApprovedPendingCanonicalTarget,
+  approval: Record<string, unknown> | null | undefined,
+): ClientIdentityRecommendationRunValidation => {
+  if (!approval) return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_FOUND' };
+  if (text(approval.status).toUpperCase() !== 'ACTIVE') {
+    return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_NOT_ACTIVE' };
+  }
+  if (text(approval.action).toUpperCase() !== 'APPROVE_NEW_CLIENT') {
+    return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_ACTION_CHANGED' };
+  }
+  if (
+    text(approval.canonicalClientId) !== target.clientId
+    || text(approval.sourceTable) !== target.sourceTable
+    || text(approval.groupKey).toLowerCase() !== target.groupKey.toLowerCase()
+  ) {
+    return { ok: false, reason: 'PENDING_CANONICAL_APPROVAL_EVIDENCE_CHANGED' };
+  }
+  return { ok: true };
+};
+
+const validateReviewRunEnvelope = (
+  run: Record<string, unknown> | null | undefined,
+  actorId: string,
+  expectedMappingVersion: string,
+  nowMs: number,
+  reasonPrefix: 'RECOMMENDATION' | 'REVIEW',
+): ClientIdentityRecommendationRunValidation => {
+  if (!run) return { ok: false, reason: `${reasonPrefix}_RUN_NOT_FOUND` };
+  if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
+    return { ok: false, reason: `${reasonPrefix}_RUN_INVALID` };
+  }
+  if (run.mappingVersion !== expectedMappingVersion) {
+    return { ok: false, reason: `${reasonPrefix}_CONTRACT_CHANGED` };
+  }
+  if (run.userId !== actorId) return { ok: false, reason: `${reasonPrefix}_ACTOR_CHANGED` };
+
+  const finishedAtMs = typeof run.finishedAt === 'string' ? Date.parse(run.finishedAt) : Number.NaN;
+  if (!Number.isFinite(finishedAtMs) || finishedAtMs > nowMs + 60_000) {
+    return { ok: false, reason: `${reasonPrefix}_RUN_TIME_INVALID` };
+  }
+  if (nowMs - finishedAtMs > CLIENT_IDENTITY_RECOMMENDATION_TTL_MS) {
+    return { ok: false, reason: `${reasonPrefix}_RUN_EXPIRED` };
+  }
+  return { ok: true };
+};
+
 export const validateClientIdentityRecommendationRun = (
   run: Record<string, unknown> | null | undefined,
   mappings: ClientIdentityBatchMappingRequest[],
@@ -145,22 +205,16 @@ export const validateClientIdentityRecommendationRun = (
   expectedMappingVersion: string,
   nowMs = Date.now(),
 ): ClientIdentityRecommendationRunValidation => {
-  if (!run) return { ok: false, reason: 'RECOMMENDATION_RUN_NOT_FOUND' };
-  if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
-    return { ok: false, reason: 'RECOMMENDATION_RUN_INVALID' };
-  }
-  if (run.mappingVersion !== expectedMappingVersion) return { ok: false, reason: 'RECOMMENDATION_CONTRACT_CHANGED' };
-  if (run.userId !== actorId) return { ok: false, reason: 'RECOMMENDATION_ACTOR_CHANGED' };
+  const envelope = validateReviewRunEnvelope(
+    run,
+    actorId,
+    expectedMappingVersion,
+    nowMs,
+    'RECOMMENDATION',
+  );
+  if (!envelope.ok) return envelope;
 
-  const finishedAtMs = typeof run.finishedAt === 'string' ? Date.parse(run.finishedAt) : Number.NaN;
-  if (!Number.isFinite(finishedAtMs) || finishedAtMs > nowMs + 60_000) {
-    return { ok: false, reason: 'RECOMMENDATION_RUN_TIME_INVALID' };
-  }
-  if (nowMs - finishedAtMs > CLIENT_IDENTITY_RECOMMENDATION_TTL_MS) {
-    return { ok: false, reason: 'RECOMMENDATION_RUN_EXPIRED' };
-  }
-
-  const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
+  const moduleResults = Array.isArray(run!.moduleResults) ? run!.moduleResults : [];
   const clientModule = moduleResults.find(raw => (
     raw && typeof raw === 'object' && (raw as Record<string, unknown>).module === 'clients'
   )) as Record<string, unknown> | undefined;
@@ -201,22 +255,16 @@ export const validateClientIdentityManualReviewRun = (
   expectedMappingVersion: string,
   nowMs = Date.now(),
 ): ClientIdentityRecommendationRunValidation => {
-  if (!run) return { ok: false, reason: 'REVIEW_RUN_NOT_FOUND' };
-  if (run.kind !== 'AIRTABLE_SYNC_CENTER' || run.dryRun !== true || run.success !== true) {
-    return { ok: false, reason: 'REVIEW_RUN_INVALID' };
-  }
-  if (run.mappingVersion !== expectedMappingVersion) return { ok: false, reason: 'REVIEW_CONTRACT_CHANGED' };
-  if (run.userId !== actorId) return { ok: false, reason: 'REVIEW_ACTOR_CHANGED' };
+  const envelope = validateReviewRunEnvelope(
+    run,
+    actorId,
+    expectedMappingVersion,
+    nowMs,
+    'REVIEW',
+  );
+  if (!envelope.ok) return envelope;
 
-  const finishedAtMs = typeof run.finishedAt === 'string' ? Date.parse(run.finishedAt) : Number.NaN;
-  if (!Number.isFinite(finishedAtMs) || finishedAtMs > nowMs + 60_000) {
-    return { ok: false, reason: 'REVIEW_RUN_TIME_INVALID' };
-  }
-  if (nowMs - finishedAtMs > CLIENT_IDENTITY_RECOMMENDATION_TTL_MS) {
-    return { ok: false, reason: 'REVIEW_RUN_EXPIRED' };
-  }
-
-  const moduleResults = Array.isArray(run.moduleResults) ? run.moduleResults : [];
+  const moduleResults = Array.isArray(run!.moduleResults) ? run!.moduleResults : [];
   const clientModule = moduleResults.find(raw => (
     raw && typeof raw === 'object' && (raw as Record<string, unknown>).module === 'clients'
   )) as Record<string, unknown> | undefined;
@@ -250,4 +298,61 @@ export const validateClientIdentityManualReviewRun = (
   }
 
   return { ok: true };
+};
+
+export const validateClientIdentityPendingCanonicalTarget = (
+  run: Record<string, unknown> | null | undefined,
+  canonicalClientId: string,
+  actorId: string,
+  expectedMappingVersion: string,
+  nowMs = Date.now(),
+): ClientIdentityPendingCanonicalTargetValidation => {
+  const envelope = validateReviewRunEnvelope(
+    run,
+    actorId,
+    expectedMappingVersion,
+    nowMs,
+    'REVIEW',
+  );
+  if (!envelope.ok) return envelope;
+
+  const moduleResults = Array.isArray(run!.moduleResults) ? run!.moduleResults : [];
+  const clientModule = moduleResults.find(raw => (
+    raw && typeof raw === 'object' && (raw as Record<string, unknown>).module === 'clients'
+  )) as Record<string, unknown> | undefined;
+  const diagnostics = clientModule?.diagnostics as Record<string, unknown> | undefined;
+  const canonicalAccounts = diagnostics?.canonicalAccounts as Record<string, unknown> | undefined;
+  const pendingTargets = Array.isArray(canonicalAccounts?.approvedPendingCanonicalAccounts)
+    ? canonicalAccounts.approvedPendingCanonicalAccounts as Array<Record<string, unknown>>
+    : [];
+  const requestedId = text(canonicalClientId);
+  const rawTarget = pendingTargets.find(candidate => text(candidate.clientId) === requestedId);
+  if (!rawTarget) return { ok: false, reason: 'PENDING_CANONICAL_TARGET_NOT_APPROVED_IN_RUN' };
+
+  const sourceTable = text(rawTarget.sourceTable);
+  const sourceRecordId = text(rawTarget.sourceRecordId);
+  const groupKey = text(rawTarget.groupKey);
+  const clientId = text(rawTarget.clientId);
+  const companyName = text(rawTarget.companyName);
+  if (
+    sourceTable !== 'Clients'
+    || !sourceRecordId
+    || !groupKey
+    || !clientId
+    || !companyName
+  ) {
+    return { ok: false, reason: 'PENDING_CANONICAL_TARGET_EVIDENCE_INVALID' };
+  }
+
+  return {
+    ok: true,
+    target: {
+      sourceTable: 'Clients',
+      sourceRecordId,
+      groupKey,
+      clientId,
+      companyName,
+      sageAccountRef: text(rawTarget.sageAccountRef) || undefined,
+    },
+  };
 };
