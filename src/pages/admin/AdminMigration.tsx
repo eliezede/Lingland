@@ -19,6 +19,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Undo2,
   UserCog,
   Users,
   Wallet,
@@ -37,12 +38,14 @@ import {
   AirtableSyncStrategy,
   AirtableSyncResult,
   AirtableMirrorAudit,
+  AirtableClientIdentityMappingLedgerEntry,
   FinancialReconciliationAudit,
   AirtableSyncService
 } from '../../services/airtableSyncService';
 import { ClientService } from '../../services/clientService';
 import { Client } from '../../types';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { clientCrmReviewKey, deduplicateClientCrmReviewScopes } from '../../utils/clientCrmReview';
@@ -322,10 +325,17 @@ export const AdminMigration = () => {
   const [crmManualBatchMode, setCrmManualBatchMode] = useState(false);
   const [crmManualBatchSelection, setCrmManualBatchSelection] = useState<Record<string, boolean>>({});
   const [crmManualBatchTargets, setCrmManualBatchTargets] = useState<ClientCrmMappingTarget[]>([]);
+  const [crmMappingLedgerOpen, setCrmMappingLedgerOpen] = useState(false);
+  const [crmMappingLedgerLoading, setCrmMappingLedgerLoading] = useState(false);
+  const [crmMappingLedger, setCrmMappingLedger] = useState<AirtableClientIdentityMappingLedgerEntry[]>([]);
+  const [crmMappingLedgerTotal, setCrmMappingLedgerTotal] = useState(0);
+  const [crmMappingLedgerSearch, setCrmMappingLedgerSearch] = useState('');
+  const [crmRevokingMappingId, setCrmRevokingMappingId] = useState('');
   const [migrationResult, setMigrationResult] = useState<{ created: number; skipped: number; errors: number } | null>(null);
   const [inviteResult, setInviteResult] = useState<{ sent: number; suppressed?: number; errors: number } | null>(null);
   const interpreterStatsRequestedRef = useRef(false);
   const { showToast } = useToast();
+  const { confirm } = useConfirm();
   const { settings } = useSettings();
   const { isSuperAdmin } = useAuth();
   const platformMode = settings.platformMode;
@@ -420,6 +430,19 @@ export const AdminMigration = () => {
   const selectedCrmCanonicalTarget = crmCanonicalTargets.find(target => (
     target.id === crmSelectedClientId
   ));
+  const visibleCrmMappingLedger = useMemo(() => {
+    const query = crmMappingLedgerSearch.trim().toLowerCase();
+    if (!query) return crmMappingLedger;
+    return crmMappingLedger.filter(mapping => [
+      mapping.sourceTable,
+      mapping.groupKey,
+      ...mapping.sourceNames,
+      mapping.canonicalCompanyName,
+      mapping.canonicalClientId,
+      mapping.reviewMethod,
+      mapping.reason,
+    ].some(value => String(value || '').toLowerCase().includes(query)));
+  }, [crmMappingLedger, crmMappingLedgerSearch]);
 
   const loadInterpreterStats = async () => {
     setInterpreterLoading(true);
@@ -697,6 +720,27 @@ export const AdminMigration = () => {
     loadInterpreterStats();
   }, [activeTab]);
 
+  const loadClientIdentityMappingLedger = async () => {
+    setCrmMappingLedgerLoading(true);
+    try {
+      const ledger = await AirtableSyncService.listClientIdentityMappings(300);
+      setCrmMappingLedger(ledger.mappings);
+      setCrmMappingLedgerTotal(ledger.total);
+    } catch (error: any) {
+      showToast(error?.message || 'Could not load the client identity mapping ledger.', 'error');
+    } finally {
+      setCrmMappingLedgerLoading(false);
+    }
+  };
+
+  const openClientIdentityMappingLedger = async () => {
+    setCrmMappingTarget(null);
+    setCrmManualBatchTargets([]);
+    setCrmMappingLedgerSearch('');
+    setCrmMappingLedgerOpen(true);
+    await loadClientIdentityMappingLedger();
+  };
+
   const openClientIdentityMapping = async (target: ClientCrmMappingTarget) => {
     setCrmManualBatchTargets([]);
     setCrmMappingTarget(target);
@@ -747,6 +791,29 @@ export const AdminMigration = () => {
     await runSync(true, ['clients']);
   };
 
+  const revokeClientIdentityMapping = async (mapping: AirtableClientIdentityMappingLedgerEntry) => {
+    if (crmRevokingMappingId) return;
+    const confirmed = await confirm({
+      title: 'Revoke client identity mapping',
+      message: `Return "${mapping.sourceNames[0] || mapping.groupKey}" to review instead of mapping it to ${mapping.canonicalCompanyName || mapping.canonicalClientId}? The revocation is audited and future mirror cycles will stop using this rule.`,
+      confirmLabel: 'Revoke mapping',
+      variant: 'warning',
+    });
+    if (!confirmed) return;
+
+    setCrmRevokingMappingId(mapping.mappingId);
+    try {
+      await AirtableSyncService.revokeClientIdentityMapping(mapping.sourceTable, mapping.groupKey);
+      showToast('Client identity mapping revoked. Running a fresh Dry Run...', 'success');
+      await loadClientIdentityMappingLedger();
+      await refreshClientIdentityDryRun();
+    } catch (error: any) {
+      showToast(error?.message || 'Could not revoke the client identity mapping.', 'error');
+    } finally {
+      setCrmRevokingMappingId('');
+    }
+  };
+
   const saveRecommendedIdentityMappings = async (candidates: ClientCrmBatchCandidate[]) => {
     if (!candidates.length || crmBatchSaving) return;
     if (!syncResult?.dryRun || !syncResult.syncRunId) {
@@ -757,9 +824,12 @@ export const AdminMigration = () => {
       showToast('Review at most 25 client identity recommendations in one batch.', 'error');
       return;
     }
-    const confirmed = window.confirm(
-      `Map ${candidates.length} Airtable identit${candidates.length === 1 ? 'y' : 'ies'} to the suggested existing Client CRM organisation${candidates.length === 1 ? '' : 's'}? Each mapping is audited and can be revoked.`,
-    );
+    const confirmed = await confirm({
+      title: 'Confirm recommended mappings',
+      message: `Map ${candidates.length} Airtable identit${candidates.length === 1 ? 'y' : 'ies'} to the suggested existing Client CRM organisation${candidates.length === 1 ? '' : 's'}? Each mapping is audited and can be revoked.`,
+      confirmLabel: `Map ${candidates.length}`,
+      variant: 'primary',
+    });
     if (!confirmed) return;
     setCrmBatchSaving(true);
     try {
@@ -793,6 +863,14 @@ export const AdminMigration = () => {
       showToast('Run a fresh Clients Dry Run before mapping to an approved pending account.', 'error');
       return;
     }
+    const confirmed = await confirm({
+      title: 'Confirm client identity mapping',
+      message: `Map "${crmMappingTarget.displayName}" to ${selected.companyName} (${selected.sageAccountRef || selected.id})? This audited rule will be reused by future mirror cycles.`,
+      confirmLabel: 'Save mapping',
+      variant: 'primary',
+    });
+    if (!confirmed) return;
+
     setCrmMappingLoading(true);
     try {
       await AirtableSyncService.saveClientIdentityMapping({
@@ -823,9 +901,12 @@ export const AdminMigration = () => {
     }
     const selected = crmCanonicalTargets.find(client => client.id === crmSelectedClientId);
     if (!selected) return;
-    const confirmed = window.confirm(
-      `Map ${crmManualBatchTargets.length} selected Airtable identit${crmManualBatchTargets.length === 1 ? 'y' : 'ies'} to ${selected.companyName}? This audited rule will be reused by future mirror cycles.`,
-    );
+    const confirmed = await confirm({
+      title: 'Confirm client identity mapping',
+      message: `Map ${crmManualBatchTargets.length} selected Airtable identit${crmManualBatchTargets.length === 1 ? 'y' : 'ies'} to ${selected.companyName} (${selected.sageAccountRef || selected.id})? This audited rule will be reused by future mirror cycles.`,
+      confirmLabel: `Map ${crmManualBatchTargets.length}`,
+      variant: 'primary',
+    });
     if (!confirmed) return;
 
     setCrmMappingLoading(true);
@@ -859,7 +940,13 @@ export const AdminMigration = () => {
     candidate: ClientCrmNewOrganisationCandidate,
     sourceTable: 'Clients' | 'Clients Book' = 'Clients Book',
   ) => {
-    if (!window.confirm(`Approve "${candidate.canonicalCompanyName}" as a new canonical Client CRM organisation? Use this only when it is not a department, alias or duplicate.`)) return;
+    const confirmed = await confirm({
+      title: 'Approve canonical organisation',
+      message: `Approve "${candidate.canonicalCompanyName}" as a new canonical Client CRM organisation? Use this only when it is not a department, alias or duplicate.`,
+      confirmLabel: 'Approve organisation',
+      variant: 'warning',
+    });
+    if (!confirmed) return;
     setCrmMappingLoading(true);
     try {
       await AirtableSyncService.saveClientIdentityMapping({
@@ -1149,6 +1236,14 @@ export const AdminMigration = () => {
               >
                 {crmBatchSaving && <Loader2 className="animate-spin" size={14} />}
                 Save reviewed ({selectedHighRecommendations.length})
+              </button>
+            )}
+            {isSuperAdmin && !crmManualBatchMode && (
+              <button
+                onClick={openClientIdentityMappingLedger}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <ClipboardList size={14} /> Mapping ledger
               </button>
             )}
             {isSuperAdmin && reviewTotal > 0 && !crmManualBatchMode && (
@@ -2503,6 +2598,125 @@ export const AdminMigration = () => {
           </main>
         </div>
       </div>
+
+      {crmMappingLedgerOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
+          onMouseDown={event => {
+            if (
+              event.target === event.currentTarget
+              && !crmMappingLedgerLoading
+              && !crmRevokingMappingId
+            ) {
+              setCrmMappingLedgerOpen(false);
+            }
+          }}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="crm-mapping-ledger-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 dark:border-slate-800 sm:px-5">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-300">
+                  Client CRM controls
+                </p>
+                <h2 id="crm-mapping-ledger-title" className="mt-1 text-lg font-black text-slate-950 dark:text-white">
+                  Active identity mappings
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Review the rules reused by Airtable mirror cycles. Revocation returns the source identity to the audit queue.
+                </p>
+              </div>
+              <button
+                onClick={() => setCrmMappingLedgerOpen(false)}
+                disabled={crmMappingLedgerLoading || Boolean(crmRevokingMappingId)}
+                aria-label="Close mapping ledger"
+                title="Close"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="border-b border-slate-200 p-4 dark:border-slate-800">
+              <label className="block">
+                <span className="sr-only">Find an active mapping</span>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <input
+                    autoFocus
+                    value={crmMappingLedgerSearch}
+                    onChange={event => setCrmMappingLedgerSearch(event.target.value)}
+                    placeholder="Find source identity, destination, Sage reference or client ID"
+                    className="h-11 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div className="min-h-64 flex-1 overflow-y-auto">
+              {crmMappingLedgerLoading ? (
+                <div className="flex min-h-64 items-center justify-center gap-2 text-sm font-semibold text-slate-500">
+                  <Loader2 className="animate-spin" size={18} /> Loading active mappings...
+                </div>
+              ) : visibleCrmMappingLedger.length > 0 ? (
+                visibleCrmMappingLedger.map(mapping => (
+                  <div
+                    key={mapping.mappingId}
+                    className="grid gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_auto] md:items-center sm:px-5"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="truncate font-black text-slate-950 dark:text-white">
+                          {mapping.sourceNames[0] || mapping.groupKey}
+                        </p>
+                        <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {mapping.sourceTable}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-slate-500" title={mapping.groupKey}>
+                        {mapping.groupKey}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-blue-700 dark:text-blue-300">
+                        {mapping.canonicalCompanyName || mapping.canonicalClientId}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-slate-500" title={mapping.canonicalClientId}>
+                        {mapping.canonicalClientId}
+                        {mapping.reviewMethod ? ` · ${mapping.reviewMethod.replaceAll('_', ' ')}` : ''}
+                        {mapping.approvedAt ? ` · ${formatDateTime(mapping.approvedAt)}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => revokeClientIdentityMapping(mapping)}
+                      disabled={Boolean(crmRevokingMappingId)}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-amber-200 px-3 text-xs font-black text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900/60 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                    >
+                      {crmRevokingMappingId === mapping.mappingId
+                        ? <Loader2 className="animate-spin" size={14} />
+                        : <Undo2 size={14} />}
+                      Revoke
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm font-semibold text-slate-500">
+                  No active mapping matches this search.
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <span>{visibleCrmMappingLedger.length} shown · {crmMappingLedgerTotal} active rules</span>
+              <span>Revoked rules remain in the audit log.</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeCrmMappingTargets.length > 0 && (
         <div

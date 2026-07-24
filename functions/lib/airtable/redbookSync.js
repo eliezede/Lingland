@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.saveAirtableClientIdentityMappingsManualBatch = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
+exports.scheduledRedbookSync = exports.syncAirtableMaintenance = exports.syncAirtableData = exports.syncRedbookJobs = exports.repairMissingRedbookRecords = exports.getFinancialReconciliationAudit = exports.revokeAirtableClientIdentityMapping = exports.listAirtableClientIdentityMappings = exports.saveAirtableClientIdentityMappingsManualBatch = exports.saveAirtableClientIdentityMappingsBatch = exports.saveAirtableClientIdentityMapping = exports.getAirtableSyncAuditTrail = exports.getAirtableMirrorAudit = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const statusMapping_1 = require("./statusMapping");
@@ -5295,6 +5295,52 @@ exports.saveAirtableClientIdentityMappingsManualBatch = functions.runWith({
             canonicalClientId: target.canonicalClientId,
             canonicalCompanyName,
         })),
+    };
+});
+exports.listAirtableClientIdentityMappings = functions.runWith({
+    timeoutSeconds: 60,
+    memory: '256MB',
+}).https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const requestedLimit = Number(data?.limit);
+    const resultLimit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 500)
+        : 200;
+    const snapshot = await db.collection('airtableClientIdentityMappings')
+        .where('status', '==', 'ACTIVE')
+        .limit(500)
+        .get();
+    const mappings = snapshot.docs
+        .map(document => {
+        const mapping = document.data() || {};
+        return {
+            mappingId: document.id,
+            sourceTable: normalize(mapping.sourceTable),
+            groupKey: (0, clientIdentityAuditCore_1.normalizeOrganizationName)(mapping.groupKey),
+            sourceNames: uniqueValues(...(Array.isArray(mapping.sourceNames) ? mapping.sourceNames.map(normalize) : [])),
+            action: normalize(mapping.action).toUpperCase(),
+            canonicalClientId: normalize(mapping.canonicalClientId),
+            canonicalCompanyName: normalize(mapping.canonicalCompanyName),
+            canonicalTargetState: normalize(mapping.canonicalTargetState).toUpperCase(),
+            reviewMethod: normalize(mapping.reviewMethod).toUpperCase(),
+            reason: normalize(mapping.reason),
+            approvedAt: normalize(mapping.approvedAt),
+            approvedBy: normalize(mapping.approvedBy),
+        };
+    })
+        .filter(mapping => (mapping.sourceTable
+        && mapping.groupKey
+        && mapping.canonicalClientId
+        && ['MAP_TO_CLIENT', 'APPROVE_NEW_CLIENT'].includes(mapping.action)))
+        .sort((left, right) => (right.approvedAt.localeCompare(left.approvedAt)
+        || left.sourceTable.localeCompare(right.sourceTable)
+        || left.groupKey.localeCompare(right.groupKey)))
+        .slice(0, resultLimit);
+    return {
+        success: true,
+        mappings,
+        total: snapshot.size,
+        limit: resultLimit,
     };
 });
 exports.revokeAirtableClientIdentityMapping = functions.runWith({

@@ -199,6 +199,28 @@ export type AirtableClientIdentityManualBatchMappingResult = AirtableClientIdent
   canonicalCompanyName: string;
 };
 
+export type AirtableClientIdentityMappingLedgerEntry = {
+  mappingId: string;
+  sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+  groupKey: string;
+  sourceNames: string[];
+  action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
+  canonicalClientId: string;
+  canonicalCompanyName: string;
+  canonicalTargetState?: string;
+  reviewMethod?: string;
+  reason?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+};
+
+export type AirtableClientIdentityMappingLedger = {
+  success: boolean;
+  mappings: AirtableClientIdentityMappingLedgerEntry[];
+  total: number;
+  limit: number;
+};
+
 export type AirtableSyncAuditTrail = {
   runs: AirtableSyncRunSummary[];
   conflicts: AirtableSyncConflict[];
@@ -384,6 +406,14 @@ export const AirtableSyncService = {
     const revokeFn = httpsCallable(functions, 'revokeAirtableClientIdentityMapping', LONG_CALLABLE_OPTIONS);
     const response = await revokeFn({ sourceTable, groupKey });
     return response.data as { success: boolean; mappingId: string };
+  },
+
+  listClientIdentityMappings: async (
+    resultLimit = 200
+  ): Promise<AirtableClientIdentityMappingLedger> => {
+    const listFn = httpsCallable(functions, 'listAirtableClientIdentityMappings', LONG_CALLABLE_OPTIONS);
+    const response = await listFn({ limit: resultLimit });
+    return response.data as AirtableClientIdentityMappingLedger;
   },
 
   getMirrorAudit: async (
