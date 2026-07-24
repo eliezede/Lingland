@@ -258,6 +258,14 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - The authoritative after-run reported 6 creates, 413 updates, 72 conflicts, 0 errors and 69 remaining review decisions. The reduction of 3 blockers and 3 decisions matches the three unique review scopes; the two same-name University Hospital source records share one identity decision.
 - Production effects were limited to three audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; Write Sync remains locked by the 72 unresolved source rows.
 
+### Hampshire Hospitals Women's Health extension - 24 July 2026
+
+- The unresolved `Clients Book` scopes `Women's Health` and `Womens Health Department` were mapped to the established canonical client `airtable_client_hampshire-hospitals-nhs-foundation-trust`.
+- The two `Women's Health` source records `recFB1BmawIUQT0SW` and `recvFeYPdHEKumKDD` use only `hhft.nhs.uk` requester and invoice contacts. `Womens Health Department` record `recfKc8Tl7OVXkP2t` uses the same HHFT shared mailbox and Winchester phone evidence.
+- Similar-looking canonical search results for HHFT departments were not selected or merged. They remain separate consolidation candidates for the protected post-Write-Sync preview and two-person merge workflow.
+- The authoritative after-run reported 6 creates, 413 updates, 70 conflicts, 0 errors and 67 remaining review decisions. The reduction of 2 blockers and 2 decisions matches the two reviewed scopes.
+- Production effects were limited to two audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; Write Sync remains locked by the 70 unresolved source rows.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
