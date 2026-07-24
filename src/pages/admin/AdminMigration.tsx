@@ -527,11 +527,13 @@ export const AdminMigration = () => {
     try {
       const audit = await AirtableSyncService.getFinancialReconciliationAudit();
       setFinancialAudit(audit);
+      const affectedBookings = Number(audit.affectedBookings || 0);
+      const affectedRecords = audit.affectedInvoices + affectedBookings;
       showToast(
-        audit.affectedInvoices
-          ? `${audit.affectedInvoices} invoice document(s) require reconciliation`
+        affectedRecords
+          ? `${audit.affectedInvoices} invoice document(s) and ${affectedBookings} job link(s) require reconciliation`
           : 'Financial invoice reconciliation is balanced',
-        audit.affectedInvoices ? 'info' : 'success'
+        affectedRecords ? 'info' : 'success'
       );
     } catch (err) {
       console.warn('Failed to run financial reconciliation audit', err);
@@ -594,8 +596,11 @@ export const AdminMigration = () => {
   };
 
   const exportFinancialAudit = () => {
-    if (!financialAudit?.issues.length) return;
-    const csv = AirtableSyncService.exportFinancialAuditCsv(financialAudit.issues);
+    if (!financialAudit || (!financialAudit.issues.length && !financialAudit.bookingIssues?.length)) return;
+    const csv = AirtableSyncService.exportFinancialAuditCsv(
+      financialAudit.issues,
+      financialAudit.bookingIssues || [],
+    );
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -2481,27 +2486,28 @@ export const AdminMigration = () => {
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Financial proof</p>
-                          <h3 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Invoice documents and persisted lines</h3>
+                          <h3 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Jobs, invoice documents and persisted lines</h3>
                           <p className="text-sm text-slate-500 dark:text-slate-400">
-                            Amounts, references, linked jobs, status parity and line totals checked {formatDateTime(financialAudit.generatedAt)}.
+                            Job-to-invoice links, amounts, references, status parity and line totals checked {formatDateTime(financialAudit.generatedAt)}.
                           </p>
                         </div>
                         <button
                           type="button"
                           onClick={exportFinancialAudit}
-                          disabled={!financialAudit.issues.length}
+                          disabled={!financialAudit.issues.length && !financialAudit.bookingIssues?.length}
                           className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
                         >
                           <Download size={15} /> Export financial issues
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-7">
                         <StatPill label="Documents" value={financialAudit.totalInvoices} />
                         <StatPill label="Client" value={financialAudit.clientInvoices} />
                         <StatPill label="Payables" value={financialAudit.interpreterInvoices} />
                         <StatPill label="Healthy" value={financialAudit.healthyInvoices} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
                         <StatPill label="Affected" value={financialAudit.affectedInvoices} className={financialAudit.affectedInvoices ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
+                        <StatPill label="Job links" value={financialAudit.affectedBookings || 0} className={financialAudit.affectedBookings ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200'} />
                         <StatPill label="Issues" value={financialAudit.issueCount} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
                       </div>
 
@@ -2512,6 +2518,49 @@ export const AdminMigration = () => {
                           </span>
                         ))}
                       </div>
+
+                      {(financialAudit.bookingIssues || []).length > 0 && (
+                        <div className="overflow-x-auto rounded-lg border border-red-200 dark:border-red-900/40">
+                          <div className="min-w-[980px]">
+                            <div className="grid grid-cols-[90px_190px_180px_190px_150px_minmax(220px,1fr)] gap-3 border-b border-red-200 bg-red-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                              <span>Severity</span>
+                              <span>Job</span>
+                              <span>Client</span>
+                              <span>Issue</span>
+                              <span>Source invoice</span>
+                              <span>Next action</span>
+                            </div>
+                            <div className="divide-y divide-red-100 bg-white dark:divide-red-900/30 dark:bg-slate-900">
+                              {(financialAudit.bookingIssues || []).slice(0, 25).map(issue => (
+                                <div key={issue.id} className="grid grid-cols-[90px_190px_180px_190px_150px_minmax(220px,1fr)] gap-3 px-4 py-3 text-sm">
+                                  <span className={`h-fit w-fit rounded-full px-2 py-1 text-[10px] font-black ${issue.severity === 'HIGH' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200'}`}>
+                                    {issue.severity}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <Link
+                                      to={`/admin/bookings/${issue.bookingId}`}
+                                      state={{ returnTo: '/admin/administration/migration', returnLabel: 'Reconciliation' }}
+                                      className="block truncate font-black text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                                    >
+                                      {issue.jobNumber}
+                                    </Link>
+                                    <p className="truncate text-xs text-slate-500">{issue.sourceRecordId || issue.bookingId}</p>
+                                  </div>
+                                  <p className="truncate font-semibold text-slate-700 dark:text-slate-200">{issue.clientName || 'Unresolved client'}</p>
+                                  <div className="min-w-0">
+                                    <p className="truncate font-black text-slate-800 dark:text-slate-100">{issue.reason.replace(/_/g, ' ')}</p>
+                                    <p className="truncate text-xs text-slate-500">{issue.status || issue.billingState || issue.paymentStatus}</p>
+                                  </div>
+                                  <p className="truncate font-semibold text-slate-600 dark:text-slate-300">
+                                    {issue.sourceInvoiceReference || issue.invoiceIds.join(', ') || 'Not linked'}
+                                  </p>
+                                  <p className="font-semibold leading-5 text-slate-600 dark:text-slate-300">{issue.recommendedAction}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {financialAudit.issues.length > 0 ? (
                         <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">

@@ -300,6 +300,25 @@ export type FinancialReconciliationIssue = {
   expectedStatus?: string;
 };
 
+export type FinancialBookingLinkIssue = {
+  id: string;
+  bookingId: string;
+  jobNumber: string;
+  clientId: string;
+  clientName: string;
+  sourceSystem: string;
+  sourceTable: string;
+  sourceRecordId: string;
+  sourceInvoiceReference: string;
+  status: string;
+  billingState: string;
+  paymentStatus: string;
+  invoiceIds: string[];
+  reason: 'CLIENT_INVOICE_LINK_MISSING' | 'CLIENT_INVOICE_DOCUMENT_MISSING' | 'BOOKING_INVOICE_BACKLINK_MISSING';
+  severity: 'MEDIUM' | 'HIGH';
+  recommendedAction: string;
+};
+
 export type FinancialReconciliationAudit = {
   success: boolean;
   generatedAt: string;
@@ -308,11 +327,14 @@ export type FinancialReconciliationAudit = {
   interpreterInvoices: number;
   healthyInvoices: number;
   affectedInvoices: number;
+  affectedBookings: number;
   issueCount: number;
   byReason: Record<string, number>;
   bySeverity: Record<string, number>;
   issues: FinancialReconciliationIssue[];
   issuesTruncated: boolean;
+  bookingIssues: FinancialBookingLinkIssue[];
+  bookingIssuesTruncated: boolean;
 };
 
 export const AIRTABLE_SYNC_MODULES: Array<{
@@ -560,10 +582,13 @@ export const AirtableSyncService = {
     ].join('\n');
   },
 
-  exportFinancialAuditCsv: (issues: FinancialReconciliationIssue[]): string => {
-    const headers: Array<keyof FinancialReconciliationIssue> = [
+  exportFinancialAuditCsv: (
+    issues: FinancialReconciliationIssue[],
+    bookingIssues: FinancialBookingLinkIssue[] = [],
+  ): string => {
+    const headers = [
       'severity',
-      'invoiceType',
+      'entityType',
       'reference',
       'partyName',
       'sourceTable',
@@ -574,12 +599,44 @@ export const AirtableSyncService = {
       'totalAmount',
       'lineTotal',
       'lineCount',
-      'recommendedAction'
+      'recommendedAction',
     ];
     const escapeCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = [
+      ...issues.map(issue => ({
+        severity: issue.severity,
+        entityType: issue.invoiceType === 'CLIENT' ? 'CLIENT_INVOICE' : 'INTERPRETER_INVOICE',
+        reference: issue.reference,
+        partyName: issue.partyName,
+        sourceTable: issue.sourceTable,
+        sourceRecordId: issue.sourceRecordId,
+        reason: issue.reason,
+        platformStatus: issue.platformStatus,
+        expectedStatus: issue.expectedStatus,
+        totalAmount: issue.totalAmount,
+        lineTotal: issue.lineTotal,
+        lineCount: issue.lineCount,
+        recommendedAction: issue.recommendedAction,
+      })),
+      ...bookingIssues.map(issue => ({
+        severity: issue.severity,
+        entityType: 'JOB',
+        reference: issue.jobNumber,
+        partyName: issue.clientName,
+        sourceTable: issue.sourceTable,
+        sourceRecordId: issue.sourceRecordId,
+        reason: issue.reason,
+        platformStatus: issue.status,
+        expectedStatus: issue.sourceInvoiceReference || issue.invoiceIds.join('; '),
+        totalAmount: '',
+        lineTotal: '',
+        lineCount: '',
+        recommendedAction: issue.recommendedAction,
+      })),
+    ];
     return [
       headers.join(','),
-      ...issues.map(issue => headers.map(header => escapeCell(issue[header])).join(','))
+      ...rows.map(row => headers.map(header => escapeCell(row[header as keyof typeof row])).join(','))
     ].join('\n');
   }
 };

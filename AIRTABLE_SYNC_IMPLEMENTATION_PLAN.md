@@ -19,6 +19,7 @@
 - [13. Auditoria e reconciliacao](#13-auditoria-e-reconciliacao)
 - [14. Definition of Done geral](#14-definition-of-done-geral)
 - [15. Checklist mestre](#15-checklist-mestre)
+- [16. Prova de reconciliacao financeira](#16-prova-de-reconciliacao-financeira)
 
 ## 1. Objetivo operacional
 
@@ -618,3 +619,64 @@ Uma fase so esta pronta quando:
 - [ ] Novos formularios ativados.
 - [ ] Airtable intake desativado.
 - [ ] Sync fica como audit/read-only ou e removido da operacao diaria.
+
+## 16. Prova de reconciliacao financeira
+
+### Baseline validado em 24/07/2026
+
+Modo operacional usado na prova:
+
+- `HYBRID`
+- Importacao `ON`
+- Emails `SUPPRESSED`
+- Airtable somente leitura
+
+Problema raiz encontrado:
+
+- A tabela Airtable `Invoices` possui uma linha financeira por job.
+- Varias linhas podem compartilhar o mesmo `Invoice Nbr`.
+- O importador antigo gravava uma invoice por linha usando um ID derivado apenas do numero da invoice.
+- Linhas posteriores sobrescreviam as anteriores, perdendo jobs e valores.
+- A extracao antiga de links aceitava campos cujo nome apenas terminava com `Job Number from redbook`, contando lookups de data, agente, idioma e outros campos como links de jobs.
+
+Implementacao concluida:
+
+- [x] Agrupar linhas por `Invoice Nbr` normalizado.
+- [x] Preservar registros sem referencia como invoices separadas e auditaveis.
+- [x] Somar subtotal, VAT e total de todas as linhas.
+- [x] Criar uma `ClientInvoiceLine` deterministica por job.
+- [x] Distribuir o valor quando uma linha Airtable referencia mais de um job.
+- [x] Remover linhas importadas antigas que nao pertencem mais ao grupo.
+- [x] Persistir `sourceRecordIds`, quantidade de registros e status de origem.
+- [x] Bloquear promocao indevida para `PAID` quando as linhas do grupo possuem status mistos.
+- [x] Extrair links somente de campos Airtable exatos.
+- [x] Fazer o audit considerar `Paid` e `paidAt` como evidencia de pagamento.
+- [x] Executar Dry Run completo com zero erros.
+- [x] Executar Write Sync completo com zero erros.
+
+Provas de referencia:
+
+- `HAM007.Sept.25` e `HAM007.sept.25` foram consolidadas em uma invoice.
+- Airtable: 50 registros, total bruto `GBP 8,642.68`.
+- Plataforma: 50 jobs, 50 linhas, 50 timesheets e total `GBP 8,642.68`.
+- `HIC0001.7480`: `PAID`, `GBP 525.18`, 1 job, 1 linha e 1 timesheet.
+- `HIC0001.7481`: `PAID`, `GBP 473.52`, 1 job, 1 linha e 1 timesheet.
+
+Resultado do Financial Proof:
+
+| Indicador | Antes | Depois |
+| --- | ---: | ---: |
+| Documentos saudaveis | 127 | 1,613 |
+| Documentos afetados | 1,986 | 501 |
+| Issues | 2,909 | 1,274 |
+| Status divergente | 1,620 | 107 |
+
+Backlog financeiro de alta prioridade:
+
+- [ ] Resolver 431 bookings com sinal financeiro sem link de client invoice.
+- [ ] Resolver 306 invoices sem job persistido.
+- [ ] Tratar 269 invoices sem valor verificavel na origem.
+- [ ] Tratar 161 invoices sem referencia externa.
+- [ ] Revisar 107 divergencias reais de status.
+- [ ] Separar no audit os fluxos de interpretacao, traducao e cancellation fee.
+- [ ] Adicionar contadores por motivo ao resultado do Dry Run, nao apenas ao Financial Proof.
