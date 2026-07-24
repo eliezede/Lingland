@@ -47,6 +47,20 @@ export const ClientService = {
     return { id, ...data } as Client;
   },
 
+  updateOrganizationAccount: async (input: {
+    clientId: string;
+    companyName: string;
+    contactPerson: string;
+    email: string;
+    billingAddress: string;
+    paymentTermsDays: number;
+    defaultCostCodeType: string;
+    reason?: string;
+  }): Promise<Client> => {
+    const callable = httpsCallable<typeof input, Client>(functions, 'updateClientOrganizationAccount');
+    return (await callable(input)).data;
+  },
+
   delete: async (id: string): Promise<void> => {
     await httpsCallable(functions, 'deletePlatformEntity')({ entityType: 'CLIENT', id });
   }

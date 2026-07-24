@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildClientHierarchyScopeBatchPlan,
   buildClientFinanceBackfillPlan,
   buildClientHierarchyIntegrityAudit,
   ClientHierarchyIntegrityInput,
@@ -18,6 +19,83 @@ const base = (): ClientHierarchyIntegrityInput => ({
 });
 
 describe('client hierarchy integrity audit', () => {
+  it('previews a deterministic, non-destructive legacy job scope batch', () => {
+    const input = base();
+    input.bookings = [
+      { id: 'job-a', data: { clientId: 'client-a', displayRef: 'LING26.10001' } },
+      { id: 'job-b', data: { clientId: 'client-a', clientDepartmentId: 'dept-a' } },
+    ];
+    input.invoiceLines = [{ id: 'line-a', data: { invoiceId: 'invoice-a', bookingId: 'job-a' } }];
+
+    const plan = buildClientHierarchyScopeBatchPlan(input, {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      bookingIds: ['job-b', 'job-a'],
+    });
+
+    expect(plan).toMatchObject({
+      requestedBookingCount: 2,
+      eligibleBookingCount: 1,
+      unchangedBookingCount: 1,
+      financeLinkedBookingCount: 1,
+      linkedInvoiceIds: ['invoice-a'],
+      blockers: [],
+    });
+    expect(plan.jobs[0]).toMatchObject({
+      bookingId: 'job-a',
+      reference: 'LING26.10001',
+      currentClientDepartmentId: '',
+      nextClientDepartmentId: 'dept-a',
+    });
+    expect(plan.fingerprint).toHaveLength(64);
+
+    const reordered = buildClientHierarchyScopeBatchPlan(input, {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      bookingIds: ['job-a', 'job-b'],
+    });
+    expect(reordered.fingerprint).toBe(plan.fingerprint);
+  });
+
+  it('blocks a batch from moving jobs across clients or overwriting an existing scope', () => {
+    const input = base();
+    input.clients.push({ id: 'client-b', data: { companyName: 'Client B', recordState: 'ACTIVE' } });
+    input.bookings = [
+      { id: 'job-a', data: { clientId: 'client-b' } },
+      { id: 'job-b', data: { clientId: 'client-a', clientDepartmentId: 'dept-b' } },
+      { id: 'job-c', data: { clientId: 'client-a', requestedByAgentId: 'agent-b' } },
+    ];
+
+    const plan = buildClientHierarchyScopeBatchPlan(input, {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      requestedByAgentId: 'agent-a',
+      bookingIds: ['job-a', 'job-b', 'job-c', 'job-missing'],
+    });
+
+    expect(plan.eligibleBookingCount).toBe(0);
+    expect(plan.blockers.map(blocker => blocker.code)).toEqual([
+      'CLIENT_MISMATCH',
+      'DEPARTMENT_CONFLICT',
+      'REQUESTER_CONFLICT',
+      'BOOKING_NOT_FOUND',
+    ]);
+  });
+
+  it('invalidates a batch preview when any selected job hierarchy changes', () => {
+    const input = base();
+    input.bookings[0].data = { clientId: 'client-a' };
+    const target = {
+      clientId: 'client-a',
+      clientDepartmentId: 'dept-a',
+      bookingIds: ['job-a'],
+    };
+    const initial = buildClientHierarchyScopeBatchPlan(input, target);
+    input.bookings[0].data.clientSnapshot = { organizationName: 'Changed after preview' };
+    const changed = buildClientHierarchyScopeBatchPlan(input, target);
+    expect(changed.fingerprint).not.toBe(initial.fingerprint);
+  });
+
   it('binds a job repair fingerprint to every hierarchy relationship', () => {
     const baseFingerprint = createBookingHierarchyFingerprint('job-a', {
       clientId: 'client-a',

@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions/v1';
 import {
+  buildClientHierarchyScopeBatchPlan,
   buildClientFinanceBackfillPlan,
   buildClientHierarchyIntegrityAudit,
   createBookingHierarchyFingerprint,
@@ -28,6 +29,7 @@ const BOOKING_HIERARCHY_FIELDS = [
   'requesterIdentityStatus',
   'lastHierarchyRepairManifestId',
 ] as const;
+const MAX_SCOPE_BATCH_JOBS = 50;
 
 const assertAdmin = async (uid?: string, superAdminOnly = false) => {
   if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Authentication is required.');
@@ -74,6 +76,78 @@ const loadIntegrityInput = async (): Promise<ClientHierarchyIntegrityInput> => {
     generatedAt: new Date().toISOString(),
     truncated,
   };
+};
+
+const validateHierarchyScopeTarget = (
+  input: ClientHierarchyIntegrityInput,
+  requestedClientId: string,
+  requestedDepartmentId: string,
+  requestedAgentId: string,
+) => {
+  if (!requestedClientId || (!requestedDepartmentId && !requestedAgentId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Choose a canonical client and at least one hierarchy scope.');
+  }
+  const selectedClientIdentity = resolveClientIdentity(
+    { id: 'batch-scope-client', data: { clientId: requestedClientId } },
+    input.clients,
+  );
+  if (selectedClientIdentity.status !== 'RESOLVED' || !selectedClientIdentity.clientId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Select a valid canonical client.');
+  }
+  const clientId = selectedClientIdentity.clientId;
+  if (clientId !== requestedClientId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Open the canonical client before scoping its jobs.');
+  }
+  const client = input.clients.find(item => item.id === clientId);
+  if (!client) throw new functions.https.HttpsError('not-found', 'Canonical client not found.');
+
+  const department = requestedDepartmentId
+    ? input.departments.find(item => item.id === requestedDepartmentId)
+    : undefined;
+  if (requestedDepartmentId) {
+    const departmentClient = department
+      ? resolveClientIdentity({ id: department.id, data: { clientId: department.data.clientId } }, input.clients)
+      : null;
+    if (!department || text(department.data.status).toUpperCase() === 'ARCHIVED' || departmentClient?.clientId !== clientId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Selected department does not belong to this client.');
+    }
+  }
+
+  const agent = requestedAgentId
+    ? input.agents.find(item => item.id === requestedAgentId)
+    : undefined;
+  let membership: IntegrityDocument | undefined;
+  if (requestedAgentId) {
+    if (!agent || text(agent.data.status).toUpperCase() === 'INACTIVE') {
+      throw new functions.https.HttpsError('failed-precondition', 'Selected requester is not active.');
+    }
+    if (text(agent.data.agentType).toUpperCase() === 'SHARED_MAILBOX') {
+      throw new functions.https.HttpsError('failed-precondition', 'A shared mailbox cannot be assigned as the requester.');
+    }
+    membership = input.memberships.find(item => {
+      if (text(item.data.agentId) !== requestedAgentId || text(item.data.status).toUpperCase() === 'INACTIVE') return false;
+      const membershipClient = resolveClientIdentity(
+        { id: item.id, data: { clientId: item.data.clientId } },
+        input.clients,
+      );
+      return membershipClient.clientId === clientId;
+    });
+    if (!membership) {
+      throw new functions.https.HttpsError('failed-precondition', 'Selected requester has no active membership for this client.');
+    }
+    const membershipDepartments = stringValues(membership.data.departmentIds);
+    const accessLevel = text(membership.data.accessLevel).toUpperCase();
+    if (
+      requestedDepartmentId
+      && membershipDepartments.length > 0
+      && !membershipDepartments.includes(requestedDepartmentId)
+      && accessLevel !== 'CLIENT_MASTER'
+    ) {
+      throw new functions.https.HttpsError('failed-precondition', 'Selected requester is outside the chosen department.');
+    }
+  }
+
+  return { clientId, client, department, agent, membership };
 };
 
 const commitInChunks = async (
@@ -231,6 +305,375 @@ export const reconcileClientFinanceHierarchy = functions.runWith(RUNTIME).https.
     }, { merge: true });
     throw new functions.https.HttpsError('internal', `Reconciliation stopped safely. Use manifest ${manifestRef.id} to inspect or roll back partial writes.`);
   }
+});
+
+export const getClientHierarchyScopeBatchPreview = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+  await assertAdmin(context.auth?.uid);
+  const requestedClientId = text(data?.clientId);
+  const requestedDepartmentId = text(data?.clientDepartmentId);
+  const requestedAgentId = text(data?.requestedByAgentId);
+  const bookingIds = Array.from(new Set(stringValues(data?.bookingIds)));
+  if (bookingIds.length === 0 || bookingIds.length > MAX_SCOPE_BATCH_JOBS) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      `Choose between 1 and ${MAX_SCOPE_BATCH_JOBS} jobs for one reviewed batch.`,
+    );
+  }
+
+  const input = await loadIntegrityInput();
+  const target = validateHierarchyScopeTarget(
+    input,
+    requestedClientId,
+    requestedDepartmentId,
+    requestedAgentId,
+  );
+  const plan = buildClientHierarchyScopeBatchPlan(input, {
+    clientId: target.clientId,
+    clientDepartmentId: requestedDepartmentId,
+    requestedByAgentId: requestedAgentId,
+    bookingIds,
+  });
+  const financePlan = buildClientFinanceBackfillPlan(input);
+  return {
+    success: true,
+    readOnly: true,
+    canApply: !input.truncated && plan.blockers.length === 0 && plan.eligibleBookingCount > 0,
+    confirmationPhrase: plan.financeLinkedBookingCount > 0 ? 'SCOPE CLIENT JOBS' : '',
+    financeFingerprint: financePlan.fingerprint,
+    truncated: input.truncated === true,
+    ...plan,
+    target: {
+      clientId: target.clientId,
+      organizationName: text(target.client.data.companyName || target.client.data.name || target.clientId),
+      clientDepartmentId: requestedDepartmentId,
+      departmentName: text(target.department?.data.name),
+      requestedByAgentId: requestedAgentId,
+      requesterName: text(target.agent?.data.displayName || target.agent?.data.name),
+    },
+  };
+});
+
+export const applyClientHierarchyScopeBatch = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context.auth?.uid);
+  const requestedClientId = text(data?.clientId);
+  const requestedDepartmentId = text(data?.clientDepartmentId);
+  const requestedAgentId = text(data?.requestedByAgentId);
+  const bookingIds = Array.from(new Set(stringValues(data?.bookingIds)));
+  const expectedFingerprint = text(data?.expectedFingerprint);
+  const reason = text(data?.reason).slice(0, 500);
+  if (bookingIds.length === 0 || bookingIds.length > MAX_SCOPE_BATCH_JOBS || !expectedFingerprint) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      `A reviewed batch of 1 to ${MAX_SCOPE_BATCH_JOBS} jobs is required.`,
+    );
+  }
+  if (reason.length < 5) {
+    throw new functions.https.HttpsError('invalid-argument', 'Record a short operational reason for this batch.');
+  }
+
+  const input = await loadIntegrityInput();
+  if (input.truncated) {
+    throw new functions.https.HttpsError('failed-precondition', 'The hierarchy audit exceeded its safety limit.');
+  }
+  const target = validateHierarchyScopeTarget(
+    input,
+    requestedClientId,
+    requestedDepartmentId,
+    requestedAgentId,
+  );
+  const plan = buildClientHierarchyScopeBatchPlan(input, {
+    clientId: target.clientId,
+    clientDepartmentId: requestedDepartmentId,
+    requestedByAgentId: requestedAgentId,
+    bookingIds,
+  });
+  if (plan.fingerprint !== expectedFingerprint) {
+    throw new functions.https.HttpsError('aborted', 'One or more jobs changed after preview. Review the batch again.');
+  }
+  if (plan.blockers.length > 0 || plan.eligibleBookingCount === 0) {
+    throw new functions.https.HttpsError('failed-precondition', 'The reviewed batch contains conflicts or no remaining changes.');
+  }
+
+  const financePlan = buildClientFinanceBackfillPlan(input);
+  if (plan.financeLinkedBookingCount > 0) {
+    if (actor.role !== 'SUPER_ADMIN') {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        'Only an active Super Admin can scope jobs already linked to finance.',
+      );
+    }
+    if (text(data?.confirmation).toUpperCase() !== 'SCOPE CLIENT JOBS') {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Type SCOPE CLIENT JOBS to confirm this financial-scope batch.',
+      );
+    }
+    if (text(data?.expectedFinanceFingerprint) !== financePlan.fingerprint) {
+      throw new functions.https.HttpsError('aborted', 'Finance relationships changed after preview. Review the batch again.');
+    }
+  }
+
+  const organizationName = text(target.client.data.companyName || target.client.data.name || target.clientId);
+  const departmentName = text(target.department?.data.name);
+  const requesterName = text(target.agent?.data.displayName || target.agent?.data.name);
+  const requesterEmail = text(target.agent?.data.email).toLowerCase();
+  const requestedByUserId = text(target.membership?.data.userId || target.agent?.data.userId);
+  const manifestRef = db.collection('clientHierarchyScopeBatchManifests').doc();
+  const auditRef = db.collection('auditEvents').doc();
+  const bookingRefs = plan.jobs.map(job => db.collection('bookings').doc(job.bookingId));
+  const eventRefs = plan.jobs.map(() => db.collection('jobEvents').doc());
+  const createdAt = new Date().toISOString();
+
+  await db.runTransaction(async transaction => {
+    const currentBookings = await Promise.all(bookingRefs.map(ref => transaction.get(ref)));
+    const manifestJobs: Array<Record<string, unknown>> = [];
+
+    currentBookings.forEach((current, index) => {
+      const planned = plan.jobs[index];
+      if (!current.exists) throw new functions.https.HttpsError('not-found', `Job ${planned.bookingId} no longer exists.`);
+      const currentData = current.data() || {};
+      if (createBookingHierarchyFingerprint(planned.bookingId, currentData) !== planned.currentFingerprint) {
+        throw new functions.https.HttpsError('aborted', `Job ${planned.reference} changed after preview.`);
+      }
+
+      const currentSnapshot = currentData.clientSnapshot && typeof currentData.clientSnapshot === 'object'
+        ? currentData.clientSnapshot as Record<string, unknown>
+        : {};
+      const nextSnapshot: Record<string, unknown> = {
+        ...currentSnapshot,
+        organizationName,
+        ...(planned.nextClientDepartmentId ? { departmentName } : {}),
+        ...(planned.nextRequestedByAgentId ? { requesterName, requesterEmail } : {}),
+      };
+      const patch: Record<string, unknown> = {
+        clientName: organizationName,
+        clientIdentityStatus: 'RESOLVED',
+        clientSnapshot: nextSnapshot,
+        lastHierarchyScopeBatchManifestId: manifestRef.id,
+        hierarchyScopedAt: admin.firestore.FieldValue.serverTimestamp(),
+        hierarchyScopedBy: actor.uid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      const touchedFields = [
+        'clientName',
+        'clientIdentityStatus',
+        'clientSnapshot',
+        'lastHierarchyScopeBatchManifestId',
+        'hierarchyScopedAt',
+        'hierarchyScopedBy',
+      ];
+      const nextData: Record<string, unknown> = { ...currentData, ...patch, clientSnapshot: nextSnapshot };
+
+      if (planned.nextClientDepartmentId !== planned.currentClientDepartmentId) {
+        patch.clientDepartmentId = planned.nextClientDepartmentId;
+        patch.clientDepartmentSource = 'STAFF_MANUAL';
+        nextData.clientDepartmentId = planned.nextClientDepartmentId;
+        nextData.clientDepartmentSource = 'STAFF_MANUAL';
+        touchedFields.push('clientDepartmentId', 'clientDepartmentSource');
+      }
+      if (planned.nextRequestedByAgentId !== planned.currentRequestedByAgentId) {
+        patch.requestedByAgentId = planned.nextRequestedByAgentId;
+        patch.requestedByAgentSource = 'STAFF_MANUAL';
+        patch.requesterIdentityStatus = 'RESOLVED';
+        patch.requestedByUserId = requestedByUserId || admin.firestore.FieldValue.delete();
+        nextData.requestedByAgentId = planned.nextRequestedByAgentId;
+        nextData.requestedByAgentSource = 'STAFF_MANUAL';
+        nextData.requesterIdentityStatus = 'RESOLVED';
+        if (requestedByUserId) nextData.requestedByUserId = requestedByUserId;
+        else delete nextData.requestedByUserId;
+        touchedFields.push(
+          'requestedByAgentId',
+          'requestedByAgentSource',
+          'requesterIdentityStatus',
+          'requestedByUserId',
+        );
+      }
+
+      const presentFields = touchedFields.filter(field => Object.prototype.hasOwnProperty.call(currentData, field));
+      const previousValues = Object.fromEntries(presentFields.map(field => [field, currentData[field]]));
+      const appliedFingerprint = createBookingHierarchyFingerprint(planned.bookingId, nextData);
+      transaction.set(
+        manifestRef.collection('bookings').doc(planned.bookingId),
+        {
+          bookingId: planned.bookingId,
+          reference: planned.reference,
+          currentFingerprint: planned.currentFingerprint,
+          appliedFingerprint,
+          touchedFields,
+          presentFields,
+          previousValues,
+          linkedInvoiceIds: planned.linkedInvoiceIds,
+        },
+      );
+      transaction.set(current.ref, patch, { merge: true });
+      transaction.set(eventRefs[index], {
+        type: 'CLIENT_HIERARCHY_SCOPE_APPLIED',
+        jobId: planned.bookingId,
+        actorId: actor.uid,
+        manifestId: manifestRef.id,
+        reason,
+        createdAt,
+      });
+      manifestJobs.push({
+        bookingId: planned.bookingId,
+        reference: planned.reference,
+        appliedFingerprint,
+        linkedInvoiceIds: planned.linkedInvoiceIds,
+      });
+    });
+
+    transaction.set(manifestRef, {
+      type: 'CLIENT_HIERARCHY_SCOPE_BATCH',
+      status: 'COMPLETED',
+      actorId: actor.uid,
+      reason,
+      expectedFingerprint,
+      financeFingerprint: financePlan.fingerprint,
+      target: {
+        clientId: target.clientId,
+        clientDepartmentId: requestedDepartmentId,
+        requestedByAgentId: requestedAgentId,
+      },
+      jobs: manifestJobs,
+      bookingCount: manifestJobs.length,
+      financeLinkedBookingCount: plan.financeLinkedBookingCount,
+      linkedInvoiceIds: plan.linkedInvoiceIds,
+      createdAt,
+      rollbackAvailable: true,
+      financeReconciliationRequired: plan.financeLinkedBookingCount > 0,
+    });
+    transaction.set(auditRef, {
+      type: 'CLIENT_HIERARCHY_SCOPE_BATCH_APPLIED',
+      actorId: actor.uid,
+      manifestId: manifestRef.id,
+      clientId: target.clientId,
+      bookingIds: plan.jobs.map(job => job.bookingId),
+      linkedInvoiceIds: plan.linkedInvoiceIds,
+      reason,
+      occurredAt: createdAt,
+    });
+  });
+
+  return {
+    success: true,
+    manifestId: manifestRef.id,
+    clientId: target.clientId,
+    bookingCount: plan.eligibleBookingCount,
+    financeLinkedBookingCount: plan.financeLinkedBookingCount,
+    linkedInvoiceIds: plan.linkedInvoiceIds,
+    financeReconciliationRequired: plan.financeLinkedBookingCount > 0,
+  };
+});
+
+export const rollbackClientHierarchyScopeBatch = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+  const actor = await assertAdmin(context.auth?.uid, true);
+  const manifestId = text(data?.manifestId);
+  if (!manifestId) throw new functions.https.HttpsError('invalid-argument', 'A hierarchy scope manifest is required.');
+  if (text(data?.confirmation).toUpperCase() !== 'ROLLBACK CLIENT JOB SCOPE') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Type ROLLBACK CLIENT JOB SCOPE to restore the previous job hierarchy.',
+    );
+  }
+
+  const manifestRef = db.collection('clientHierarchyScopeBatchManifests').doc(manifestId);
+  const backups = await manifestRef.collection('bookings').limit(MAX_SCOPE_BATCH_JOBS + 1).get();
+  if (backups.size > MAX_SCOPE_BATCH_JOBS) {
+    throw new functions.https.HttpsError('failed-precondition', 'This manifest exceeds the reviewed batch limit.');
+  }
+  const backupDocuments = backups.docs.sort((left, right) => left.id.localeCompare(right.id));
+  const bookingRefs = backupDocuments.map(backup => db.collection('bookings').doc(backup.id));
+  const eventRefs = backupDocuments.map(() => db.collection('jobEvents').doc());
+  const auditRef = db.collection('auditEvents').doc();
+  const rolledBackAt = new Date().toISOString();
+
+  const result = await db.runTransaction(async transaction => {
+    const manifest = await transaction.get(manifestRef);
+    if (!manifest.exists) throw new functions.https.HttpsError('not-found', 'Hierarchy scope manifest not found.');
+    const manifestData = manifest.data() || {};
+    if (text(manifestData.type) !== 'CLIENT_HIERARCHY_SCOPE_BATCH') {
+      throw new functions.https.HttpsError('failed-precondition', 'This manifest does not belong to a hierarchy scope batch.');
+    }
+    if (text(manifestData.status).toUpperCase() === 'ROLLED_BACK') {
+      return {
+        success: true,
+        idempotent: true,
+        manifestId,
+        bookingCount: Number(manifestData.bookingCount || 0),
+        financeReconciliationRequired: Boolean(manifestData.financeReconciliationRequired),
+      };
+    }
+    if (text(manifestData.status).toUpperCase() !== 'COMPLETED') {
+      throw new functions.https.HttpsError('failed-precondition', 'Only a completed hierarchy scope batch can be restored.');
+    }
+    if (backupDocuments.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'The rollback manifest has no booking backups.');
+    }
+
+    const currentBookings = await Promise.all(bookingRefs.map(ref => transaction.get(ref)));
+    currentBookings.forEach((current, index) => {
+      const backup = backupDocuments[index].data();
+      if (!current.exists) throw new functions.https.HttpsError('not-found', `Job ${backupDocuments[index].id} no longer exists.`);
+      const currentData = current.data() || {};
+      if (
+        text(currentData.lastHierarchyScopeBatchManifestId) !== manifestId
+        || createBookingHierarchyFingerprint(current.id, currentData) !== text(backup.appliedFingerprint)
+      ) {
+        throw new functions.https.HttpsError(
+          'aborted',
+          `Job ${text(backup.reference || current.id)} changed after this batch. Rollback was stopped.`,
+        );
+      }
+    });
+
+    currentBookings.forEach((current, index) => {
+      const backup = backupDocuments[index].data();
+      const touchedFields = stringValues(backup.touchedFields);
+      const presentFields = new Set(stringValues(backup.presentFields));
+      const previousValues = backup.previousValues && typeof backup.previousValues === 'object'
+        ? backup.previousValues as Record<string, unknown>
+        : {};
+      const patch: Record<string, unknown> = {
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        hierarchyScopeRolledBackAt: admin.firestore.FieldValue.serverTimestamp(),
+        hierarchyScopeRolledBackBy: actor.uid,
+      };
+      touchedFields.forEach(field => {
+        patch[field] = presentFields.has(field)
+          ? previousValues[field]
+          : admin.firestore.FieldValue.delete();
+      });
+      transaction.set(current.ref, patch, { merge: true });
+      transaction.set(eventRefs[index], {
+        type: 'CLIENT_HIERARCHY_SCOPE_ROLLED_BACK',
+        jobId: current.id,
+        actorId: actor.uid,
+        manifestId,
+        createdAt: rolledBackAt,
+      });
+    });
+    transaction.set(manifestRef, {
+      status: 'ROLLED_BACK',
+      rollbackAvailable: false,
+      rolledBackAt,
+      rolledBackBy: actor.uid,
+    }, { merge: true });
+    transaction.set(auditRef, {
+      type: 'CLIENT_HIERARCHY_SCOPE_BATCH_ROLLED_BACK',
+      actorId: actor.uid,
+      manifestId,
+      bookingIds: backupDocuments.map(backup => backup.id),
+      occurredAt: rolledBackAt,
+    });
+    return {
+      success: true,
+      manifestId,
+      bookingCount: backupDocuments.length,
+      financeReconciliationRequired: Boolean(manifestData.financeReconciliationRequired),
+    };
+  });
+
+  return result;
 });
 
 export const getClientBookingHierarchyRepairPreview = functions.runWith(RUNTIME).https.onCall(async (data, context) => {

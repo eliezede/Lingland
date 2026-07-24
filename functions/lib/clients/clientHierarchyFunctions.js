@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.prepareClientAgentAccount = exports.saveClientAgentMembership = exports.saveClientDepartment = void 0;
+exports.prepareClientAgentAccount = exports.saveClientAgentMembership = exports.saveClientDepartment = exports.updateClientOrganizationAccount = void 0;
 const node_crypto_1 = require("node:crypto");
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
@@ -44,6 +44,8 @@ const RUNTIME = { timeoutSeconds: 60, memory: '256MB' };
 const AGENT_TYPES = new Set(['PERSON', 'SHARED_MAILBOX']);
 const ACCESS_LEVELS = new Set(['AGENT', 'DEPARTMENT_MANAGER', 'CLIENT_FINANCE', 'CLIENT_MASTER']);
 const AGENT_ROLES = new Set(['REQUESTER', 'FINANCE']);
+const PAYMENT_TERMS = new Set([7, 14, 30, 60]);
+const REQUIREMENT_MODES = new Set(['PO', 'Cost Code', 'Client Name']);
 const text = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const unique = (values) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 const stableId = (prefix, value) => `${prefix}_${(0, node_crypto_1.createHash)('sha1').update(value).digest('hex').slice(0, 20)}`;
@@ -95,6 +97,75 @@ const writeHierarchyAudit = async (actor, entityType, entityId, action, changedF
         createdAt: new Date().toISOString(),
     });
 };
+exports.updateClientOrganizationAccount = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+    const actor = await assertActiveAdmin(context.auth?.uid);
+    const clientId = text(data?.clientId);
+    const companyName = text(data?.companyName);
+    const contactPerson = text(data?.contactPerson);
+    const email = text(data?.email).toLowerCase();
+    const billingAddress = String(data?.billingAddress ?? '').trim().slice(0, 2000);
+    const paymentTermsDays = Number(data?.paymentTermsDays || 30);
+    const defaultCostCodeType = text(data?.defaultCostCodeType || 'Client Name');
+    const reason = text(data?.reason).slice(0, 500);
+    if (!clientId || companyName.length < 2 || companyName.length > 160) {
+        throw new functions.https.HttpsError('invalid-argument', 'Client and a valid organisation name are required.');
+    }
+    if (contactPerson.length > 160 || (email && !emailPattern.test(email))) {
+        throw new functions.https.HttpsError('invalid-argument', 'Check the primary contact and finance email.');
+    }
+    if (!PAYMENT_TERMS.has(paymentTermsDays) || !REQUIREMENT_MODES.has(defaultCostCodeType)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Choose valid payment terms and requirement mode.');
+    }
+    const clientDocument = await assertCanonicalClient(clientId);
+    const before = clientDocument.data() || {};
+    const previousName = text(before.companyName || before.name);
+    const normalizedCompanyName = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(companyName);
+    if (!normalizedCompanyName) {
+        throw new functions.https.HttpsError('invalid-argument', 'The organisation name cannot be normalised safely.');
+    }
+    const nameChanged = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(previousName) !== normalizedCompanyName;
+    if (nameChanged && reason.length < 5) {
+        throw new functions.https.HttpsError('invalid-argument', 'Record a short reason when changing the canonical organisation identity.');
+    }
+    if (nameChanged) {
+        const sameName = await db.collection('clients')
+            .where('normalizedCompanyName', '==', normalizedCompanyName)
+            .limit(10)
+            .get();
+        const duplicate = sameName.docs.find(document => (document.id !== clientId
+            && text(document.data().recordState).toUpperCase() !== 'MERGED'
+            && !text(document.data().mergedIntoClientId)));
+        if (duplicate) {
+            throw new functions.https.HttpsError('already-exists', 'Another active client already uses this organisation identity. Resolve it through Identity Audit.');
+        }
+    }
+    const updatedAt = new Date().toISOString();
+    const aliases = unique([
+        ...(Array.isArray(before.accountAliases) ? before.accountAliases.map(text) : []),
+        previousName,
+        companyName,
+    ]);
+    const patch = {
+        companyName,
+        normalizedCompanyName,
+        contactPerson,
+        email,
+        invoiceEmail: email,
+        billingAddress,
+        paymentTermsDays,
+        defaultCostCodeType,
+        accountAliases: aliases,
+        identitySource: nameChanged ? 'STAFF_CONFIRMED' : text(before.identitySource || before.sourceSystem),
+        identityConfirmedAt: nameChanged ? updatedAt : text(before.identityConfirmedAt),
+        identityConfirmedBy: nameChanged ? actor.uid : text(before.identityConfirmedBy),
+        identityChangeReason: nameChanged ? reason : text(before.identityChangeReason),
+        updatedAt,
+        updatedBy: actor.uid,
+    };
+    await clientDocument.ref.set(patch, { merge: true });
+    await writeHierarchyAudit(actor, 'client', clientId, nameChanged ? 'CLIENT_ORGANIZATION_IDENTITY_UPDATED' : 'CLIENT_ACCOUNT_UPDATED', Object.keys(patch), before, patch);
+    return { id: clientId, ...patch };
+});
 exports.saveClientDepartment = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
     const actor = await assertActiveAdmin(context.auth?.uid);
     const clientId = text(data?.clientId);

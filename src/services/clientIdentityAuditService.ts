@@ -415,6 +415,57 @@ export interface ClientBookingHierarchyRepairPreview {
   };
 }
 
+export interface ClientHierarchyScopeBatchPreview {
+  success: true;
+  readOnly: true;
+  canApply: boolean;
+  truncated: boolean;
+  confirmationPhrase: string;
+  financeFingerprint: string;
+  fingerprint: string;
+  requestedBookingCount: number;
+  eligibleBookingCount: number;
+  unchangedBookingCount: number;
+  financeLinkedBookingCount: number;
+  linkedInvoiceIds: string[];
+  target: {
+    clientId: string;
+    organizationName: string;
+    clientDepartmentId: string;
+    departmentName: string;
+    requestedByAgentId: string;
+    requesterName: string;
+  };
+  jobs: Array<{
+    bookingId: string;
+    reference: string;
+    date: string;
+    status: string;
+    currentFingerprint: string;
+    currentClientDepartmentId: string;
+    currentRequestedByAgentId: string;
+    nextClientDepartmentId: string;
+    nextRequestedByAgentId: string;
+    linkedInvoiceIds: string[];
+  }>;
+  blockers: Array<{
+    bookingId: string;
+    code: 'BOOKING_NOT_FOUND' | 'CLIENT_MISMATCH' | 'DEPARTMENT_CONFLICT' | 'REQUESTER_CONFLICT';
+    message: string;
+  }>;
+}
+
+export interface ClientHierarchyScopeBatchResult {
+  success: true;
+  idempotent?: boolean;
+  manifestId: string;
+  clientId?: string;
+  bookingCount: number;
+  financeLinkedBookingCount?: number;
+  linkedInvoiceIds?: string[];
+  financeReconciliationRequired: boolean;
+}
+
 let pendingAudit: Promise<ClientIdentityAuditResult> | null = null;
 let cachedAudit: { value: ClientIdentityAuditResult; expiresAt: number } | null = null;
 
@@ -663,6 +714,47 @@ export const ClientIdentityAuditService = {
     const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientBookingHierarchyRepairResult>(
       functions,
       'rollbackClientBookingHierarchyRepair',
+      { timeout: 300000 },
+    );
+    return (await callable({ manifestId, confirmation })).data;
+  },
+  getClientHierarchyScopeBatchPreview: async (input: {
+    clientId: string;
+    clientDepartmentId?: string;
+    requestedByAgentId?: string;
+    bookingIds: string[];
+  }): Promise<ClientHierarchyScopeBatchPreview> => {
+    const callable = httpsCallable<typeof input, ClientHierarchyScopeBatchPreview>(
+      functions,
+      'getClientHierarchyScopeBatchPreview',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  applyClientHierarchyScopeBatch: async (input: {
+    clientId: string;
+    clientDepartmentId?: string;
+    requestedByAgentId?: string;
+    bookingIds: string[];
+    expectedFingerprint: string;
+    expectedFinanceFingerprint?: string;
+    confirmation?: string;
+    reason: string;
+  }): Promise<ClientHierarchyScopeBatchResult> => {
+    const callable = httpsCallable<typeof input, ClientHierarchyScopeBatchResult>(
+      functions,
+      'applyClientHierarchyScopeBatch',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  rollbackClientHierarchyScopeBatch: async (
+    manifestId: string,
+    confirmation: string,
+  ): Promise<ClientHierarchyScopeBatchResult> => {
+    const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientHierarchyScopeBatchResult>(
+      functions,
+      'rollbackClientHierarchyScopeBatch',
       { timeout: 300000 },
     );
     return (await callable({ manifestId, confirmation })).data;

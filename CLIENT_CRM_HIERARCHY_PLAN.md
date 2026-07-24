@@ -452,3 +452,23 @@ Crown Prosecution Service remains deliberately unmerged. Its five addresses are 
 - Account activation now updates `clientAgents.userId` and `clientMemberships.userId` when a provisional user document is aligned to the real Firebase Auth UID.
 - Prepared and active portal states are distinct in Client CRM. Chat is available only for active accounts, not passive imported identities.
 - The first passive pilot linked Katy Caswell to Priory Hospital Southampton. Browser verification shows `CLIENT / IMPORTED` in Users & Roles and `Portal prepared` in Client CRM, with no activation email sent.
+
+## Residual source review and legacy job scoping - 24 July 2026
+
+- `Clients / Full audit` was rerun after the first explicit source deferral. The result is `14` creates, `420` updates, `1` skipped deferred source, `8` remaining conflict rows across `7` review decisions, and `0` errors. Client staging reports `383` canonical clients, `70` departments, `1199` agents, `7` needs-review decisions and `1` deferred source.
+- Airtable Department record `recl5hXA0xWFME85Y` contains only the personal email `andreabb1972@gmail.com` as its name and no organisation, contact, address, parent, job or invoice evidence. It was deferred as `Not an organisation` with a reversible mapping-ledger decision; the Airtable source was not changed.
+- `Basingstoke Magistrates`, both `HCC Eastleigh Borough Council` rows, `HCC Homeless Department`, `HCC Mental Health`, `NEHF Healthier Communities Team`, and `Rushmoor Borough Council` remain blocked. Their Department rows contain only a name and no safe parent evidence. They must not be guessed or approved merely to clear Write Sync.
+- `Hampshire Police Witness Care` is the only remaining parent-resolvable row. Airtable Clients Book record `recXXXd0zxMejpL8K` identifies `Witness Care - Hampshire Police`, the functional mailbox `wcu.crown@hampshire.police.uk`, telephone `02380-451636`, and booking contact Kate Thompson. The platform already contains `airtable_client_hampshire-and-isle-of-wight-constabulary-witness-care-unit` with three jobs, two of them invoiced.
+- The approved hierarchy repair is to preserve that existing client ID and its dependencies, rename the canonical organisation to `Hampshire and Isle of Wight Constabulary`, create `Witness Care Unit` as a department, retain the functional email as a shared mailbox, and scope the three legacy jobs to the department. No requester person will be invented from a functional mailbox or conflicting legacy contact names.
+
+### Audited legacy job scope control
+
+- [x] Add a read-only batch preview bound to the exact canonical client, selected jobs, target department/requester, each current hierarchy fingerprint, and linked invoice IDs.
+- [x] Limit one reviewed batch to 50 jobs and refuse missing jobs, cross-client movement, department replacement, requester replacement, archived departments, shared-mailbox requesters, or out-of-scope memberships.
+- [x] Require active Super Admin, a fresh finance fingerprint and `SCOPE CLIENT JOBS` when any selected job is linked to an invoice.
+- [x] Apply the batch in one Firestore transaction with a root manifest, per-job backups, job events and an audit event. The operation enriches missing hierarchy only and never writes an invoice.
+- [x] Provide an all-or-nothing rollback guarded by the manifest owner marker, current job fingerprints and `ROLLBACK CLIENT JOB SCOPE`.
+- [x] Move organisation account editing behind an audited callable. Canonical name changes preserve the previous name as an alias, reject duplicate active identities and require a written reason.
+- [x] Add the Client CRM `Scope legacy jobs` workflow with exact counts, finance warning, explicit confirmation, manifest result and emergency rollback.
+- [ ] Apply the reviewed police hierarchy, rerun Finance Hierarchy preview/reconciliation for the two linked invoices, then map the orphan Airtable Department row to the canonical police client.
+- [ ] Rerun `Clients / Full audit`; the expected unresolved delta is one fewer row and one fewer decision, with the personal-email deferral still visible.

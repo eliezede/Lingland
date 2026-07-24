@@ -90,6 +90,52 @@ export interface ClientFinanceBackfillPlan {
   }>;
 }
 
+export type ClientHierarchyScopeBatchBlockerCode =
+  | 'BOOKING_NOT_FOUND'
+  | 'CLIENT_MISMATCH'
+  | 'DEPARTMENT_CONFLICT'
+  | 'REQUESTER_CONFLICT';
+
+export interface ClientHierarchyScopeBatchTarget {
+  clientId: string;
+  clientDepartmentId?: string;
+  requestedByAgentId?: string;
+  bookingIds: string[];
+}
+
+export interface ClientHierarchyScopeBatchJob {
+  bookingId: string;
+  reference: string;
+  date: string;
+  status: string;
+  currentFingerprint: string;
+  currentClientDepartmentId: string;
+  currentRequestedByAgentId: string;
+  nextClientDepartmentId: string;
+  nextRequestedByAgentId: string;
+  linkedInvoiceIds: string[];
+}
+
+export interface ClientHierarchyScopeBatchPlan {
+  fingerprint: string;
+  target: {
+    clientId: string;
+    clientDepartmentId: string;
+    requestedByAgentId: string;
+  };
+  requestedBookingCount: number;
+  eligibleBookingCount: number;
+  unchangedBookingCount: number;
+  financeLinkedBookingCount: number;
+  linkedInvoiceIds: string[];
+  jobs: ClientHierarchyScopeBatchJob[];
+  blockers: Array<{
+    bookingId: string;
+    code: ClientHierarchyScopeBatchBlockerCode;
+    message: string;
+  }>;
+}
+
 const text = (value: unknown) => String(value ?? '').trim();
 const values = (value: unknown) => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -131,6 +177,133 @@ const clientResolver = (clients: IntegrityDocument[]) => {
     return { id: currentId, exists: false, redirected: currentId !== requestedId };
   };
   return { byId, resolve };
+};
+
+export const buildClientHierarchyScopeBatchPlan = (
+  input: ClientHierarchyIntegrityInput,
+  requestedTarget: ClientHierarchyScopeBatchTarget,
+): ClientHierarchyScopeBatchPlan => {
+  const target = {
+    clientId: text(requestedTarget.clientId),
+    clientDepartmentId: text(requestedTarget.clientDepartmentId),
+    requestedByAgentId: text(requestedTarget.requestedByAgentId),
+  };
+  const requestedBookingIds = unique(requestedTarget.bookingIds.map(text));
+  const bookingById = new Map(input.bookings.map(booking => [booking.id, booking]));
+  const { resolve } = clientResolver(input.clients);
+  const invoiceIdsByBooking = new Map<string, string[]>();
+
+  input.invoiceLines.forEach(line => {
+    const bookingId = text(line.data.bookingId);
+    const invoiceId = text(line.data.invoiceId || line.data.clientInvoiceId);
+    if (!bookingId || !invoiceId) return;
+    invoiceIdsByBooking.set(bookingId, unique([...(invoiceIdsByBooking.get(bookingId) || []), invoiceId]));
+  });
+  input.bookings.forEach(booking => {
+    const invoiceId = text(booking.data.clientInvoiceId);
+    if (!invoiceId) return;
+    invoiceIdsByBooking.set(booking.id, unique([...(invoiceIdsByBooking.get(booking.id) || []), invoiceId]));
+  });
+
+  const jobs: ClientHierarchyScopeBatchJob[] = [];
+  const blockers: ClientHierarchyScopeBatchPlan['blockers'] = [];
+  let unchangedBookingCount = 0;
+
+  requestedBookingIds.forEach(bookingId => {
+    const booking = bookingById.get(bookingId);
+    if (!booking) {
+      blockers.push({
+        bookingId,
+        code: 'BOOKING_NOT_FOUND',
+        message: 'The selected job no longer exists.',
+      });
+      return;
+    }
+    const currentClient = resolve(text(booking.data.clientId));
+    if (!currentClient.exists || currentClient.id !== target.clientId) {
+      blockers.push({
+        bookingId,
+        code: 'CLIENT_MISMATCH',
+        message: 'The selected job is outside this canonical client.',
+      });
+      return;
+    }
+
+    const currentDepartmentId = text(booking.data.clientDepartmentId);
+    const currentAgentId = text(booking.data.requestedByAgentId);
+    if (target.clientDepartmentId && currentDepartmentId && currentDepartmentId !== target.clientDepartmentId) {
+      blockers.push({
+        bookingId,
+        code: 'DEPARTMENT_CONFLICT',
+        message: 'The selected job already belongs to another department.',
+      });
+      return;
+    }
+    if (target.requestedByAgentId && currentAgentId && currentAgentId !== target.requestedByAgentId) {
+      blockers.push({
+        bookingId,
+        code: 'REQUESTER_CONFLICT',
+        message: 'The selected job already belongs to another requester.',
+      });
+      return;
+    }
+
+    const nextDepartmentId = currentDepartmentId || target.clientDepartmentId;
+    const nextAgentId = currentAgentId || target.requestedByAgentId;
+    if (nextDepartmentId === currentDepartmentId && nextAgentId === currentAgentId) {
+      unchangedBookingCount += 1;
+      return;
+    }
+
+    jobs.push({
+      bookingId,
+      reference: text(
+        booking.data.displayRef
+        || booking.data.jobNumber
+        || booking.data.bookingRef
+        || booking.data.legacyPlatformRef
+        || bookingId,
+      ),
+      date: text(booking.data.date),
+      status: text(booking.data.status),
+      currentFingerprint: createBookingHierarchyFingerprint(bookingId, booking.data),
+      currentClientDepartmentId: currentDepartmentId,
+      currentRequestedByAgentId: currentAgentId,
+      nextClientDepartmentId: nextDepartmentId,
+      nextRequestedByAgentId: nextAgentId,
+      linkedInvoiceIds: invoiceIdsByBooking.get(bookingId) || [],
+    });
+  });
+
+  const stableJobs = [...jobs].sort((left, right) => left.bookingId.localeCompare(right.bookingId));
+  const stableBlockers = [...blockers].sort((left, right) => (
+    left.bookingId.localeCompare(right.bookingId) || left.code.localeCompare(right.code)
+  ));
+  const linkedInvoiceIds = unique(stableJobs.flatMap(job => job.linkedInvoiceIds));
+  const stable = {
+    target,
+    requestedBookingIds,
+    jobs: stableJobs.map(job => ({
+      bookingId: job.bookingId,
+      currentFingerprint: job.currentFingerprint,
+      nextClientDepartmentId: job.nextClientDepartmentId,
+      nextRequestedByAgentId: job.nextRequestedByAgentId,
+      linkedInvoiceIds: job.linkedInvoiceIds,
+    })),
+    blockers: stableBlockers.map(blocker => ({ bookingId: blocker.bookingId, code: blocker.code })),
+  };
+
+  return {
+    fingerprint: createHash('sha256').update(JSON.stringify(stable)).digest('hex'),
+    target,
+    requestedBookingCount: requestedBookingIds.length,
+    eligibleBookingCount: stableJobs.length,
+    unchangedBookingCount,
+    financeLinkedBookingCount: stableJobs.filter(job => job.linkedInvoiceIds.length > 0).length,
+    linkedInvoiceIds,
+    jobs: stableJobs,
+    blockers: stableBlockers,
+  };
 };
 
 const buildFinancePlan = (input: ClientHierarchyIntegrityInput): ClientFinanceBackfillPlan => {

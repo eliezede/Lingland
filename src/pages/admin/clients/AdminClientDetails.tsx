@@ -6,6 +6,11 @@ import { BillingService } from '../../../services/billingService';
 import { ChatService } from '../../../services/chatService';
 import { ClientHierarchyService } from '../../../services/clientHierarchyService';
 import {
+    ClientHierarchyScopeBatchPreview,
+    ClientHierarchyScopeBatchResult,
+    ClientIdentityAuditService,
+} from '../../../services/clientIdentityAuditService';
+import {
     Client, Booking, BookingStatus, ClientInvoice, InvoiceStatus,
     ClientAgent, ClientDepartment, ClientMembership,
 } from '../../../types';
@@ -23,7 +28,8 @@ import {
     Clock, Calendar, MessageSquare,
     ChevronLeft, Edit, Trash2, ShieldCheck,
     BarChart3, ChevronRight, AlertCircle,
-    ArrowUpRight, FileText, CheckCircle2, Users, Network, MapPin, Inbox, UserRound, Plus
+    ArrowUpRight, FileText, CheckCircle2, Users, Network, MapPin, Inbox, UserRound, Plus,
+    ListChecks, Undo2
 } from 'lucide-react';
 import { formatLanguagePair } from '../../../utils/languageDisplay';
 
@@ -85,10 +91,21 @@ export const AdminClientDetails = () => {
     const [agentForm, setAgentForm] = useState<AgentForm>(emptyAgentForm);
     const [savingHierarchy, setSavingHierarchy] = useState(false);
     const [preparingAccount, setPreparingAccount] = useState(false);
+    const [isScopeModalOpen, setIsScopeModalOpen] = useState(false);
+    const [scopeDepartmentId, setScopeDepartmentId] = useState('');
+    const [scopeAgentId, setScopeAgentId] = useState('');
+    const [scopeReason, setScopeReason] = useState('');
+    const [scopeConfirmation, setScopeConfirmation] = useState('');
+    const [scopeRollbackConfirmation, setScopeRollbackConfirmation] = useState('');
+    const [scopePreview, setScopePreview] = useState<ClientHierarchyScopeBatchPreview | null>(null);
+    const [scopeResult, setScopeResult] = useState<ClientHierarchyScopeBatchResult | null>(null);
+    const [scopeError, setScopeError] = useState('');
+    const [scopeLoading, setScopeLoading] = useState(false);
 
     // Edit State
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [formData, setFormData] = useState<Partial<Client>>({});
+    const [accountChangeReason, setAccountChangeReason] = useState('');
     const [saving, setSaving] = useState(false);
 
     // Deletion State
@@ -196,12 +213,23 @@ export const AdminClientDetails = () => {
         if (!id || !formData) return;
         setSaving(true);
         try {
-            await ClientService.update(id, formData);
+            await ClientService.updateOrganizationAccount({
+                clientId: id,
+                companyName: String(formData.companyName || ''),
+                contactPerson: String(formData.contactPerson || ''),
+                email: String(formData.email || ''),
+                billingAddress: String(formData.billingAddress || ''),
+                paymentTermsDays: Number(formData.paymentTermsDays || 30),
+                defaultCostCodeType: String(formData.defaultCostCodeType || 'Client Name'),
+                reason: accountChangeReason,
+            });
             await loadData(id);
             setIsEditModalOpen(false);
+            setAccountChangeReason('');
             showToast('Account updated successfully', 'success');
         } catch (error) {
-            showToast('Failed to update account', 'error');
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to update account', 'error');
         } finally {
             setSaving(false);
         }
@@ -360,6 +388,104 @@ export const AdminClientDetails = () => {
         }
     };
 
+    const resetScopeReview = () => {
+        setScopePreview(null);
+        setScopeResult(null);
+        setScopeError('');
+        setScopeConfirmation('');
+        setScopeRollbackConfirmation('');
+    };
+
+    const openScopeEditor = () => {
+        const firstActiveDepartment = departments.find(department => department.status === 'ACTIVE');
+        setScopeDepartmentId(firstActiveDepartment?.id || '');
+        setScopeAgentId('');
+        setScopeReason('');
+        resetScopeReview();
+        setIsScopeModalOpen(true);
+    };
+
+    const scopeCandidateJobs = () => jobs.filter(job => {
+        const departmentCompatible = !job.clientDepartmentId || job.clientDepartmentId === scopeDepartmentId;
+        const requesterCompatible = !scopeAgentId || !job.requestedByAgentId || job.requestedByAgentId === scopeAgentId;
+        const departmentWillChange = Boolean(scopeDepartmentId && !job.clientDepartmentId);
+        const requesterWillChange = Boolean(scopeAgentId && !job.requestedByAgentId);
+        return departmentCompatible && requesterCompatible && (departmentWillChange || requesterWillChange);
+    });
+
+    const handleScopePreview = async () => {
+        if (!client || !scopeDepartmentId) return;
+        const bookingIds = scopeCandidateJobs().slice(0, 50).map(job => job.id);
+        if (bookingIds.length === 0) {
+            setScopeError('No compatible unscoped jobs remain for this department.');
+            return;
+        }
+        setScopeLoading(true);
+        resetScopeReview();
+        try {
+            const preview = await ClientIdentityAuditService.getClientHierarchyScopeBatchPreview({
+                clientId: client.id,
+                clientDepartmentId: scopeDepartmentId,
+                requestedByAgentId: scopeAgentId || undefined,
+                bookingIds,
+            });
+            setScopePreview(preview);
+        } catch (error) {
+            console.error(error);
+            setScopeError(error instanceof Error ? error.message : 'The hierarchy scope preview could not be completed.');
+        } finally {
+            setScopeLoading(false);
+        }
+    };
+
+    const handleScopeApply = async () => {
+        if (!client || !scopePreview) return;
+        setScopeLoading(true);
+        setScopeError('');
+        try {
+            const result = await ClientIdentityAuditService.applyClientHierarchyScopeBatch({
+                clientId: client.id,
+                clientDepartmentId: scopeDepartmentId,
+                requestedByAgentId: scopeAgentId || undefined,
+                bookingIds: scopePreview.jobs.map(job => job.bookingId),
+                expectedFingerprint: scopePreview.fingerprint,
+                expectedFinanceFingerprint: scopePreview.financeFingerprint,
+                confirmation: scopeConfirmation,
+                reason: scopeReason,
+            });
+            setScopeResult(result);
+            await loadData(client.id);
+            showToast(`${result.bookingCount} job${result.bookingCount === 1 ? '' : 's'} scoped safely`, 'success');
+        } catch (error) {
+            console.error(error);
+            setScopeError(error instanceof Error ? error.message : 'The hierarchy scope batch could not be applied.');
+        } finally {
+            setScopeLoading(false);
+        }
+    };
+
+    const handleScopeRollback = async () => {
+        if (!client || !scopeResult) return;
+        setScopeLoading(true);
+        setScopeError('');
+        try {
+            await ClientIdentityAuditService.rollbackClientHierarchyScopeBatch(
+                scopeResult.manifestId,
+                scopeRollbackConfirmation,
+            );
+            await loadData(client.id);
+            setScopeResult(null);
+            setScopePreview(null);
+            setScopeRollbackConfirmation('');
+            showToast('The previous job hierarchy was restored', 'success');
+        } catch (error) {
+            console.error(error);
+            setScopeError(error instanceof Error ? error.message : 'The hierarchy scope batch could not be restored.');
+        } finally {
+            setScopeLoading(false);
+        }
+    };
+
     const openJobDetails = (job: Booking) => {
         navigate(`/admin/bookings/${job.id}`, {
             state: profileReturnState,
@@ -380,6 +506,11 @@ export const AdminClientDetails = () => {
     const selectedAgentAccountActive = selectedAgent?.portalAccountStatus === 'ACTIVE';
     const unassignedDepartmentJobs = jobs.filter(job => !job.clientDepartmentId).length;
     const unassignedRequesterJobs = jobs.filter(job => !job.requestedByAgentId).length;
+    const activeDepartments = departments.filter(department => department.status === 'ACTIVE');
+    const requesterAgents = agents.filter(agent => agent.status === 'ACTIVE' && agent.agentType === 'PERSON');
+    const scopeCandidates = scopeCandidateJobs();
+    const accountIdentityChanged = String(formData.companyName || '').trim().toLowerCase()
+        !== String(client.companyName || '').trim().toLowerCase();
 
     return (
         <div className="space-y-4 pb-20 text-slate-900 dark:text-slate-100">
@@ -422,7 +553,7 @@ export const AdminClientDetails = () => {
                         </Button>
                     )}
                     <Button
-                        onClick={() => { setFormData(client); setIsEditModalOpen(true); }}
+                        onClick={() => { setFormData(client); setAccountChangeReason(''); setIsEditModalOpen(true); }}
                         icon={Edit}
                         className="bg-slate-900 hover:bg-black text-white h-9 px-6 rounded-lg font-bold uppercase text-[10px] tracking-widest shadow-sm"
                     >
@@ -721,9 +852,16 @@ export const AdminClientDetails = () => {
 
                                 <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
                                     <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">Identity changes remain controlled through preview, dependency counts and rollback manifests.</p>
-                                    <Button variant="secondary" icon={ShieldCheck} onClick={() => navigate('/admin/clients/identity-audit')}>
-                                        Open Identity Audit
-                                    </Button>
+                                    <div className="flex flex-wrap gap-2">
+                                        {unassignedDepartmentJobs > 0 && activeDepartments.length > 0 && (
+                                            <Button variant="secondary" icon={ListChecks} onClick={openScopeEditor}>
+                                                Scope legacy jobs
+                                            </Button>
+                                        )}
+                                        <Button variant="secondary" icon={ShieldCheck} onClick={() => navigate('/admin/clients/identity-audit')}>
+                                            Open Identity Audit
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -842,7 +980,7 @@ export const AdminClientDetails = () => {
                                 <Button
                                     variant="primary"
                                     icon={Edit}
-                                    onClick={() => { setFormData(client); setIsEditModalOpen(true); }}
+                                    onClick={() => { setFormData(client); setAccountChangeReason(''); setIsEditModalOpen(true); }}
                                 >
                                     Edit account data
                                 </Button>
@@ -1052,30 +1190,247 @@ export const AdminClientDetails = () => {
                 </form>
             </Modal>
 
+            <Modal isOpen={isScopeModalOpen} onClose={() => setIsScopeModalOpen(false)} title="Scope legacy jobs" maxWidth="xl">
+                <div className="space-y-5 py-2">
+                    <div className="border-b border-slate-200 pb-4 dark:border-slate-800">
+                        <p className="text-sm font-bold text-slate-950 dark:text-white">Attach existing jobs to the verified client hierarchy.</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                            The preview never moves a job to another client or overwrites an existing department/requester. One transaction writes backups, job events and an audit manifest before the new scope becomes visible.
+                        </p>
+                    </div>
+
+                    {!scopeResult && (
+                        <>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label htmlFor="client-scope-department" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Department</label>
+                                    <select
+                                        id="client-scope-department"
+                                        required
+                                        value={scopeDepartmentId}
+                                        onChange={event => {
+                                            setScopeDepartmentId(event.target.value);
+                                            resetScopeReview();
+                                        }}
+                                        className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                    >
+                                        <option value="">Choose department</option>
+                                        {activeDepartments.map(department => (
+                                            <option key={department.id} value={department.id}>{department.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="client-scope-requester" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Requester (optional)</label>
+                                    <select
+                                        id="client-scope-requester"
+                                        value={scopeAgentId}
+                                        onChange={event => {
+                                            setScopeAgentId(event.target.value);
+                                            resetScopeReview();
+                                        }}
+                                        className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                    >
+                                        <option value="">Keep requester unassigned</option>
+                                        {requesterAgents.map(agent => (
+                                            <option key={agent.id} value={agent.id}>{agent.displayName}</option>
+                                        ))}
+                                    </select>
+                                    <p className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">Shared mailboxes remain contacts and cannot be recorded as the person who requested a job.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3 border-y border-slate-200 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <p className="text-sm font-bold text-slate-950 dark:text-white">
+                                        {Math.min(scopeCandidates.length, 50)} compatible job{Math.min(scopeCandidates.length, 50) === 1 ? '' : 's'} in this batch
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                        {scopeCandidates.length > 50
+                                            ? `${scopeCandidates.length - 50} additional jobs remain for the next reviewed batch.`
+                                            : `${unassignedDepartmentJobs} jobs currently have no department and ${unassignedRequesterJobs} have no requester.`}
+                                    </p>
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    icon={ListChecks}
+                                    onClick={() => void handleScopePreview()}
+                                    isLoading={scopeLoading && !scopePreview}
+                                    disabled={!scopeDepartmentId || scopeCandidates.length === 0 || scopeLoading}
+                                >
+                                    Review batch
+                                </Button>
+                            </div>
+                        </>
+                    )}
+
+                    {scopePreview && !scopeResult && (
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-slate-200 bg-slate-200 dark:border-slate-700 dark:bg-slate-700 sm:grid-cols-4">
+                                {[
+                                    ['Jobs', scopePreview.eligibleBookingCount],
+                                    ['Already current', scopePreview.unchangedBookingCount],
+                                    ['Finance linked', scopePreview.financeLinkedBookingCount],
+                                    ['Blockers', scopePreview.blockers.length],
+                                ].map(([label, value]) => (
+                                    <div key={String(label)} className="bg-white px-3 py-3 dark:bg-slate-900">
+                                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+                                        <p className="mt-1 text-lg font-black text-slate-950 dark:text-white">{value}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {scopePreview.blockers.length > 0 && (
+                                <div className="border-l-2 border-red-500 bg-red-50 px-4 py-3 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                                    <p className="font-bold">This batch cannot be applied.</p>
+                                    {scopePreview.blockers.slice(0, 5).map(blocker => (
+                                        <p key={`${blocker.bookingId}-${blocker.code}`} className="mt-1">{blocker.bookingId}: {blocker.message}</p>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div>
+                                <label htmlFor="client-scope-reason" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Operational reason</label>
+                                <textarea
+                                    id="client-scope-reason"
+                                    required
+                                    minLength={5}
+                                    maxLength={500}
+                                    value={scopeReason}
+                                    onChange={event => setScopeReason(event.target.value)}
+                                    className="min-h-20 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                    placeholder="Evidence used and why these legacy jobs belong to this department."
+                                />
+                            </div>
+
+                            {scopePreview.financeLinkedBookingCount > 0 && (
+                                <div className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 dark:bg-amber-950/30">
+                                    <p className="text-xs font-bold text-amber-900 dark:text-amber-200">Financial review required</p>
+                                    <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                                        {scopePreview.financeLinkedBookingCount} job{scopePreview.financeLinkedBookingCount === 1 ? ' is' : 's are'} linked to {scopePreview.linkedInvoiceIds.length} invoice{scopePreview.linkedInvoiceIds.length === 1 ? '' : 's'}. This batch changes only job scope; run Finance Hierarchy reconciliation afterwards.
+                                    </p>
+                                    <label htmlFor="client-scope-confirmation" className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                                        Type {scopePreview.confirmationPhrase}
+                                    </label>
+                                    <input
+                                        id="client-scope-confirmation"
+                                        value={scopeConfirmation}
+                                        onChange={event => setScopeConfirmation(event.target.value)}
+                                        className="mt-1.5 w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-bold text-slate-950 outline-none focus:border-amber-600 dark:border-amber-800 dark:bg-slate-900 dark:text-white"
+                                    />
+                                </div>
+                            )}
+
+                            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+                                <Button type="button" variant="ghost" onClick={() => setScopePreview(null)}>Change scope</Button>
+                                <Button
+                                    type="button"
+                                    onClick={() => void handleScopeApply()}
+                                    isLoading={scopeLoading}
+                                    disabled={
+                                        scopeLoading
+                                        || !scopePreview.canApply
+                                        || scopeReason.trim().length < 5
+                                        || (
+                                            scopePreview.financeLinkedBookingCount > 0
+                                            && scopeConfirmation.trim().toUpperCase() !== scopePreview.confirmationPhrase
+                                        )
+                                    }
+                                >
+                                    Apply reviewed scope
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+
+                    {scopeResult && (
+                        <div className="space-y-4">
+                            <div className="border-l-2 border-emerald-500 bg-emerald-50 px-4 py-3 dark:bg-emerald-950/30">
+                                <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                                    Scope applied to {scopeResult.bookingCount} job{scopeResult.bookingCount === 1 ? '' : 's'}
+                                </p>
+                                <p className="mt-1 break-all font-mono text-[11px] text-emerald-800 dark:text-emerald-300">Manifest {scopeResult.manifestId}</p>
+                                {scopeResult.financeReconciliationRequired && (
+                                    <p className="mt-2 text-xs leading-5 text-emerald-800 dark:text-emerald-300">Finance reconciliation is now required so invoice headers and lines inherit the reviewed department scope.</p>
+                                )}
+                            </div>
+                            <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
+                                <label htmlFor="client-scope-rollback" className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Emergency rollback</label>
+                                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                    <input
+                                        id="client-scope-rollback"
+                                        value={scopeRollbackConfirmation}
+                                        onChange={event => setScopeRollbackConfirmation(event.target.value)}
+                                        className="h-10 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-red-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                        placeholder="ROLLBACK CLIENT JOB SCOPE"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="danger"
+                                        icon={Undo2}
+                                        isLoading={scopeLoading}
+                                        disabled={scopeRollbackConfirmation.trim().toUpperCase() !== 'ROLLBACK CLIENT JOB SCOPE' || scopeLoading}
+                                        onClick={() => void handleScopeRollback()}
+                                    >
+                                        Restore previous scope
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="flex justify-end">
+                                <Button type="button" onClick={() => setIsScopeModalOpen(false)}>Done</Button>
+                            </div>
+                        </div>
+                    )}
+
+                    {scopeError && (
+                        <div role="alert" className="border-l-2 border-red-500 bg-red-50 px-4 py-3 text-xs font-semibold text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                            {scopeError}
+                        </div>
+                    )}
+                </div>
+            </Modal>
+
             <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Update Account Profile" maxWidth="lg">
                 <form onSubmit={handleSave} className="space-y-6 py-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="md:col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Organization Name</label>
-                            <input type="text" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.companyName || ''} onChange={e => setFormData({ ...formData, companyName: e.target.value })} />
+                            <label htmlFor="client-account-name" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Organization Name</label>
+                            <input id="client-account-name" type="text" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.companyName || ''} onChange={e => setFormData({ ...formData, companyName: e.target.value })} />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Primary Contact</label>
-                            <input type="text" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.contactPerson || ''} onChange={e => setFormData({ ...formData, contactPerson: e.target.value })} />
+                            <label htmlFor="client-account-contact" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Primary Contact</label>
+                            <input id="client-account-contact" type="text" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.contactPerson || ''} onChange={e => setFormData({ ...formData, contactPerson: e.target.value })} />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Finance Email</label>
-                            <input type="email" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                            <label htmlFor="client-account-email" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Finance Email</label>
+                            <input id="client-account-email" type="email" required className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
                     </div>
+                    {accountIdentityChanged && (
+                        <div className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 dark:bg-amber-950/30">
+                            <label htmlFor="client-account-change-reason" className="block text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">Canonical identity change reason</label>
+                            <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">The previous organisation name remains an alias. The change is written to the Client CRM audit trail.</p>
+                            <textarea
+                                id="client-account-change-reason"
+                                required
+                                minLength={5}
+                                maxLength={500}
+                                value={accountChangeReason}
+                                onChange={event => setAccountChangeReason(event.target.value)}
+                                className="mt-2 min-h-20 w-full resize-y rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-amber-600 dark:border-amber-800 dark:bg-slate-900 dark:text-white"
+                                placeholder="Evidence supporting the canonical organisation name."
+                            />
+                        </div>
+                    )}
                     <div>
-                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Billing Address</label>
-                        <textarea className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium h-24 resize-none transition-all" value={formData.billingAddress || ''} onChange={e => setFormData({ ...formData, billingAddress: e.target.value })} />
+                        <label htmlFor="client-account-billing-address" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Billing Address</label>
+                        <textarea id="client-account-billing-address" className="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium h-24 resize-none transition-all" value={formData.billingAddress || ''} onChange={e => setFormData({ ...formData, billingAddress: e.target.value })} />
                     </div>
                     <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50/50 rounded-xl border border-blue-100/50">
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Payment Net Terms</label>
-                            <select className="w-full p-2 text-sm bg-white border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.paymentTermsDays || 30} onChange={e => setFormData({ ...formData, paymentTermsDays: parseInt(e.target.value) })}>
+                            <label htmlFor="client-account-payment-terms" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Payment Net Terms</label>
+                            <select id="client-account-payment-terms" className="w-full p-2 text-sm bg-white border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.paymentTermsDays || 30} onChange={e => setFormData({ ...formData, paymentTermsDays: parseInt(e.target.value) })}>
                                 <option value={7}>7 Days Net</option>
                                 <option value={14}>14 Days Net</option>
                                 <option value={30}>30 Days Net</option>
@@ -1083,8 +1438,8 @@ export const AdminClientDetails = () => {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Requirement Mode</label>
-                            <select className="w-full p-2 text-sm bg-white border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.defaultCostCodeType || 'PO'} onChange={e => setFormData({ ...formData, defaultCostCodeType: e.target.value as any })}>
+                            <label htmlFor="client-account-requirement-mode" className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Requirement Mode</label>
+                            <select id="client-account-requirement-mode" className="w-full p-2 text-sm bg-white border border-slate-200 rounded focus:ring-2 focus:ring-blue-500/20 outline-none font-medium transition-all" value={formData.defaultCostCodeType || 'PO'} onChange={e => setFormData({ ...formData, defaultCostCodeType: e.target.value as any })}>
                                 <option value="PO">PO Number</option>
                                 <option value="Cost Code">Cost Code</option>
                                 <option value="Client Name">Client Name</option>
@@ -1095,7 +1450,14 @@ export const AdminClientDetails = () => {
                         <Button type="button" variant="ghost" className="text-red-500 hover:bg-red-50 text-[10px] font-bold uppercase tracking-widest" onClick={() => setIsDeleteModalOpen(true)} icon={Trash2}>Delete client</Button>
                         <div className="flex gap-2">
                             <Button type="button" variant="ghost" onClick={() => setIsEditModalOpen(false)}>Abort</Button>
-                            <Button type="submit" isLoading={saving} className="px-6 shadow-sm shadow-blue-100">Commit Changes</Button>
+                            <Button
+                                type="submit"
+                                isLoading={saving}
+                                disabled={accountIdentityChanged && accountChangeReason.trim().length < 5}
+                                className="px-6 shadow-sm shadow-blue-100"
+                            >
+                                Commit Changes
+                            </Button>
                         </div>
                     </div>
                 </form>
