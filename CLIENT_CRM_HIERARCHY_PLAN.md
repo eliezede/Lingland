@@ -266,6 +266,14 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - The authoritative after-run reported 6 creates, 413 updates, 70 conflicts, 0 errors and 67 remaining review decisions. The reduction of 2 blockers and 2 decisions matches the two reviewed scopes.
 - Production effects were limited to two audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; Write Sync remains locked by the 70 unresolved source rows.
 
+### Southampton IDVA and Mental Wellbeing identity batches - 24 July 2026
+
+- `SCC - IDVA SErvice` was mapped to official canonical account `airtable_client_sou015`. Airtable `Clients` record `rec17jyOpGgO4Svjj` provides Sage reference `SOU015`, the Civic Centre invoice route and the Southampton IDVA service identity. Supporting `Clients Book` record `recs7JOIdeeyDf9nk` uses the same IDVA contact, telephone and `southampton.gov.uk` domain.
+- The IDVA after-run reduced the gate from 70 blocked rows / 67 decisions to 69 / 66 with 0 errors. It remains distinct from general Southampton City Council and Homelessness because REDBOOK maintains separate Sage accounts for those services.
+- `SCC Mental Wellbeing Service` record `recxsU8RLW1y9ijgR` was mapped to the existing general canonical `airtable_client_southampton-city-council`. It explicitly identifies SCC and uses Jake Raven's `southampton.gov.uk` requester and invoice address.
+- Official general account `recNLbFrcHOsm80U7` provides Sage reference `SOU006`, but that approved Airtable account is still one of the six pending creates while Write Sync is locked. The existing exact-name canonical was therefore used as the operational target and must receive the official account reference during the protected Write Sync instead of forming a second client tree.
+- The Mental Wellbeing after-run reduced the gate to 68 blocked rows across 65 review decisions with 0 errors. Production effects across both batches were limited to two audited Firestore identity mappings; no Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
