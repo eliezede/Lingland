@@ -79,6 +79,7 @@ const buildTranslationClientEvidence = (records) => {
                 invoiceRecordIds: [],
                 invoiceNumbers: [],
                 accountRefs: [],
+                candidateAccountRefs: [],
                 agencyNames: [],
                 requestedByNames: [],
                 emails: [],
@@ -91,6 +92,7 @@ const buildTranslationClientEvidence = (records) => {
                 invoiceRecordIds: unique([...current.invoiceRecordIds, record.id]),
                 invoiceNumbers: unique([...current.invoiceNumbers, ...invoiceNumbers]),
                 accountRefs: mergedAccountRefs,
+                candidateAccountRefs: mergedAccountRefs,
                 agencyNames: unique([...current.agencyNames, ...agencyNames]),
                 requestedByNames: unique([...current.requestedByNames, ...requestedByNames]),
                 emails: unique([...current.emails, ...emails]),
@@ -124,6 +126,7 @@ const buildTranslationClientEvidence = (records) => {
         evidence.set(translationRecordId, {
             ...item,
             accountRefs: inferredRefs,
+            candidateAccountRefs: competingRefs,
             accountRefAmbiguous: competingRefs.length > 1 && inferredRefs.length === 0,
             accountRefSource: emailRefs.length === 1
                 ? 'SHARED_EMAIL'

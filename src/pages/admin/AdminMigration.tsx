@@ -279,6 +279,18 @@ const safeInlineText = (value: unknown, fallback = 'N/A') => {
   return fallback;
 };
 
+const formatConflictEvidence = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return 'No evidence recorded.';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return safeInlineText(value, 'Evidence could not be displayed.');
+  }
+};
+
 const getProfessionalIdentityEvidence = (
   conflict: AirtableSyncConflict,
 ): ProfessionalIdentityEvidence | null => {
@@ -355,6 +367,7 @@ export const AdminMigration = () => {
   const [cleanRepairDryRun, setCleanRepairDryRun] = useState(false);
   const [conflictSeverityFilter, setConflictSeverityFilter] = useState<AirtableConflictSeverity>('ALL');
   const [conflictModuleFilter, setConflictModuleFilter] = useState<'ALL' | AirtableSyncModule>('ALL');
+  const [conflictReasonFilter, setConflictReasonFilter] = useState('ALL');
   const [approvedDryRunIds, setApprovedDryRunIds] = useState<Record<string, string>>({});
   const [detailFilter, setDetailFilter] = useState<'all' | 'errors' | 'conflicts' | 'unmatched' | 'changes'>('all');
   const [showInfo, setShowInfo] = useState(false);
@@ -379,6 +392,7 @@ export const AdminMigration = () => {
   const [crmDeferralCategory, setCrmDeferralCategory] = useState<AirtableClientIdentityDeferralCategory>('INSUFFICIENT_SOURCE_EVIDENCE');
   const [crmDeferralReason, setCrmDeferralReason] = useState('');
   const [crmDeferralLoading, setCrmDeferralLoading] = useState(false);
+  const [reviewConflict, setReviewConflict] = useState<AirtableSyncConflict | null>(null);
   const [professionalMappingConflict, setProfessionalMappingConflict] = useState<AirtableSyncConflict | null>(null);
   const [professionalDirectory, setProfessionalDirectory] = useState<Interpreter[]>([]);
   const [professionalSearch, setProfessionalSearch] = useState('');
@@ -436,8 +450,9 @@ export const AdminMigration = () => {
   const filteredConflicts = useMemo(() => openConflicts.filter(conflict => {
     const severityMatches = conflictSeverityFilter === 'ALL' || conflict.severity === conflictSeverityFilter;
     const moduleMatches = conflictModuleFilter === 'ALL' || conflictModuleByTable.get(conflict.sourceTable || '') === conflictModuleFilter;
-    return severityMatches && moduleMatches;
-  }), [conflictModuleByTable, conflictModuleFilter, conflictSeverityFilter, openConflicts]);
+    const reasonMatches = conflictReasonFilter === 'ALL' || conflict.reason === conflictReasonFilter;
+    return severityMatches && moduleMatches && reasonMatches;
+  }), [conflictModuleByTable, conflictModuleFilter, conflictReasonFilter, conflictSeverityFilter, openConflicts]);
   const conflictSummary = useMemo(() => {
     const bySeverity = openConflicts.reduce<Record<string, number>>((acc, conflict) => {
       const key = conflict.severity || 'MEDIUM';
@@ -861,7 +876,15 @@ export const AdminMigration = () => {
     const moduleLabel = modules === 'full'
       ? 'Full Sync'
       : modules.map(module => AIRTABLE_SYNC_MODULES.find(item => item.id === module)?.label || module).join(', ');
-    if (!dryRun && !window.confirm(`Run ${moduleLabel} now using ${activeStrategyConfig.label}? This writes Airtable data into Firestore.`)) return;
+    if (!dryRun) {
+      const confirmed = await confirm({
+        title: `Run ${moduleLabel}`,
+        message: `Use ${activeStrategyConfig.label} to write the approved Airtable preview into Firestore? Airtable remains read-only and communication follows the current platform mode.`,
+        confirmLabel: 'Run Write Sync',
+        variant: 'primary',
+      });
+      if (!confirmed) return;
+    }
 
     setLoading(true);
     setSyncResult(null);
@@ -2866,7 +2889,7 @@ export const AdminMigration = () => {
                     </div>
                   )}
 
-                  <div className="mt-5 grid gap-3 lg:grid-cols-[220px_260px_minmax(0,1fr)]">
+                  <div className="mt-5 grid gap-3 lg:grid-cols-[190px_230px_280px_minmax(0,1fr)]">
                     <label className="block">
                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Severity</span>
                       <select
@@ -2892,13 +2915,36 @@ export const AdminMigration = () => {
                         ))}
                       </select>
                     </label>
+                    <label className="block">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Reason</span>
+                      <select
+                        value={conflictReasonFilter}
+                        onChange={event => setConflictReasonFilter(event.target.value)}
+                        className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                      >
+                        <option value="ALL">All reasons</option>
+                        {Object.keys(conflictSummary.byReason).sort().map(reason => (
+                          <option key={reason} value={reason}>{reason.replace(/_/g, ' ')}</option>
+                        ))}
+                      </select>
+                    </label>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Top reasons</p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {Object.entries(conflictSummary.byReason).slice(0, 6).map(([reason, count]) => (
-                          <span key={reason} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800">
+                          <button
+                            key={reason}
+                            type="button"
+                            onClick={() => setConflictReasonFilter(current => current === reason ? 'ALL' : reason)}
+                            aria-pressed={conflictReasonFilter === reason}
+                            className={`rounded-full px-2.5 py-1 text-xs font-black ring-1 transition-colors ${
+                              conflictReasonFilter === reason
+                                ? 'bg-blue-600 text-white ring-blue-600'
+                                : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-800 dark:hover:bg-slate-800'
+                            }`}
+                          >
                             {reason}: {count}
-                          </span>
+                          </button>
                         ))}
                         {!openConflicts.length && <span className="text-sm font-semibold text-slate-500">No open issues.</span>}
                       </div>
@@ -2939,16 +2985,26 @@ export const AdminMigration = () => {
                           <p className="text-sm font-semibold leading-5 text-slate-600 dark:text-slate-300">
                             {safeInlineText(conflict.recommendedAction, 'Review source record and rerun sync.')}
                           </p>
-                          {isSuperAdmin && getProfessionalIdentityEvidence(conflict) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReviewConflict(conflict)}
+                              className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+                            >
+                              <Info size={14} />
+                              Review evidence
+                            </button>
+                            {isSuperAdmin && getProfessionalIdentityEvidence(conflict) && (
                             <button
                               type="button"
                               onClick={() => openProfessionalIdentityMapping(conflict)}
-                              className="mt-2 inline-flex h-8 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-black text-blue-700 hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-950/70"
+                              className="inline-flex h-8 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-black text-blue-700 hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-950/70"
                             >
                               <UserCog size={14} />
                               Resolve identity
                             </button>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </div>
                     )) : (
@@ -3031,6 +3087,96 @@ export const AdminMigration = () => {
           </main>
         </div>
       </div>
+
+      {reviewConflict && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) setReviewConflict(null);
+          }}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conflict-evidence-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                  Reconciliation evidence
+                </p>
+                <h2 id="conflict-evidence-title" className="mt-1 text-lg font-black text-slate-950 dark:text-white">
+                  {safeInlineText(reviewConflict.reason, 'Unclassified issue').replaceAll('_', ' ')}
+                </h2>
+                <p className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400">
+                  {safeInlineText(reviewConflict.legacyRef || reviewConflict.sourceRecordId)} · {safeInlineText(reviewConflict.sourceTable || reviewConflict.entityType)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewConflict(null)}
+                aria-label="Close reconciliation evidence"
+                title="Close"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              <div className="grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800 sm:grid-cols-3">
+                {[
+                  ['Severity', reviewConflict.severity || 'MEDIUM'],
+                  ['Entity', reviewConflict.entityType || 'Unknown'],
+                  ['Source record', reviewConflict.sourceRecordId || 'Not recorded'],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0 bg-slate-50 px-3 py-3 dark:bg-slate-950">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</p>
+                    <p className="mt-1 break-words text-sm font-black text-slate-900 dark:text-white">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <section className="min-w-0">
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">Platform value</p>
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                    {formatConflictEvidence(reviewConflict.currentValue)}
+                  </pre>
+                </section>
+                <section className="min-w-0">
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">Airtable evidence</p>
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs font-semibold leading-5 text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                    {formatConflictEvidence(reviewConflict.incomingValue)}
+                  </pre>
+                </section>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                <p className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">Recommended action</p>
+                <p className="mt-1 text-sm font-semibold leading-6 text-amber-950 dark:text-amber-100">
+                  {safeInlineText(reviewConflict.recommendedAction, 'Review the source evidence and rerun the affected sync module.')}
+                </p>
+              </div>
+
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Run {safeInlineText(reviewConflict.runId, 'not recorded')} · last seen {reviewConflict.lastSeenAt ? formatDateTime(reviewConflict.lastSeenAt) : 'without timestamp'}
+              </p>
+            </div>
+
+            <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-950">
+              <button
+                type="button"
+                onClick={() => setReviewConflict(null)}
+                className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-black text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {professionalMappingConflict && professionalMappingEvidence && (
         <div

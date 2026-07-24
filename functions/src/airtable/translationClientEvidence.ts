@@ -8,6 +8,7 @@ export type TranslationClientEvidence = {
   invoiceRecordIds: string[];
   invoiceNumbers: string[];
   accountRefs: string[];
+  candidateAccountRefs: string[];
   agencyNames: string[];
   requestedByNames: string[];
   emails: string[];
@@ -117,6 +118,7 @@ export const buildTranslationClientEvidence = (
         invoiceRecordIds: [],
         invoiceNumbers: [],
         accountRefs: [],
+        candidateAccountRefs: [],
         agencyNames: [],
         requestedByNames: [],
         emails: [],
@@ -129,6 +131,7 @@ export const buildTranslationClientEvidence = (
         invoiceRecordIds: unique([...current.invoiceRecordIds, record.id]),
         invoiceNumbers: unique([...current.invoiceNumbers, ...invoiceNumbers]),
         accountRefs: mergedAccountRefs,
+        candidateAccountRefs: mergedAccountRefs,
         agencyNames: unique([...current.agencyNames, ...agencyNames]),
         requestedByNames: unique([...current.requestedByNames, ...requestedByNames]),
         emails: unique([...current.emails, ...emails]),
@@ -162,6 +165,7 @@ export const buildTranslationClientEvidence = (
     evidence.set(translationRecordId, {
       ...item,
       accountRefs: inferredRefs,
+      candidateAccountRefs: competingRefs,
       accountRefAmbiguous: competingRefs.length > 1 && inferredRefs.length === 0,
       accountRefSource: emailRefs.length === 1
         ? 'SHARED_EMAIL'

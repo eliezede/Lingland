@@ -41,13 +41,26 @@ const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)))
 
 const aggregateStatus = (statuses: string[]) => {
   const normalized = unique(statuses.map(status => status.trim().toUpperCase()));
-  if (normalized.length === 1) return normalized[0];
   const active = normalized.filter(status => status !== 'CANCELLED');
   if (!active.length) return 'CANCELLED';
-  if (active.every(status => status === 'PAID')) return 'PAID';
-  if (active.every(status => status === 'PAID' || status === 'SENT')) return 'SENT';
+  if (active.includes('PAID')) return 'PAID';
+  if (active.includes('SENT')) return 'SENT';
   return 'DRAFT';
 };
+
+const hasIncompatibleStatuses = (statuses: string[]) => {
+  const normalized = unique(statuses.map(status => status.trim().toUpperCase()));
+  return normalized.includes('CANCELLED') && normalized.some(status => status !== 'CANCELLED');
+};
+
+export const requiresIssuedInvoiceIntegrity = (status: string) => (
+  ['SENT', 'PAID'].includes(status.trim().toUpperCase())
+);
+
+export const shouldReportInvoiceLinkConflict = (
+  status: string,
+  hasJobLinkConflict: boolean,
+) => hasJobLinkConflict && requiresIssuedInvoiceIntegrity(status);
 
 export const aggregateClientInvoiceRows = <TBooking>(
   rows: ClientInvoiceAggregationRow<TBooking>[],
@@ -121,7 +134,7 @@ export const aggregateClientInvoiceRows = <TBooking>(
       subtotalAmount: money(groupedRows.reduce((total, row) => total + row.subtotalAmount, 0)),
       status: aggregateStatus(sourceStatuses),
       sourceStatuses,
-      statusMismatch: sourceStatuses.length > 1,
+      statusMismatch: hasIncompatibleStatuses(sourceStatuses),
       lines: Array.from(linesByKey.values()),
     };
   });

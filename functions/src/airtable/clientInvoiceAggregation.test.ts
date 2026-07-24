@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateClientInvoiceRows } from './clientInvoiceAggregation';
+import {
+  aggregateClientInvoiceRows,
+  requiresIssuedInvoiceIntegrity,
+  shouldReportInvoiceLinkConflict,
+} from './clientInvoiceAggregation';
 
 type Booking = { id: string };
 
 describe('aggregateClientInvoiceRows', () => {
+  it('keeps draft link gaps in finance readiness without opening sync conflicts', () => {
+    expect(requiresIssuedInvoiceIntegrity('DRAFT')).toBe(false);
+    expect(shouldReportInvoiceLinkConflict('DRAFT', true)).toBe(false);
+    expect(shouldReportInvoiceLinkConflict('SENT', true)).toBe(true);
+    expect(shouldReportInvoiceLinkConflict('PAID', true)).toBe(true);
+    expect(shouldReportInvoiceLinkConflict('PAID', false)).toBe(false);
+  });
+
   it('combines Airtable invoice rows that share an invoice number', () => {
     const groups = aggregateClientInvoiceRows<Booking>([
       {
@@ -77,8 +89,39 @@ describe('aggregateClientInvoiceRows', () => {
       }),
     ]);
     expect(groups[0]).toMatchObject({
-      status: 'SENT',
+      status: 'PAID',
       sourceStatuses: ['SENT', 'PAID'],
+      statusMismatch: false,
+    });
+  });
+
+  it('keeps cancelled and active rows as an explicit status conflict', () => {
+    const groups = aggregateClientInvoiceRows<Booking>([
+      {
+        sourceRecordId: 'rec-a',
+        invoiceNumber: 'INV-2',
+        hasInvoiceReference: true,
+        linkedSourceIds: ['job-a'],
+        bookings: [{ id: 'booking-a' }],
+        grossAmount: 60,
+        subtotalAmount: 50,
+        status: 'CANCELLED',
+      },
+      {
+        sourceRecordId: 'rec-b',
+        invoiceNumber: 'INV-2',
+        hasInvoiceReference: true,
+        linkedSourceIds: ['job-b'],
+        bookings: [{ id: 'booking-b' }],
+        grossAmount: 12,
+        subtotalAmount: 10,
+        status: 'SENT',
+      },
+    ], booking => booking.id);
+
+    expect(groups[0]).toMatchObject({
+      status: 'SENT',
+      sourceStatuses: ['CANCELLED', 'SENT'],
       statusMismatch: true,
     });
   });

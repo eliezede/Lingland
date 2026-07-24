@@ -62,7 +62,11 @@ import {
   auditBookingInvoiceLinks,
   getExpectedFinancialInvoiceStatus,
 } from './financialLinkIntegrity';
-import { aggregateClientInvoiceRows } from './clientInvoiceAggregation';
+import {
+  aggregateClientInvoiceRows,
+  requiresIssuedInvoiceIntegrity,
+  shouldReportInvoiceLinkConflict,
+} from './clientInvoiceAggregation';
 import { pickExactLinkedRecordIds } from './linkedRecordExtraction';
 
 type AirtableRecord = {
@@ -274,6 +278,15 @@ const selectMoneyField = (
   return fallback
     ? { value: fallback.parsed || 0, fieldName: fallback.key, found: true }
     : { value: 0, fieldName: '', found: false };
+};
+
+const collectFinancialFieldEvidence = (fields: Record<string, unknown>) => {
+  const hints = ['invoice', 'sage', 'amount', 'total', 'vat', 'fee', 'paid', 'status'];
+  return Object.fromEntries(
+    Object.entries(fields)
+      .filter(([key]) => hints.some(hint => normalizeKey(key).includes(hint)))
+      .slice(0, 40)
+  );
 };
 
 const truthyField = (fields: Record<string, unknown>, names: string[]): boolean => {
@@ -1546,6 +1559,7 @@ const getBookingsByAirtableRecordIds = async (sourceRecordIds: string[]) => {
 
 type ClientInvoiceSyncDirectory = {
   bookingsByLookupKey: Map<string, admin.firestore.QueryDocumentSnapshot[]>;
+  clientsById: Map<string, admin.firestore.QueryDocumentSnapshot>;
   invoicesById: Map<string, admin.firestore.QueryDocumentSnapshot>;
   linesByInvoiceId: Map<string, admin.firestore.QueryDocumentSnapshot[]>;
 };
@@ -1563,8 +1577,9 @@ const addDocumentLookupKey = (
 };
 
 const buildClientInvoiceSyncDirectory = async (includeLines: boolean): Promise<ClientInvoiceSyncDirectory> => {
-  const [bookingSnapshot, invoiceSnapshot, lineSnapshot] = await Promise.all([
+  const [bookingSnapshot, clientSnapshot, invoiceSnapshot, lineSnapshot] = await Promise.all([
     db.collection('bookings').get(),
+    db.collection('clients').get(),
     db.collection('clientInvoices').get(),
     includeLines ? db.collection('clientInvoiceLines').get() : Promise.resolve(null),
   ]);
@@ -1589,9 +1604,43 @@ const buildClientInvoiceSyncDirectory = async (includeLines: boolean): Promise<C
 
   return {
     bookingsByLookupKey,
+    clientsById: new Map(clientSnapshot.docs.map(document => [document.id, document])),
     invoicesById: new Map(invoiceSnapshot.docs.map(document => [document.id, document])),
     linesByInvoiceId,
   };
+};
+
+const canonicalClientIdFromDirectory = (
+  clientId: string,
+  clientsById: Map<string, admin.firestore.QueryDocumentSnapshot>,
+) => {
+  const document = clientsById.get(clientId);
+  if (!document) return '';
+  const canonical = canonicalClientRef(document);
+  const canonicalDocument = clientsById.get(canonical.id) || document;
+  const data = canonicalDocument.data() || {};
+  if (normalize(data.recordState).toUpperCase() === 'ARCHIVED') return '';
+  if (
+    GENERIC_CLIENT_IDS.has(canonical.id)
+    || GENERIC_CLIENT_NAMES.has(normalizeForMatch(data.companyName || data.clientName || ''))
+  ) return '';
+  return canonical.id;
+};
+
+const preferredInvoiceClientId = (
+  bookingClientIds: string[],
+  existingInvoiceClientId: string,
+  clientsById: Map<string, admin.firestore.QueryDocumentSnapshot>,
+) => {
+  const canonicalBookingIds = uniqueValues(
+    ...bookingClientIds.map(clientId => canonicalClientIdFromDirectory(clientId, clientsById))
+  );
+  const canonicalExistingId = canonicalClientIdFromDirectory(existingInvoiceClientId, clientsById);
+  if (canonicalBookingIds.length === 1) return canonicalBookingIds[0];
+  if (canonicalExistingId && (canonicalBookingIds.length === 0 || canonicalBookingIds.includes(canonicalExistingId))) {
+    return canonicalExistingId;
+  }
+  return '';
 };
 
 const getBookingsFromClientInvoiceDirectory = (
@@ -2505,6 +2554,10 @@ const mapTranslationRecordToBooking = async (
         invoiceRecordIds: invoiceEvidence.invoiceRecordIds,
         invoiceNumbers: invoiceEvidence.invoiceNumbers,
         accountRefs: invoiceEvidence.accountRefs,
+        candidateAccountRefs: invoiceEvidence.candidateAccountRefs,
+        agencyNames: invoiceEvidence.agencyNames,
+        requestedByNames: invoiceEvidence.requestedByNames,
+        emails: invoiceEvidence.emails,
         accountRefAmbiguous: invoiceEvidence.accountRefAmbiguous,
         accountRefSource: invoiceEvidence.accountRefSource,
       },
@@ -3588,8 +3641,18 @@ const syncTranslationBookings = async (
           legacyRef: mapped.booking.legacyAirtableRef,
           severity: 'HIGH',
           reason: 'CLIENT_ACCOUNT_REF_AMBIGUOUS',
-          currentValue: mapped.sourceSnapshot.clientIdentityEvidence.invoiceNumbers,
-          incomingValue: mapped.sourceSnapshot.clientIdentityEvidence.accountRefs,
+          currentValue: {
+            clientId: existing?.clientId || '',
+            clientName: existing?.clientName || '',
+            invoiceNumbers: mapped.sourceSnapshot.clientIdentityEvidence.invoiceNumbers,
+          },
+          incomingValue: {
+            candidateAccountRefs: mapped.sourceSnapshot.clientIdentityEvidence.candidateAccountRefs,
+            invoiceRecordIds: mapped.sourceSnapshot.clientIdentityEvidence.invoiceRecordIds,
+            agencyNames: mapped.sourceSnapshot.clientIdentityEvidence.agencyNames,
+            requestedByNames: mapped.sourceSnapshot.clientIdentityEvidence.requestedByNames,
+            emails: mapped.sourceSnapshot.clientIdentityEvidence.emails,
+          },
           recommendedAction: 'Review the linked translation invoices and select one canonical client account before rerunning sync.',
           dryRun: mode.dryRun,
         });
@@ -3835,6 +3898,8 @@ const syncClientInvoices = async (
       const invoiceNumber = group.invoiceNumber;
       const displayReference = hasInvoiceReference ? invoiceNumber : 'Reference missing';
       const invoiceId = `airtable_client_invoice_${slugify(invoiceNumber || record.id)}`;
+      const existing = directory.invoicesById.get(invoiceId);
+      const existingData = existing?.data();
       const linkedRedbookIds = group.linkedSourceIds;
       const bookings = group.bookings;
       const hasJobLinkConflict = sourceRows.some(row => (
@@ -3848,6 +3913,7 @@ const syncClientInvoices = async (
         row.subtotalSourceField,
       ]).filter(Boolean))).join(', ');
       const status = group.status;
+      const reportJobLinkConflict = shouldReportInvoiceLinkConflict(status, hasJobLinkConflict);
       const clientName = sourceRows
         .map(row => pick(row.fields, [
           'Agency, institution or company  (from feed from redbook)',
@@ -3860,8 +3926,17 @@ const syncClientInvoices = async (
       const bookingClientIds = Array.from(new Set(
         bookings.map(booking => normalize(booking.data()?.clientId)).filter(Boolean)
       ));
+      const canonicalBookingClientIds = uniqueValues(
+        ...bookingClientIds.map(clientId => canonicalClientIdFromDirectory(clientId, directory.clientsById))
+      );
+      const existingInvoiceClientId = normalize(existingData?.clientId);
+      const resolvedKnownClientId = preferredInvoiceClientId(
+        bookingClientIds,
+        existingInvoiceClientId,
+        directory.clientsById
+      );
       const clientResolution = await resolveInvoiceClient(
-        bookingClientIds.length === 1 ? bookingClientIds[0] : '',
+        resolvedKnownClientId,
         clientName,
         fields,
         mode.dryRun
@@ -3888,9 +3963,8 @@ const syncClientInvoices = async (
         grossAmount: line.grossAmount,
         subtotalAmount: line.subtotalAmount,
       }));
-      const existing = directory.invoicesById.get(invoiceId);
       const existingExists = Boolean(existing);
-      const snapshotHash = stableHash({
+      const invoiceSnapshot = {
         financeProjectionVersion: FINANCE_PROJECTION_VERSION,
         invoiceNumber,
         status,
@@ -3909,28 +3983,15 @@ const syncClientInvoices = async (
         sourceStatuses: group.sourceStatuses,
         lineProjection,
         hierarchy
-      });
-      const sourceTracking = buildSourceTracking(record, CLIENT_INVOICES_TABLE, invoiceNumber, {
-        financeProjectionVersion: FINANCE_PROJECTION_VERSION,
+      };
+      const sourceTracking = buildSourceTracking(
+        record,
+        CLIENT_INVOICES_TABLE,
         invoiceNumber,
-        status,
-        invoiceTotal,
-        subtotal,
-        amountSourceField,
-        financialIntegrityStatus,
-        lineCount,
-        dueDate,
-        paidDate,
-        clientId,
-        clientName,
-        clientResolutionAction: clientResolution.action,
-        linkedRedbookIds,
-        sourceRecordIds: group.sourceRecordIds,
-        sourceStatuses: group.sourceStatuses,
-        lineProjection,
-        hierarchy
-      }, runId);
-      const existingData = existing?.data();
+        invoiceSnapshot,
+        runId
+      );
+      const snapshotHash = normalize(sourceTracking.airtableSnapshotHash);
       const sourceBackfillNeeded = existingExists && needsSourceTrackingBackfill(existingData, sourceTracking);
       const action: SyncAction = existingExists
         ? (existingData?.airtableSnapshotHash === snapshotHash && !sourceBackfillNeeded ? 'skipped' : 'updated')
@@ -3938,7 +3999,7 @@ const syncClientInvoices = async (
 
       stats[action] += 1;
 
-      if (hasJobLinkConflict) {
+      if (reportJobLinkConflict) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -3992,14 +4053,23 @@ const syncClientInvoices = async (
           legacyRef: invoiceNumber,
           severity: 'HIGH',
           reason: 'INVOICE_CLIENT_NOT_RESOLVED',
-          currentValue: { clientId: existingData?.clientId || '' },
-          incomingValue: { clientId, clientName, clientResolutionAction: clientResolution.action },
+          currentValue: {
+            clientId: existingInvoiceClientId,
+            canonicalClientId: canonicalClientIdFromDirectory(existingInvoiceClientId, directory.clientsById),
+          },
+          incomingValue: {
+            proposedClientId: clientId,
+            clientName,
+            clientResolutionAction: clientResolution.action,
+            bookingClientIds,
+            canonicalBookingClientIds,
+          },
           recommendedAction: 'Link the invoice to a canonical Client CRM organisation. Invoice imports must not create client records.',
           dryRun: mode.dryRun,
         });
       }
 
-      if (financialIntegrityStatus === 'AMOUNT_MISSING') {
+      if (financialIntegrityStatus === 'AMOUNT_MISSING' && requiresIssuedInvoiceIntegrity(status)) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -4012,13 +4082,17 @@ const syncClientInvoices = async (
           severity: 'HIGH',
           reason: 'INVOICE_AMOUNT_MISSING',
           currentValue: { totalAmount: existingData?.totalAmount || 0 },
-          incomingValue: { availableFields: Object.keys(fields).sort() },
+          incomingValue: {
+            status,
+            amountSourceField,
+            financialFields: collectFinancialFieldEvidence(fields),
+          },
           recommendedAction: 'Map the Airtable invoice total field or enter a verified amount before sending, paying or reporting this invoice.',
           dryRun: mode.dryRun
         });
       }
 
-      if (!hasInvoiceReference) {
+      if (!hasInvoiceReference && requiresIssuedInvoiceIntegrity(status)) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -4030,7 +4104,13 @@ const syncClientInvoices = async (
           legacyRef: invoiceNumber,
           severity: 'MEDIUM',
           reason: 'INVOICE_REFERENCE_MISSING',
-          incomingValue: { availableFields: Object.keys(fields).sort() },
+          currentValue: {
+            invoiceNumber: existingData?.invoiceNumber || existingData?.reference || '',
+          },
+          incomingValue: {
+            status,
+            financialFields: collectFinancialFieldEvidence(fields),
+          },
           recommendedAction: 'Map or enter the external invoice reference before financial sign-off.',
           dryRun: mode.dryRun
         });
@@ -4185,7 +4265,7 @@ const syncClientInvoices = async (
           clientResolutionAction: clientResolution.action,
           linkedJobs: linkedRedbookIds.length,
           matchedBookings: bookings.length,
-          conflict: hasJobLinkConflict ? (linkedRedbookIds.length === 0 ? 'INVOICE_WITHOUT_SOURCE_JOB_LINK' : 'INVOICE_JOB_LINK_NOT_RESOLVED') : undefined,
+          conflict: reportJobLinkConflict ? (linkedRedbookIds.length === 0 ? 'INVOICE_WITHOUT_SOURCE_JOB_LINK' : 'INVOICE_JOB_LINK_NOT_RESOLVED') : undefined,
           status,
           sourceStatuses: group.sourceStatuses,
           statusMismatch: group.statusMismatch,
@@ -4304,7 +4384,7 @@ const syncInterpreterInvoices = async (
           ? 'LINK_MISSING'
           : 'VERIFIED';
       const existing = await db.collection('interpreterInvoices').doc(invoiceId).get();
-      const snapshotHash = stableHash({
+      const invoiceSnapshot = {
         financeProjectionVersion: FINANCE_PROJECTION_VERSION,
         invoiceRefText,
         status,
@@ -4315,19 +4395,15 @@ const syncInterpreterInvoices = async (
         interpreterId,
         paidDate,
         linkedRedbookIds
-      });
-      const sourceTracking = buildSourceTracking(record, INTERPRETER_INVOICES_TABLE, invoiceRefText, {
-        financeProjectionVersion: FINANCE_PROJECTION_VERSION,
+      };
+      const sourceTracking = buildSourceTracking(
+        record,
+        INTERPRETER_INVOICES_TABLE,
         invoiceRefText,
-        status,
-        totalAmount,
-        amountSourceField,
-        financialIntegrityStatus,
-        lineCount,
-        interpreterId,
-        paidDate,
-        linkedRedbookIds
-      }, runId);
+        invoiceSnapshot,
+        runId
+      );
+      const snapshotHash = normalize(sourceTracking.airtableSnapshotHash);
       const existingData = existing.data();
       const sourceBackfillNeeded = existing.exists && needsSourceTrackingBackfill(existingData, sourceTracking);
       const action: SyncAction = existing.exists
@@ -4570,6 +4646,105 @@ const syncTranslationClientInvoices = async (
 ) => {
   const stats: Record<SyncAction, number> = emptyActionStats();
   const details: Array<Record<string, unknown>> = [];
+  const directory = await buildClientInvoiceSyncDirectory(!mode.dryRun);
+  const clientsById = directory.clientsById;
+  const preparedRows: Array<{
+    record: AirtableRecord;
+    fields: Record<string, unknown>;
+    invoiceNumber: string;
+    hasInvoiceReference: boolean;
+    linkedTranslationIds: string[];
+    bookings: admin.firestore.QueryDocumentSnapshot[];
+    totalAmount: number;
+    amountSourceField: string;
+    status: string;
+    clientName: string;
+    issueDate: string;
+    dueDate: string;
+    paidDate: string;
+  }> = [];
+
+  for (const record of records) {
+    const fields = record.fields;
+    const rawInvoiceNumber = pick(fields, [
+      'TR Invoice Nbr',
+      'Invoice Number',
+      'Invoice No',
+      'Invoice Reference',
+      'Reference',
+      'Name'
+    ]);
+    const hasInvoiceReference = Boolean(rawInvoiceNumber) && !/^rec[a-z0-9]+$/i.test(rawInvoiceNumber);
+    const invoiceNumber = hasInvoiceReference ? rawInvoiceNumber : `AIRTABLE-TR-INV-${record.id}`;
+    const linkedTranslationIds = pickLinkedIds(fields, [
+      '📄 Translations',
+      'Translations',
+      'TR NUMBER (from 📄 Translations)',
+      'TR NUMBER (from Translations)',
+      'TR ID (from 📄 Translations)',
+      'TR ID'
+    ]);
+    const bookings = getBookingsFromClientInvoiceDirectory(linkedTranslationIds, directory);
+    const totalSelection = selectMoneyField(fields, [
+      'FQ+VAT (from 📄 Translations)',
+      'FQ+VAT',
+      'FINAL QUOTE (from 📄 Translations)',
+      'FINAL QUOTE',
+      'Invoice Total',
+      'Invoice Amount',
+      'Total Amount',
+      'TR Invoice Total',
+      'Total inc VAT',
+      'Amount Due',
+      'Amount'
+    ], ['fqvat', 'finalquote', 'invoicetotal', 'invoiceamount', 'totalamount', 'translationtotal', 'amountdue']);
+    const firstBooking = bookings[0]?.data() || {};
+    const issueDate = dateOnly(pickRaw(fields, [
+      'Invoice Date',
+      'Issue Date',
+      'Invoiced on',
+      'COMPLETED (from 📄 Translations)',
+      'COMPLETED',
+      'Last Modified'
+    ]) || record.createdTime);
+    const dueDateRaw = pickRaw(fields, ['Due Date', 'Payment Due Date', 'Payment Due', 'Due']);
+    const paidDateRaw = pickRaw(fields, ['paid date', 'Paid Date', 'Payment Date', 'Date Paid', 'Paid on']);
+
+    preparedRows.push({
+      record,
+      fields,
+      invoiceNumber,
+      hasInvoiceReference,
+      linkedTranslationIds,
+      bookings,
+      totalAmount: totalSelection.value,
+      amountSourceField: totalSelection.fieldName,
+      status: mapClientInvoiceStatus(fields),
+      clientName: pick(fields, [
+        'TR Agency (from 📄 Translations)',
+        'TR Agency',
+        'TR Requested By (from 📄 Translations)',
+        'TR Requested By',
+        'TR client email (from 📄 Translations)',
+        'TR client email'
+      ]) || firstBooking.clientName || 'Translation Client',
+      issueDate,
+      dueDate: dueDateRaw ? dateOnly(dueDateRaw) : '',
+      paidDate: paidDateRaw ? dateOnly(paidDateRaw) : '',
+    });
+  }
+
+  const invoiceGroups = aggregateClientInvoiceRows(preparedRows.map(row => ({
+    sourceRecordId: row.record.id,
+    invoiceNumber: row.invoiceNumber,
+    hasInvoiceReference: row.hasInvoiceReference,
+    linkedSourceIds: row.linkedTranslationIds,
+    bookings: row.bookings,
+    grossAmount: row.totalAmount,
+    subtotalAmount: row.totalAmount,
+    status: row.status,
+  })), booking => booking.id);
+  const preparedRowsBySourceId = new Map(preparedRows.map(row => [row.record.id, row]));
   let batch = db.batch();
   let batchOps = 0;
 
@@ -4580,49 +4755,56 @@ const syncTranslationClientInvoices = async (
     batchOps = 0;
   };
 
-  for (const record of records) {
+  for (const group of invoiceGroups) {
+    const fallbackSourceRecordId = group.sourceRecordIds[0] || group.key;
     try {
-      const fields = record.fields;
-      const rawInvoiceNumber = pick(fields, [
-        'TR Invoice Nbr',
-        'Invoice Number',
-        'Invoice No',
-        'Invoice Reference',
-        'Reference',
-        'Name'
-      ]);
-      const hasInvoiceReference = Boolean(rawInvoiceNumber) && !/^rec[a-z0-9]+$/i.test(rawInvoiceNumber);
-      const invoiceNumber = hasInvoiceReference ? rawInvoiceNumber : `AIRTABLE-TR-INV-${record.id}`;
-      const displayReference = hasInvoiceReference ? rawInvoiceNumber : 'Reference missing';
+      const sourceRows = group.sourceRecordIds
+        .map(sourceRecordId => preparedRowsBySourceId.get(sourceRecordId))
+        .filter((row): row is NonNullable<typeof row> => Boolean(row));
+      const representative = sourceRows[0];
+      if (!representative) throw new Error(`Translation invoice group ${group.key} has no source rows.`);
+      const record = representative.record;
+      const fields = Object.assign({}, ...sourceRows.map(row => row.fields));
+      const hasInvoiceReference = group.hasInvoiceReference;
+      const invoiceNumber = group.invoiceNumber;
+      const displayReference = hasInvoiceReference ? invoiceNumber : 'Reference missing';
       const invoiceId = `airtable_translation_client_invoice_${slugify(invoiceNumber || record.id)}`;
-      const linkedTranslationIds = pickLinkedIds(fields, ['Translations', 'TR NUMBER (from Translations)', 'TR ID']);
-      const bookings = await getBookingsByAirtableRecordIds(linkedTranslationIds);
-      const hasJobLinkConflict = linkedTranslationIds.length === 0 || bookings.length === 0;
-      const firstBooking = bookings[0]?.data() || {};
-      const totalSelection = selectMoneyField(fields, [
-        'FQ+VAT',
-        'FINAL QUOTE',
-        'Invoice Total',
-        'Invoice Amount',
-        'Total Amount',
-        'TR Invoice Total',
-        'Total inc VAT',
-        'Amount Due',
-        'Amount',
-        'TR owed fees'
-      ], ['invoicetotal', 'invoiceamount', 'totalamount', 'translationtotal', 'amountdue']);
-      const totalAmount = totalSelection.value;
-      const amountSourceField = totalSelection.fieldName;
-      const status = mapClientInvoiceStatus(fields);
-      const clientName = pick(fields, ['TR Agency', 'TR Requested By', 'TR client email']) || firstBooking.clientName || 'Translation Client';
-      const clientResolution = await resolveInvoiceClient(firstBooking.clientId, clientName, fields, mode.dryRun);
+      const existing = directory.invoicesById.get(invoiceId);
+      const existingData = existing?.data();
+      const linkedTranslationIds = group.linkedSourceIds;
+      const bookings = group.bookings;
+      const hasJobLinkConflict = sourceRows.some(row => (
+        row.linkedTranslationIds.length === 0 || row.bookings.length === 0
+      ));
+      const totalAmount = group.grossAmount || group.subtotalAmount;
+      const amountSourceField = uniqueValues(
+        ...sourceRows.map(row => row.amountSourceField)
+      ).join(', ');
+      const status = group.status;
+      const reportJobLinkConflict = shouldReportInvoiceLinkConflict(status, hasJobLinkConflict);
+      const clientName = sourceRows.map(row => row.clientName).find(name => (
+        name && name !== 'Translation Client'
+      )) || bookings[0]?.data()?.clientName || 'Translation Client';
+      const bookingClientIds = uniqueValues(
+        ...bookings.map(booking => normalize(booking.data()?.clientId))
+      );
+      const canonicalBookingClientIds = uniqueValues(
+        ...bookingClientIds.map(clientId => canonicalClientIdFromDirectory(clientId, clientsById))
+      );
+      const existingInvoiceClientId = normalize(existingData?.clientId);
+      const resolvedKnownClientId = preferredInvoiceClientId(
+        bookingClientIds,
+        existingInvoiceClientId,
+        clientsById
+      );
+      const clientResolution = await resolveInvoiceClient(resolvedKnownClientId, clientName, fields, mode.dryRun);
       const clientId = clientResolution.id;
-      const issueDate = dateOnly(pickRaw(fields, ['Invoice Date', 'Issue Date', 'Invoiced on', 'COMPLETED', 'Last Modified']) || record.createdTime);
-      const dueDateRaw = pickRaw(fields, ['Due Date', 'Payment Due Date', 'Payment Due', 'Due']);
-      const dueDate = dueDateRaw ? dateOnly(dueDateRaw) : '';
-      const paidDateRaw = pickRaw(fields, ['paid date', 'Paid Date', 'Payment Date', 'Date Paid', 'Paid on']);
-      const paidDate = paidDateRaw ? dateOnly(paidDateRaw) : '';
-      const lineCount = Math.max(bookings.length, 1);
+      const issueDates = sourceRows.map(row => row.issueDate).filter(Boolean).sort();
+      const issueDate = issueDates[0] || dateOnly(record.createdTime);
+      const dueDate = sourceRows.map(row => row.dueDate).find(Boolean) || '';
+      const paidDates = sourceRows.map(row => row.paidDate).filter(Boolean).sort();
+      const paidDate = paidDates[paidDates.length - 1] || '';
+      const lineCount = group.lines.length;
       const financialIntegrityStatus = Math.abs(totalAmount) < 0.005
         ? 'AMOUNT_MISSING'
         : hasJobLinkConflict
@@ -4632,8 +4814,7 @@ const syncTranslationClientInvoices = async (
         id: booking.id,
         ...(booking.data() || {}),
       })));
-      const existing = await db.collection('clientInvoices').doc(invoiceId).get();
-      const snapshotHash = stableHash({
+      const invoiceSnapshot = {
         financeProjectionVersion: FINANCE_PROJECTION_VERSION,
         invoiceNumber,
         status,
@@ -4647,33 +4828,31 @@ const syncTranslationClientInvoices = async (
         clientName,
         clientResolutionAction: clientResolution.action,
         linkedTranslationIds,
+        sourceRecordIds: group.sourceRecordIds,
+        sourceStatuses: group.sourceStatuses,
+        lineProjection: group.lines.map(line => ({
+          key: line.key,
+          sourceRecordIds: line.sourceRecordIds,
+          grossAmount: line.grossAmount,
+        })),
         hierarchy
-      });
-      const sourceTracking = buildSourceTracking(record, TRANSLATION_CLIENT_INVOICES_TABLE, invoiceNumber, {
-        financeProjectionVersion: FINANCE_PROJECTION_VERSION,
+      };
+      const sourceTracking = buildSourceTracking(
+        record,
+        TRANSLATION_CLIENT_INVOICES_TABLE,
         invoiceNumber,
-        status,
-        totalAmount,
-        amountSourceField,
-        financialIntegrityStatus,
-        lineCount,
-        dueDate,
-        paidDate,
-        clientId,
-        clientName,
-        clientResolutionAction: clientResolution.action,
-        linkedTranslationIds,
-        hierarchy
-      }, runId);
-      const existingData = existing.data();
-      const sourceBackfillNeeded = existing.exists && needsSourceTrackingBackfill(existingData, sourceTracking);
-      const action: SyncAction = existing.exists
+        invoiceSnapshot,
+        runId
+      );
+      const snapshotHash = normalize(sourceTracking.airtableSnapshotHash);
+      const sourceBackfillNeeded = Boolean(existing) && needsSourceTrackingBackfill(existingData, sourceTracking);
+      const action: SyncAction = existing
         ? (existingData?.airtableSnapshotHash === snapshotHash && !sourceBackfillNeeded ? 'skipped' : 'updated')
         : 'created';
 
       stats[action] += 1;
 
-      if (hasJobLinkConflict) {
+      if (reportJobLinkConflict) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -4692,6 +4871,29 @@ const syncTranslationClientInvoices = async (
         });
       }
 
+      if (group.statusMismatch) {
+        stats.conflict += 1;
+        await writeSyncConflict({
+          runId,
+          entityType: 'clientInvoice',
+          entityId: invoiceId,
+          sourceTable: TRANSLATION_CLIENT_INVOICES_TABLE,
+          sourceRecordId: record.id,
+          sourceBaseId: DEFAULT_BASE_ID,
+          legacyRef: invoiceNumber,
+          severity: 'HIGH',
+          reason: 'TRANSLATION_INVOICE_GROUP_STATUS_MISMATCH',
+          currentValue: { status: existingData?.status || '' },
+          incomingValue: {
+            aggregateStatus: status,
+            sourceStatuses: group.sourceStatuses,
+            sourceRecordIds: group.sourceRecordIds,
+          },
+          recommendedAction: 'Align every Airtable translation row sharing this invoice number to one financial status, then rerun sync.',
+          dryRun: mode.dryRun,
+        });
+      }
+
       if (clientResolution.action.startsWith('unresolved')) {
         stats.conflict += 1;
         await writeSyncConflict({
@@ -4704,14 +4906,23 @@ const syncTranslationClientInvoices = async (
           legacyRef: invoiceNumber,
           severity: 'HIGH',
           reason: 'INVOICE_CLIENT_NOT_RESOLVED',
-          currentValue: { clientId: existingData?.clientId || '' },
-          incomingValue: { clientId, clientName, clientResolutionAction: clientResolution.action },
+          currentValue: {
+            clientId: existingInvoiceClientId,
+            canonicalClientId: canonicalClientIdFromDirectory(existingInvoiceClientId, clientsById),
+          },
+          incomingValue: {
+            proposedClientId: clientId,
+            clientName,
+            clientResolutionAction: clientResolution.action,
+            bookingClientIds,
+            canonicalBookingClientIds,
+          },
           recommendedAction: 'Link the translation invoice to a canonical Client CRM organisation. Invoice imports must not create client records.',
           dryRun: mode.dryRun,
         });
       }
 
-      if (financialIntegrityStatus === 'AMOUNT_MISSING') {
+      if (financialIntegrityStatus === 'AMOUNT_MISSING' && requiresIssuedInvoiceIntegrity(status)) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -4724,13 +4935,17 @@ const syncTranslationClientInvoices = async (
           severity: 'HIGH',
           reason: 'TRANSLATION_INVOICE_AMOUNT_MISSING',
           currentValue: { totalAmount: existingData?.totalAmount || 0 },
-          incomingValue: { availableFields: Object.keys(fields).sort() },
+          incomingValue: {
+            status,
+            amountSourceField,
+            financialFields: collectFinancialFieldEvidence(fields),
+          },
           recommendedAction: 'Map the translation invoice total field or enter a verified amount before sending, paying or reporting this invoice.',
           dryRun: mode.dryRun
         });
       }
 
-      if (!hasInvoiceReference) {
+      if (!hasInvoiceReference && requiresIssuedInvoiceIntegrity(status)) {
         stats.conflict += 1;
         await writeSyncConflict({
           runId,
@@ -4742,7 +4957,13 @@ const syncTranslationClientInvoices = async (
           legacyRef: invoiceNumber,
           severity: 'MEDIUM',
           reason: 'TRANSLATION_INVOICE_REFERENCE_MISSING',
-          incomingValue: { availableFields: Object.keys(fields).sort() },
+          currentValue: {
+            invoiceNumber: existingData?.invoiceNumber || existingData?.reference || '',
+          },
+          incomingValue: {
+            status,
+            financialFields: collectFinancialFieldEvidence(fields),
+          },
           recommendedAction: 'Map or enter the external translation invoice reference before financial sign-off.',
           dryRun: mode.dryRun
         });
@@ -4750,20 +4971,20 @@ const syncTranslationClientInvoices = async (
 
       if (!mode.dryRun && action !== 'skipped') {
         if (batchOps > 350) await commitIfNeeded(true);
-        const lineBookings = bookings.length ? bookings : [null];
-        const expectedLineIds = new Set(lineBookings.map((booking, index) => (
-          `${invoiceId}_${booking?.id || record.id}_${index}`
+        const expectedLineIds = new Set(group.lines.map(line => (
+          `${invoiceId}_${line.booking?.id || `unmatched_${line.sourceRecordIds[0]}`}`
         )));
-        const staleLineRefs = await getStaleImportedInvoiceLineRefs(
-          'clientInvoiceLines',
+        const staleLineRefs = getStaleImportedInvoiceLineRefsFromDirectory(
           invoiceId,
           record.id,
-          expectedLineIds
+          expectedLineIds,
+          directory
         );
         staleLineRefs.forEach(lineRef => {
           batch.delete(lineRef);
           batchOps += 1;
         });
+        if (batchOps > 350) await commitIfNeeded(true);
         batch.set(db.collection('clientInvoices').doc(invoiceId), cleanData({
           id: invoiceId,
           organizationId: 'lingland-main',
@@ -4775,7 +4996,7 @@ const syncTranslationClientInvoices = async (
           issueDate,
           dueDate,
           periodStart: issueDate,
-          periodEnd: issueDate,
+          periodEnd: issueDates[issueDates.length - 1] || issueDate,
           subtotal: totalAmount,
           vatRate: 0,
           vatAmount: 0,
@@ -4790,18 +5011,25 @@ const syncTranslationClientInvoices = async (
           financeProjectionVersion: FINANCE_PROJECTION_VERSION,
           ...hierarchy,
           ...sourceTracking,
+          airtableSourceRecordIds: group.sourceRecordIds,
           linkedTranslationRecordIds: linkedTranslationIds,
           airtableStatus: pick(fields, ['TR Status', 'Status']),
           paidAt: status === 'PAID' ? (paidDate || issueDate) : existingData?.paidAt,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          createdAt: existing.exists ? existingData?.createdAt : admin.firestore.FieldValue.serverTimestamp()
+          createdAt: existing ? existingData?.createdAt : admin.firestore.FieldValue.serverTimestamp()
         }), { merge: true });
         batchOps += 1;
 
-        lineBookings.forEach((booking, index) => {
-          const amountPerLine = allocateInvoiceLineAmount(totalAmount, index, lineBookings.length);
+        for (const line of group.lines) {
+          if (batchOps > 430) await commitIfNeeded(true);
+          const booking = line.booking;
+          const amountPerLine = line.grossAmount || line.subtotalAmount;
           const timesheetId = booking?.exists ? getMirroredTimesheetId(booking.id) : '';
-          const lineId = `${invoiceId}_${booking?.id || record.id}_${index}`;
+          const lineId = `${invoiceId}_${booking?.id || `unmatched_${line.sourceRecordIds[0]}`}`;
+          const lineSourceRows = line.sourceRecordIds
+            .map(sourceRecordId => preparedRowsBySourceId.get(sourceRecordId))
+            .filter((row): row is NonNullable<typeof row> => Boolean(row));
+          const lineFields = Object.assign({}, ...lineSourceRows.map(row => row.fields));
           const lineHierarchy = projectClientInvoiceLineHierarchy(booking ? {
             id: booking.id,
             ...(booking.data() || {}),
@@ -4815,13 +5043,18 @@ const syncTranslationClientInvoices = async (
             bookingId: booking?.id || '',
             timesheetId,
             description: `Airtable translation ${booking?.data()?.jobNumber || invoiceNumber}`,
-            units: safeNumber(pickRaw(fields, ['WORD COUNT', 'TR owed words'])) || 1,
+            units: safeNumber(pickRaw(lineFields, [
+              'WORD COUNT (from 📄 Translations)',
+              'WORD COUNT',
+              'TR owed words'
+            ])) || 1,
             rate: amountPerLine,
             lineAmount: amountPerLine,
             total: amountPerLine,
             serviceCategory: 'TRANSLATION',
             sourceSystem: 'AIRTABLE',
-            sourceRecordId: record.id,
+            sourceRecordId: line.sourceRecordIds[0],
+            sourceRecordIds: line.sourceRecordIds,
             sourceTable: TRANSLATION_CLIENT_INVOICES_TABLE,
             sourceBaseId: DEFAULT_BASE_ID,
             snapshotHash,
@@ -4866,13 +5099,14 @@ const syncTranslationClientInvoices = async (
             });
             batchOps += 2;
           }
-        });
+        }
       }
 
       if (details.length < MODULE_DETAIL_LIMIT) {
         details.push({
           action,
           sourceRecordId: record.id,
+          sourceRecordIds: group.sourceRecordIds,
           sourceBaseId: DEFAULT_BASE_ID,
           sourceTable: TRANSLATION_CLIENT_INVOICES_TABLE,
           snapshotHash,
@@ -4882,7 +5116,7 @@ const syncTranslationClientInvoices = async (
           clientResolutionAction: clientResolution.action,
           linkedJobs: linkedTranslationIds.length,
           matchedBookings: bookings.length,
-          conflict: hasJobLinkConflict ? (linkedTranslationIds.length === 0 ? 'TRANSLATION_INVOICE_WITHOUT_SOURCE_JOB_LINK' : 'TRANSLATION_INVOICE_JOB_LINK_NOT_RESOLVED') : undefined,
+          conflict: reportJobLinkConflict ? (linkedTranslationIds.length === 0 ? 'TRANSLATION_INVOICE_WITHOUT_SOURCE_JOB_LINK' : 'TRANSLATION_INVOICE_JOB_LINK_NOT_RESOLVED') : undefined,
           status,
           totalAmount,
           amountSourceField: amountSourceField || undefined,
@@ -4892,12 +5126,14 @@ const syncTranslationClientInvoices = async (
       }
 
       await commitIfNeeded();
-      markConflictScopeProcessed(conflictContext, TRANSLATION_CLIENT_INVOICES_TABLE, record.id);
+      group.sourceRecordIds.forEach(sourceRecordId => (
+        markConflictScopeProcessed(conflictContext, TRANSLATION_CLIENT_INVOICES_TABLE, sourceRecordId)
+      ));
     } catch (error) {
       stats.error += 1;
       pushErrorDetail(details, {
         action: 'error',
-        sourceRecordId: record.id,
+        sourceRecordId: fallbackSourceRecordId,
         sourceTable: TRANSLATION_CLIENT_INVOICES_TABLE,
         message: error instanceof Error ? error.message : 'Unknown error'
       });
@@ -4993,7 +5229,7 @@ const syncTranslatorInvoices = async (
           ? 'LINK_MISSING'
           : 'VERIFIED';
       const existing = await db.collection('interpreterInvoices').doc(invoiceId).get();
-      const snapshotHash = stableHash({
+      const invoiceSnapshot = {
         financeProjectionVersion: FINANCE_PROJECTION_VERSION,
         invoiceRefText,
         status,
@@ -5006,21 +5242,15 @@ const syncTranslatorInvoices = async (
         paidDate,
         wordCount,
         docs
-      });
-      const sourceTracking = buildSourceTracking(record, TRANSLATOR_INVOICES_TABLE, invoiceRefText, {
-        financeProjectionVersion: FINANCE_PROJECTION_VERSION,
+      };
+      const sourceTracking = buildSourceTracking(
+        record,
+        TRANSLATOR_INVOICES_TABLE,
         invoiceRefText,
-        status,
-        totalAmount,
-        amountSourceField,
-        financialIntegrityStatus,
-        lineCount,
-        interpreterId,
-        linkedTranslationIds,
-        paidDate,
-        wordCount,
-        docs
-      }, runId);
+        invoiceSnapshot,
+        runId
+      );
+      const snapshotHash = normalize(sourceTracking.airtableSnapshotHash);
       const existingData = existing.data();
       const sourceBackfillNeeded = existing.exists && needsSourceTrackingBackfill(existingData, sourceTracking);
       const action: SyncAction = existing.exists

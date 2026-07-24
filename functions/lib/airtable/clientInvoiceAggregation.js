@@ -1,22 +1,28 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.aggregateClientInvoiceRows = void 0;
+exports.aggregateClientInvoiceRows = exports.shouldReportInvoiceLinkConflict = exports.requiresIssuedInvoiceIntegrity = void 0;
 const statusMapping_1 = require("./statusMapping");
 const money = (value) => Number(value.toFixed(2));
 const unique = (values) => Array.from(new Set(values.filter(Boolean)));
 const aggregateStatus = (statuses) => {
     const normalized = unique(statuses.map(status => status.trim().toUpperCase()));
-    if (normalized.length === 1)
-        return normalized[0];
     const active = normalized.filter(status => status !== 'CANCELLED');
     if (!active.length)
         return 'CANCELLED';
-    if (active.every(status => status === 'PAID'))
+    if (active.includes('PAID'))
         return 'PAID';
-    if (active.every(status => status === 'PAID' || status === 'SENT'))
+    if (active.includes('SENT'))
         return 'SENT';
     return 'DRAFT';
 };
+const hasIncompatibleStatuses = (statuses) => {
+    const normalized = unique(statuses.map(status => status.trim().toUpperCase()));
+    return normalized.includes('CANCELLED') && normalized.some(status => status !== 'CANCELLED');
+};
+const requiresIssuedInvoiceIntegrity = (status) => (['SENT', 'PAID'].includes(status.trim().toUpperCase()));
+exports.requiresIssuedInvoiceIntegrity = requiresIssuedInvoiceIntegrity;
+const shouldReportInvoiceLinkConflict = (status, hasJobLinkConflict) => hasJobLinkConflict && (0, exports.requiresIssuedInvoiceIntegrity)(status);
+exports.shouldReportInvoiceLinkConflict = shouldReportInvoiceLinkConflict;
 const aggregateClientInvoiceRows = (rows, getBookingId) => {
     const grouped = new Map();
     rows.forEach(row => {
@@ -78,7 +84,7 @@ const aggregateClientInvoiceRows = (rows, getBookingId) => {
             subtotalAmount: money(groupedRows.reduce((total, row) => total + row.subtotalAmount, 0)),
             status: aggregateStatus(sourceStatuses),
             sourceStatuses,
-            statusMismatch: sourceStatuses.length > 1,
+            statusMismatch: hasIncompatibleStatuses(sourceStatuses),
             lines: Array.from(linesByKey.values()),
         };
     });

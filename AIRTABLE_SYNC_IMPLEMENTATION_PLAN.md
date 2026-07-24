@@ -21,6 +21,7 @@
 - [15. Checklist mestre](#15-checklist-mestre)
 - [16. Prova de reconciliacao financeira](#16-prova-de-reconciliacao-financeira)
 - [17. Prova de identidade profissional](#17-prova-de-identidade-profissional)
+- [18. Prova final de invoices e idempotencia](#18-prova-final-de-invoices-e-idempotencia)
 
 ## 1. Objetivo operacional
 
@@ -623,7 +624,7 @@ Uma fase so esta pronta quando:
 ### Go-live
 
 - [ ] Mirror Mode validado.
-- [ ] Emails externos bloqueados em teste.
+- [x] Emails externos bloqueados em teste.
 - [ ] Reconciliacao Airtable vs plataforma aprovada.
 - [ ] Import full executado.
 - [ ] Novos formularios ativados.
@@ -768,3 +769,109 @@ Pendencia profissional residual:
 
 - [x] Nenhum vinculo profissional manual e necessario no baseline atual.
 - [ ] Manter o resolvedor manual apenas para novos casos futuros com evidencia forte.
+
+## 18. Prova final de invoices e idempotencia
+
+### Escopo validado em producao em 24/07/2026
+
+Modo operacional preservado durante toda a prova:
+
+- `HYBRID`
+- Airtable Import `ON`
+- Email `SUPPRESSED`
+- Airtable estritamente read-only
+
+Politicas consolidadas:
+
+- `invoiced by interp` e um estado do payable do profissional e nao comprova faturamento ao cliente.
+- Esse sinal permanece `DRAFT` no client invoice ate existir evidencia real de invoice emitida.
+- Falta de valor, referencia ou job link em `DRAFT` fica na fila de Finance readiness.
+- Falta desses dados em `SENT` ou `PAID` gera conflito bloqueante de reconciliacao.
+- `PAID` vence estados anteriores ao consolidar varias linhas do mesmo invoice.
+- Um status cancelado misturado com estados financeiros ativos gera conflito e nunca e promovido silenciosamente.
+- Imports financeiros nao criam clientes improvisados; exigem uma organizacao canonica do Client CRM.
+
+Implementacao tecnica:
+
+- [x] Mapear os nomes reais dos campos da tabela Airtable `TR invoices`.
+- [x] Agrupar linhas por numero externo de invoice.
+- [x] Consolidar todos os jobs, source record IDs, valores e status do grupo.
+- [x] Criar linhas deterministicas por translation job.
+- [x] Preservar invoices sem referencia como registros separados e auditaveis.
+- [x] Usar a mesma projecao para calcular e persistir `airtableSnapshotHash`.
+- [x] Tornar a idempotencia uma garantia compartilhada pelos quatro imports financeiros.
+- [x] Substituir `window.confirm` por confirmacao interna acessivel no Sync Center.
+- [x] Confirmar explicitamente na UI que Airtable continua read-only.
+- [x] Confirmar explicitamente na UI que comunicacoes seguem o Platform Mode.
+
+Prova de agrupamento de translation client invoices:
+
+| Indicador | Resultado |
+| --- | ---: |
+| Linhas Airtable lidas | 359 |
+| Invoices canonicas produzidas | 248 |
+| Linhas duplicadas consolidadas | 111 |
+| Conflitos reportados durante o modulo | 36 |
+| Erros tecnicos | 0 |
+
+Exemplos confirmados:
+
+- `HAM007.JAN25`: 9 jobs agrupados.
+- `HAM007.Sept`: 8 jobs agrupados.
+- `HAM016.2930`: 18 jobs agrupados.
+- `HAM007.August`: 10 jobs agrupados.
+
+Write Sync final:
+
+- Executado em `24/07/2026, 15:14:27`.
+- `0` criados.
+- `248` atualizados para persistir a projecao canonica e o hash correto.
+- `36` eventos de conflito de dados.
+- `0` erros.
+
+Prova de idempotencia imediatamente apos o Write Sync:
+
+- `0` criados.
+- `0` atualizados.
+- `248` ignorados.
+- `36` conflitos conhecidos.
+- `0` erros.
+
+Reconciliacao global apos refresh:
+
+| Motivo | Quantidade |
+| --- | ---: |
+| `CLIENT_ACCOUNT_REF_AMBIGUOUS` | 15 |
+| `CLIENT_NOT_RESOLVED` | 1 |
+| `INVOICE_AMOUNT_MISSING` | 14 |
+| `INVOICE_CLIENT_NOT_RESOLVED` | 8 |
+| `INVOICE_JOB_LINK_NOT_RESOLVED` | 1 |
+| `INVOICE_REFERENCE_MISSING` | 6 |
+| `INVOICE_WITHOUT_SOURCE_JOB_LINK` | 1 |
+| `TRANSLATION_INVOICE_AMOUNT_MISSING` | 3 |
+| `TRANSLATION_INVOICE_REFERENCE_MISSING` | 1 |
+| **Total** | **50** |
+
+Severidade:
+
+- `42` HIGH.
+- `8` MEDIUM.
+- `0` LOW.
+
+Esses 50 itens sao pendencias reais de evidencia ou dados-fonte. O importador nao deve escolher um cliente, inventar uma referencia ou fabricar um valor financeiro. Cada item permanece filtravel, possui evidencia revisavel e recomenda uma acao operacional.
+
+Verificacao automatizada:
+
+- [x] `41` arquivos de teste aprovados.
+- [x] `242` testes aprovados.
+- [x] TypeScript aprovado.
+- [x] Build Vite de producao aprovado.
+- [x] Hosting publicado.
+- [x] `syncAirtableData` publicado.
+- [x] `scheduledRedbookSync` publicado.
+
+Backlog tecnico obrigatorio antes de 30/10/2026:
+
+- [ ] Migrar Firebase Functions de Node.js 20 para um runtime suportado.
+- [ ] Atualizar `firebase-functions` e executar uma regressao completa de callable, scheduler e secrets.
+- [ ] Reduzir os chunks acima de 500 kB sem alterar os fluxos operacionais.

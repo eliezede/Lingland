@@ -62,6 +62,8 @@ const mapClientInvoiceStatusValue = (rawStatus, signals = {}) => {
     const value = (0, exports.canonicalAirtableStatus)(rawStatus);
     if (/\bcancel(?:led|ed)?\b/.test(value))
         return 'CANCELLED';
+    if (/\binvoic(?:e|ed|ing)\s+by\s+interp(?:reter)?\b/.test(value))
+        return 'DRAFT';
     if (signals.paid || isExplicitlyPaid(value))
         return 'PAID';
     if (signals.sent

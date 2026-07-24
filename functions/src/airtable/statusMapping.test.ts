@@ -37,6 +37,7 @@ describe('Airtable workflow status mapping', () => {
     expect(mapClientInvoiceStatusValue('Invoicing')).toBe('SENT');
     expect(mapClientInvoiceStatusValue('Paid')).toBe('PAID');
     expect(mapClientInvoiceStatusValue('Payment received')).toBe('PAID');
+    expect(mapClientInvoiceStatusValue('invoiced by interp', { paid: true })).toBe('DRAFT');
     expect(mapInterpreterInvoiceStatusValue('Unpaid')).toBe('SUBMITTED');
     expect(mapInterpreterInvoiceStatusValue('Paid')).toBe('PAID');
   });

@@ -48,6 +48,7 @@ describe('translation client evidence', () => {
       invoiceRecordIds: ['recInvoice'],
       invoiceNumbers: ['WES008.9001'],
       accountRefs: ['WES008'],
+      candidateAccountRefs: ['WES008'],
       agencyNames: ['Wessex Solicitors'],
       requestedByNames: ['Erica'],
       emails: ['erica@wessexsolicitors.co.uk'],
@@ -87,6 +88,7 @@ describe('translation client evidence', () => {
 
     const result = enrichTranslationClientIdentity(emptyIdentity(), evidence);
     expect(evidence?.accountRefAmbiguous).toBe(true);
+    expect(evidence?.candidateAccountRefs).toEqual(['HAM007', 'HAM018']);
     expect(result.uniqueClientKey).toBe('');
     expect(result.sageAccountRef).toBe('');
   });
@@ -126,6 +128,11 @@ describe('translation client evidence', () => {
       { id: 'c', fields: { Translations: ['recThree'], 'TR Agency': ['HCC'] } },
     ]).get('recThree');
 
-    expect(evidence).toMatchObject({ accountRefs: [], accountRefSource: '', accountRefAmbiguous: true });
+    expect(evidence).toMatchObject({
+      accountRefs: [],
+      candidateAccountRefs: ['HAM007', 'HAM018'],
+      accountRefSource: '',
+      accountRefAmbiguous: true,
+    });
   });
 });
