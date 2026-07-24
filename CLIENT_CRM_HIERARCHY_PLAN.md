@@ -249,6 +249,15 @@ The current canonical still has an empty Sage reference and invoice route in Fir
 - The authoritative after-run reported 6 creates, 413 updates, 75 conflicts, 0 errors and 72 remaining review decisions. The exact reduction from 78 blocked rows and 75 decisions matches the three reviewed scopes. Filtering for `Homeless` now returns only the excluded HCC department.
 - Production effects were limited to three audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; the 75 remaining blockers continue to lock Write Sync.
 
+### University Hospital Southampton identity batch - 24 July 2026
+
+- Official Airtable `Clients` account `recqfTxuO4cTmLLvV` anchors Southampton University Hospitals NHS Trust with Sage reference `SOU004`, invoice route `uhspayablesinvoices@uhs.nhs.uk` and the Tremona Road billing address.
+- Three unresolved `Clients Book` scopes were mapped to `airtable_client_sou004`: `University Hospital of Southampton`, `UHS, Breast CNS`, and `Southamptn General Hospital, Respiratory Centre, Pulmonary Function Department`.
+- Supporting records `recG8yyY8DFeoT0MU`, `recGtxDxRGY6Fw1Uq`, `recsI5izrKOIkxBJP` and `recsP5YY8cVg9ERpW` use `uhs.nhs.uk`, the accessible-services mailbox, Southampton General Hospital or the exact Tremona Road location.
+- `Women's Health`, `Womens Health Department` and related rows were explicitly excluded because their requesters use `hhft.nhs.uk` and belong to Hampshire Hospitals. Orphan departments `UHS NHS` and `UHS Southampton` were also left unresolved because their Airtable rows contain only a name and no supporting contact, address or dependency.
+- The authoritative after-run reported 6 creates, 413 updates, 72 conflicts, 0 errors and 69 remaining review decisions. The reduction of 3 blockers and 3 decisions matches the three unique review scopes; the two same-name University Hospital source records share one identity decision.
+- Production effects were limited to three audited Firestore identity mappings. No Airtable record, canonical client document, merge, Client Write Sync, job, invoice, email, notification policy or scheduled mirror configuration was changed; Write Sync remains locked by the 72 unresolved source rows.
+
 #### Next identity-review queue
 
 - [ ] After the zero-blocker Clients Write Sync, rerun the Hampshire Hospitals merge preview and verify that `HAM013`, invoice email and billing address are present before requesting the mandatory second approval.
