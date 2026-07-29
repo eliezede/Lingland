@@ -191,6 +191,7 @@ const inferDepartmentFromOrganisationVariant = (
   const sharedCoreTokens = sourceCore.filter(token => canonicalCore.has(token)).length;
   const requiredSharedTokens = Math.min(2, canonicalCore.size);
   const hasUnitDelimiter = /[-,:/()]/.test(sourceCompanyValue);
+  const hasUkPostcode = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(sourceCompanyValue);
   const extraHasStructuralWord = extraTokens.some(token => DEPARTMENT_WORDS.has(token));
   const extraHasSubstantiveToken = extraTokens.some(token => (
     !DEPARTMENT_WORDS.has(token)
@@ -221,6 +222,7 @@ const inferDepartmentFromOrganisationVariant = (
     || extraTokens.length > 4
     || sharedCoreTokens < requiredSharedTokens
     || !extraHasSubstantiveToken
+    || (hasUkPostcode && !extraHasStructuralWord)
     || (!hasUnitDelimiter && !extraHasStructuralWord)
   ) return null;
 

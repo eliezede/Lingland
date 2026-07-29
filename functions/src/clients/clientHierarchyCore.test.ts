@@ -217,6 +217,21 @@ describe('client hierarchy seed preview', () => {
     expect(preview.departments).toHaveLength(0);
   });
 
+  it('does not turn an address and postcode suffix into a department', () => {
+    const preview = buildClientHierarchySeedPreview([
+      {
+        id: 'canonical',
+        data: { companyName: "Women's Health Department, Royal Hampshire County Hospital" },
+      },
+      {
+        id: 'address-alias',
+        data: { companyName: "Women's Health, Royal Hampshire County Hospital, Winchester, SO22 5DG" },
+      },
+    ], 'canonical');
+
+    expect(preview.departments).toHaveLength(0);
+  });
+
   it('extracts delimiter-separated wards and uses the ward name to identify functional mailboxes', () => {
     const preview = buildClientHierarchySeedPreview([
       {
