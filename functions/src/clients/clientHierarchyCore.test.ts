@@ -196,6 +196,27 @@ describe('client hierarchy seed preview', () => {
     expect(preview.departments).toHaveLength(0);
   });
 
+  it('does not treat reordered parent descriptors as a department', () => {
+    const preview = buildClientHierarchySeedPreview([
+      {
+        id: 'canonical',
+        data: {
+          companyName: 'Adopt South - HCC Childrens Services',
+          airtableClientKey: 'adopt south - childrens services, hampshire cc',
+        },
+      },
+      {
+        id: 'alias',
+        data: {
+          companyName: 'HCC Childrens Services - Adopt South',
+          airtableClientKey: 'hcc childrens services - adopt south',
+        },
+      },
+    ], 'canonical');
+
+    expect(preview.departments).toHaveLength(0);
+  });
+
   it('extracts delimiter-separated wards and uses the ward name to identify functional mailboxes', () => {
     const preview = buildClientHierarchySeedPreview([
       {

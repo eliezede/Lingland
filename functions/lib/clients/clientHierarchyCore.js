@@ -169,7 +169,9 @@ const inferDepartment = (document, canonicalDocument) => {
     const companyKey = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(source.companyName);
     const sourceKeyValue = text(source.airtableClientKey || source.sourceKey);
     const sourceKey = (0, clientIdentityAuditCore_1.normalizeOrganizationName)(sourceKeyValue);
-    let remainder = sourceKey.startsWith(`${companyKey} `) ? sourceKey.slice(companyKey.length).trim() : '';
+    const extendsFullCompanyName = sourceKey.startsWith(`${companyKey} `);
+    let remainder = extendsFullCompanyName ? sourceKey.slice(companyKey.length).trim() : '';
+    let matchedBySharedRoot = false;
     let evidence = sourceKeyValue ? 'Airtable client key extends the organisation name' : '';
     if (!remainder && companyKey && sourceKey) {
         const companyTokens = companyKey.split(' ').filter(Boolean);
@@ -180,6 +182,7 @@ const inferDepartment = (document, canonicalDocument) => {
             remainder = sourceTokens.slice(prefixLength)
                 .filter(token => !ORGANIZATION_DESCRIPTOR_WORDS.has(token))
                 .join(' ');
+            matchedBySharedRoot = true;
             evidence = 'Airtable client key shares the organisation root and adds an operating unit';
         }
     }
@@ -195,6 +198,7 @@ const inferDepartment = (document, canonicalDocument) => {
     const hasSourceDelimiter = /[,(/]|\s[-:]\s/.test(sourceKeyValue);
     if (GENERIC_DEPARTMENT_KEYS.has(remainder)
         || remainderTokens.length === 0
+        || (matchedBySharedRoot && !hasStructuralWord)
         || (!hasStructuralWord && !hasSourceDelimiter))
         return null;
     return {
