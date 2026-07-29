@@ -61,6 +61,7 @@ __exportStar(require("./clients/clientIdentityAuditFunctions"), exports);
 __exportStar(require("./clients/clientHierarchyFunctions"), exports);
 __exportStar(require("./clients/clientPortalAccess"), exports);
 __exportStar(require("./clients/clientHierarchyIntegrityFunctions"), exports);
+__exportStar(require("./clients/onAirtableCrmRecordCreated"), exports);
 __exportStar(require("./notifications/onNotificationCreated"), exports);
 __exportStar(require("./notifications/onTimesheetSubmit"), exports); // NT-05: Notify admins + interpreter on timesheet creation
 __exportStar(require("./notifications/onBookingOffer"), exports);

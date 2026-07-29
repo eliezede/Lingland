@@ -10,6 +10,7 @@ import {
 } from './clientHierarchyIntegrityCore';
 import { projectClientFinanceHierarchy, projectClientInvoiceLineHierarchy } from './clientFinanceScope';
 import { resolveClientIdentity } from './clientIdentityResolution';
+import { scopeIntegrityInputToCurrentCrm } from './clientCrmCohort';
 
 const db = admin.firestore();
 const RUNTIME = { timeoutSeconds: 300, memory: '1GB' as const };
@@ -212,7 +213,12 @@ const backupUpdates = async (
 export const getClientHierarchyIntegrityAudit = functions.runWith(RUNTIME).https.onCall(async (_data, context) => {
   await assertAdmin(context.auth?.uid);
   try {
-    return buildClientHierarchyIntegrityAudit(await loadIntegrityInput());
+    const scoped = scopeIntegrityInputToCurrentCrm(await loadIntegrityInput());
+    return {
+      ...buildClientHierarchyIntegrityAudit(scoped.input),
+      scope: 'CURRENT',
+      excludedIncomingRecords: scoped.excludedIncomingRecords,
+    };
   } catch (error) {
     console.error('Client hierarchy integrity audit failed', error);
     if (error instanceof functions.https.HttpsError) throw error;
@@ -223,10 +229,13 @@ export const getClientHierarchyIntegrityAudit = functions.runWith(RUNTIME).https
 export const reconcileClientFinanceHierarchy = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
   const dryRun = data?.dryRun !== false;
   const actor = await assertAdmin(context.auth?.uid, !dryRun);
-  const input = await loadIntegrityInput();
+  const scoped = scopeIntegrityInputToCurrentCrm(await loadIntegrityInput());
+  const input = scoped.input;
   const plan = buildClientFinanceBackfillPlan(input);
   const response = {
     dryRun,
+    scope: 'CURRENT',
+    excludedIncomingRecords: scoped.excludedIncomingRecords,
     fingerprint: plan.fingerprint,
     invoicesScanned: plan.invoicesScanned,
     linesScanned: plan.linesScanned,

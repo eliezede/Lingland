@@ -119,13 +119,15 @@ const sameIds = (left, right) => uniqueStrings(left).join('|') === uniqueStrings
 const loadAuditContext = async (applyDecisions = true) => {
     const [clientSnapshot, bookingSnapshot, invoiceSnapshot, userSnapshot, decisionSnapshot] = await Promise.all([
         db.collection('clients').limit(MAX_CLIENT_RECORDS + 1).get(),
-        db.collection('bookings').select('clientId').get(),
-        db.collection('clientInvoices').select('clientId').get(),
+        db.collection('bookings').select('clientId', 'crmCohort').get(),
+        db.collection('clientInvoices').select('clientId', 'crmCohort').get(),
         db.collection('users').where('role', '==', 'CLIENT').select('profileId').get(),
         db.collection('clientIdentityDecisions').limit(MAX_CLIENT_RECORDS).get(),
     ]);
     const truncated = clientSnapshot.size > MAX_CLIENT_RECORDS;
-    const clientDocuments = clientSnapshot.docs.slice(0, MAX_CLIENT_RECORDS);
+    const allClientDocuments = clientSnapshot.docs.slice(0, MAX_CLIENT_RECORDS);
+    const incomingClientCount = allClientDocuments.filter(document => (text(document.data()?.crmCohort).toUpperCase() === 'INCOMING')).length;
+    const clientDocuments = allClientDocuments.filter(document => (text(document.data()?.crmCohort).toUpperCase() !== 'INCOMING'));
     const clients = clientDocuments.map(document => ({
         id: document.id,
         ...document.data(),
@@ -133,8 +135,16 @@ const loadAuditContext = async (applyDecisions = true) => {
     const bookingCounts = {};
     const invoiceCounts = {};
     const linkedUserCounts = {};
-    bookingSnapshot.docs.forEach(document => increment(bookingCounts, document.data().clientId));
-    invoiceSnapshot.docs.forEach(document => increment(invoiceCounts, document.data().clientId));
+    bookingSnapshot.docs.forEach(document => {
+        if (text(document.data()?.crmCohort).toUpperCase() !== 'INCOMING') {
+            increment(bookingCounts, document.data().clientId);
+        }
+    });
+    invoiceSnapshot.docs.forEach(document => {
+        if (text(document.data()?.crmCohort).toUpperCase() !== 'INCOMING') {
+            increment(invoiceCounts, document.data().clientId);
+        }
+    });
     userSnapshot.docs.forEach(document => increment(linkedUserCounts, document.data().profileId));
     const decisions = decisionSnapshot.docs.map(decisionFromDocument);
     const baseline = (0, clientIdentityAuditCore_1.buildClientIdentityAudit)({
@@ -193,6 +203,8 @@ const loadAuditContext = async (applyDecisions = true) => {
         clientDocuments,
         audit: {
             ...resolved,
+            scope: 'CURRENT',
+            excludedIncomingRecords: incomingClientCount,
             organizationCandidates: resolved.organizationCandidates.map(annotateCandidate),
             agentCandidates: resolved.agentCandidates.map(annotateCandidate),
             decisions: decisionViews,

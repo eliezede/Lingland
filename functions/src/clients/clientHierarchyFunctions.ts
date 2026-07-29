@@ -48,6 +48,32 @@ const assertCanonicalClient = async (clientId: string) => {
   return client;
 };
 
+const findClientByNormalizedName = async (
+  normalizedCompanyName: string,
+  options: { excludeId?: string; currentOnly?: boolean } = {},
+) => {
+  const snapshot = await db.collection('clients')
+    .select(
+      'companyName',
+      'name',
+      'normalizedCompanyName',
+      'recordState',
+      'mergedIntoClientId',
+      'crmCohort',
+    )
+    .limit(5000)
+    .get();
+  return snapshot.docs.find(document => {
+    if (document.id === options.excludeId) return false;
+    const data = document.data();
+    if (text(data.recordState).toUpperCase() === 'MERGED' || text(data.mergedIntoClientId)) return false;
+    if (options.currentOnly && text(data.crmCohort).toUpperCase() === 'INCOMING') return false;
+    return normalizeOrganizationName(
+      data.normalizedCompanyName || data.companyName || data.name,
+    ) === normalizedCompanyName;
+  });
+};
+
 const writeHierarchyAudit = async (
   actor: ActiveAdmin,
   entityType: string,
@@ -78,6 +104,133 @@ const writeHierarchyAudit = async (
     createdAt: new Date().toISOString(),
   });
 };
+
+export const createClientOrganizationAccount = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+  const actor = await assertActiveAdmin(context.auth?.uid);
+  const companyName = text(data?.companyName);
+  const invoiceEmail = text(data?.invoiceEmail).toLowerCase();
+  const billingAddress = String(data?.billingAddress ?? '').trim().slice(0, 2000);
+  const paymentTermsDays = Number(data?.paymentTermsDays || 30);
+  const defaultCostCodeType = text(data?.defaultCostCodeType || 'Client Name');
+  const normalizedCompanyName = normalizeOrganizationName(companyName);
+
+  if (companyName.length < 2 || companyName.length > 160 || !normalizedCompanyName) {
+    throw new functions.https.HttpsError('invalid-argument', 'Enter a valid organisation name.');
+  }
+  if (invoiceEmail && !emailPattern.test(invoiceEmail)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Enter a valid finance email or leave it blank.');
+  }
+  if (!PAYMENT_TERMS.has(paymentTermsDays) || !REQUIREMENT_MODES.has(defaultCostCodeType)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Choose valid payment terms and requirement mode.');
+  }
+
+  const duplicate = await findClientByNormalizedName(normalizedCompanyName);
+  if (duplicate) {
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'This organisation already exists. Open the existing canonical record instead.',
+    );
+  }
+
+  const clientId = stableId('staff_client', normalizedCompanyName);
+  const clientRef = db.collection('clients').doc(clientId);
+  const existing = await clientRef.get();
+  if (existing.exists) {
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'This organisation already exists. Open the existing canonical record instead.',
+    );
+  }
+
+  const now = new Date().toISOString();
+  const client = {
+    id: clientId,
+    organizationId: actor.organizationId,
+    companyName,
+    normalizedCompanyName,
+    billingAddress,
+    paymentTermsDays,
+    contactPerson: '',
+    email: invoiceEmail,
+    invoiceEmail,
+    status: 'ACTIVE',
+    recordState: 'ACTIVE',
+    defaultCostCodeType,
+    accountAliases: [companyName],
+    sourceSystem: 'STAFF_MANUAL',
+    syncStatus: 'LOCAL_ONLY',
+    crmCohort: 'CURRENT',
+    crmReviewStatus: 'CANONICAL',
+    crmCohortAssignedAt: now,
+    crmReviewedAt: now,
+    crmReviewedBy: actor.uid,
+    createdAt: now,
+    createdBy: actor.uid,
+    updatedAt: now,
+    updatedBy: actor.uid,
+  };
+  await clientRef.create(client);
+  await writeHierarchyAudit(
+    actor,
+    'client',
+    clientId,
+    'CLIENT_ORGANIZATION_CREATED',
+    Object.keys(client),
+    null,
+    client,
+  );
+  return client;
+});
+
+export const promoteIncomingClientOrganization = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+  const actor = await assertActiveAdmin(context.auth?.uid);
+  const clientId = text(data?.clientId);
+  if (!clientId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Client is required.');
+  }
+  const clientDocument = await assertCanonicalClient(clientId);
+  const before = clientDocument.data() || {};
+  if (text(before.crmCohort).toUpperCase() !== 'INCOMING') {
+    return { id: clientId, ...before };
+  }
+
+  const normalizedCompanyName = normalizeOrganizationName(before.normalizedCompanyName || before.companyName);
+  if (!normalizedCompanyName) {
+    throw new functions.https.HttpsError('failed-precondition', 'This incoming record needs a valid organisation identity.');
+  }
+  const duplicate = await findClientByNormalizedName(normalizedCompanyName, {
+    excludeId: clientId,
+    currentOnly: true,
+  });
+  if (duplicate) {
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'A current canonical organisation already matches this identity. Resolve the incoming record through Identity Audit.',
+    );
+  }
+
+  const now = new Date().toISOString();
+  const patch = {
+    crmCohort: 'CURRENT',
+    crmReviewStatus: 'CANONICAL',
+    crmCohortAssignedAt: now,
+    crmReviewedAt: now,
+    crmReviewedBy: actor.uid,
+    updatedAt: now,
+    updatedBy: actor.uid,
+  };
+  await clientDocument.ref.set(patch, { merge: true });
+  await writeHierarchyAudit(
+    actor,
+    'client',
+    clientId,
+    'CLIENT_INTAKE_PROMOTED',
+    Object.keys(patch),
+    before,
+    patch,
+  );
+  return { id: clientId, ...before, ...patch };
+});
 
 export const updateClientOrganizationAccount = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
   const actor = await assertActiveAdmin(context.auth?.uid);

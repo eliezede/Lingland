@@ -39,6 +39,7 @@ const functions = __importStar(require("firebase-functions/v1"));
 const clientHierarchyIntegrityCore_1 = require("./clientHierarchyIntegrityCore");
 const clientFinanceScope_1 = require("./clientFinanceScope");
 const clientIdentityResolution_1 = require("./clientIdentityResolution");
+const clientCrmCohort_1 = require("./clientCrmCohort");
 const db = admin.firestore();
 const RUNTIME = { timeoutSeconds: 300, memory: '1GB' };
 const MAX_RECORDS = 20000;
@@ -210,7 +211,12 @@ const backupUpdates = async (manifestRef, collectionName, updates, source) => {
 exports.getClientHierarchyIntegrityAudit = functions.runWith(RUNTIME).https.onCall(async (_data, context) => {
     await assertAdmin(context.auth?.uid);
     try {
-        return (0, clientHierarchyIntegrityCore_1.buildClientHierarchyIntegrityAudit)(await loadIntegrityInput());
+        const scoped = (0, clientCrmCohort_1.scopeIntegrityInputToCurrentCrm)(await loadIntegrityInput());
+        return {
+            ...(0, clientHierarchyIntegrityCore_1.buildClientHierarchyIntegrityAudit)(scoped.input),
+            scope: 'CURRENT',
+            excludedIncomingRecords: scoped.excludedIncomingRecords,
+        };
     }
     catch (error) {
         console.error('Client hierarchy integrity audit failed', error);
@@ -222,10 +228,13 @@ exports.getClientHierarchyIntegrityAudit = functions.runWith(RUNTIME).https.onCa
 exports.reconcileClientFinanceHierarchy = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
     const dryRun = data?.dryRun !== false;
     const actor = await assertAdmin(context.auth?.uid, !dryRun);
-    const input = await loadIntegrityInput();
+    const scoped = (0, clientCrmCohort_1.scopeIntegrityInputToCurrentCrm)(await loadIntegrityInput());
+    const input = scoped.input;
     const plan = (0, clientHierarchyIntegrityCore_1.buildClientFinanceBackfillPlan)(input);
     const response = {
         dryRun,
+        scope: 'CURRENT',
+        excludedIncomingRecords: scoped.excludedIncomingRecords,
         fingerprint: plan.fingerprint,
         invoicesScanned: plan.invoicesScanned,
         linesScanned: plan.linesScanned,

@@ -179,6 +179,9 @@ export interface PlatformModeSettings {
 
 export interface Booking extends SourceTrackingFields {
   id: string;
+  crmCohort?: 'CURRENT' | 'INCOMING';
+  crmReviewStatus?: 'CANONICAL' | 'UNREVIEWED' | 'NEEDS_REVIEW' | 'DEFERRED';
+  crmCohortAssignedAt?: string;
   clientId: string;
   clientDepartmentId?: string;
   clientDepartmentSource?: 'CLIENT_PORTAL' | 'PUBLIC_INTAKE' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'CLIENT_IDENTITY_MIGRATION';
@@ -343,6 +346,11 @@ export interface Client extends TenantScopedEntity, SourceTrackingFields {
   lastClientMergeManifestId?: string;
   mergedAt?: string;
   identityMergedAt?: string;
+  crmCohort?: 'CURRENT' | 'INCOMING';
+  crmReviewStatus?: 'CANONICAL' | 'UNREVIEWED' | 'NEEDS_REVIEW' | 'DEFERRED';
+  crmCohortAssignedAt?: string;
+  crmReviewedAt?: string;
+  crmReviewedBy?: string;
 }
 
 export type ClientAgentType = 'PERSON' | 'SHARED_MAILBOX';
@@ -616,6 +624,9 @@ export interface InterpreterPaymentItem {
 }
 
 export interface ClientInvoice extends TenantScopedEntity, SourceTrackingFields {
+  crmCohort?: 'CURRENT' | 'INCOMING';
+  crmReviewStatus?: 'CANONICAL' | 'UNREVIEWED' | 'NEEDS_REVIEW' | 'DEFERRED';
+  crmCohortAssignedAt?: string;
   clientId: string;
   clientName: string;
   reference: string;

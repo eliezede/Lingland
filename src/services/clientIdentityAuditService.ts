@@ -113,6 +113,8 @@ export interface ClientIdentityCandidate {
 }
 
 export interface ClientIdentityAuditResult {
+  scope?: 'CURRENT';
+  excludedIncomingRecords?: number;
   generatedAt: string;
   readOnly: true;
   truncated: boolean;
@@ -278,6 +280,16 @@ export interface ClientHierarchyIntegrityIssue {
 export interface ClientHierarchyIntegrityResult {
   generatedAt: string;
   readOnly: true;
+  scope?: 'CURRENT' | 'ALL';
+  excludedIncomingRecords?: {
+    clients: number;
+    departments: number;
+    agents: number;
+    memberships: number;
+    bookings: number;
+    invoices: number;
+    invoiceLines: number;
+  };
   truncated: boolean;
   readyForMembershipCutover: boolean;
   readyForFinanceScope: boolean;

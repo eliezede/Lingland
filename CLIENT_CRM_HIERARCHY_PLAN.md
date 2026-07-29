@@ -475,3 +475,60 @@ Crown Prosecution Service remains deliberately unmerged. Its five addresses are 
 - [x] Map orphan Airtable Department `Hampshire Police Witness Care` (`rec8Kb9HEAT8vW5K9`) to `airtable_client_hampshire-and-isle-of-wight-constabulary-witness-care-unit` through the audited mapping ledger.
 - [x] Rerun `Clients / Full audit`. The authoritative result changed conflicts from `8` to `7`, unique review decisions from `7` to `6`, and departments from `71` to `72`; deferred sources remained `1` and errors remained `0`. The searched police source disappeared from staging.
 - [ ] Keep Client Write Sync locked while the remaining `7` blocked source rows across `6` decisions lack sufficient parent evidence. Resolve them only from new source evidence or explicit owner confirmation.
+
+## Current CRM baseline and future intake isolation - 29 July 2026
+
+The Client CRM now has an explicit cut line. Existing records without a cohort marker remain in the finite `CURRENT` baseline. New organisations, jobs and client invoices created by the Airtable mirror are tagged `INCOMING` and do not change the identity or hierarchy audit until an administrator reviews and promotes the organisation. Updates to existing mirrored records remain updates to the existing baseline; the source mirror is not disabled and Airtable remains read-only.
+
+This is an operational boundary, not a deletion or an automatic merge:
+
+- `Current CRM` is the default working set.
+- `New intake` contains future organisation records and cannot silently join the canonical directory.
+- A Firestore creation guard tags new Airtable clients, bookings and client invoices even when an older scheduled synchronisation function creates them.
+- The identity audit excludes incoming organisations.
+- The hierarchy and finance audit, including its dry-run reconciliation plan, excludes incoming clients, their hierarchy, new mirrored jobs and new mirrored invoices.
+- Legacy records with no cohort field are treated as current so this change requires no destructive bulk backfill.
+- Staff-created organisations are current and canonical by design. Duplicate detection scans legacy names as well as `normalizedCompanyName`.
+- Promotion from intake is admin-only, audited, and blocked when an existing current organisation has the same normalised identity.
+
+### Frozen baseline evidence
+
+The authenticated browser audit generated on 29 July 2026 reported:
+
+| Measure | Current baseline |
+| --- | ---: |
+| Client records | 758 |
+| Possible duplicate records | 232 |
+| Organisation candidate groups | 68 |
+| Repeated-agent groups | 84 |
+| High-risk groups | 4 |
+| Jobs in identity scope | 1,979 |
+| Client invoices in identity scope | 1,369 |
+| Jobs without department | 2,768 |
+| Jobs without requester | 2,784 |
+| Invoices requiring hierarchy backfill | 1,880 |
+| Invoice lines requiring hierarchy backfill | 38 |
+| Blocked invoice relationships | 79 |
+| Critical hierarchy links | 44 |
+| Hierarchy warnings | 17 |
+
+These 68 organisation groups are now a finite reviewed queue. They must not be auto-merged merely to reduce the number. Several high-impact candidates would reassign hundreds of jobs or invoices and remain subject to the existing preview, fingerprint, two-person approval and rollback controls.
+
+### Baseline delivery checklist
+
+- [x] Make `Current CRM` the default Client CRM dataset.
+- [x] Add `New intake` and `All records` cohort controls.
+- [x] Replace the old primary-contact list with organisation, hierarchy, operations, finance and last-activity columns.
+- [x] Add working search, account-state and setup-issue filters.
+- [x] Limit the working grid to 50 records per page with deterministic pagination.
+- [x] Replace the incorrect new-booking action with a guarded `New organization` form.
+- [x] Add admin-only intake promotion with duplicate protection and audit logging.
+- [x] Prevent deletion of clients with jobs, invoices, departments, memberships, portal users or chat threads.
+- [x] Isolate future Airtable clients, jobs and client invoices at creation.
+- [x] Scope identity, hierarchy and finance audits to the current baseline.
+- [x] Add unit coverage proving that missing cohorts remain current and incoming relationships are excluded.
+- [x] Validate list rendering, setup-issue filtering, pagination, creation modal and dark mode in the authenticated browser.
+- [x] Deploy the Client CRM callables, current-scope audits and Airtable intake creation guards.
+- [ ] Confirm in production that a controlled new Airtable record appears only in `New intake`; do not run a broad Write Sync for this test.
+- [ ] Work the 68 baseline organisation groups through reviewed merge, distinct, split or defer decisions.
+- [ ] Re-run the current-scope hierarchy audit after each approved batch and record the blocker delta.

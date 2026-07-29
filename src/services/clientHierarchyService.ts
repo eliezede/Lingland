@@ -11,6 +11,13 @@ export interface ClientHierarchyBundle {
   memberships: ClientMembership[];
 }
 
+export interface ClientHierarchySummary {
+  departmentCount: number;
+  agentCount: number;
+  activeMembershipCount: number;
+  portalUserCount: number;
+}
+
 export interface SaveClientDepartmentInput {
   clientId: string;
   departmentId?: string;
@@ -50,6 +57,64 @@ export interface ClientPortalContext {
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 
 export const ClientHierarchyService = {
+  getSummaries: async (): Promise<Record<string, ClientHierarchySummary>> => {
+    const [departmentSnapshot, membershipSnapshot] = await Promise.all([
+      getDocs(collection(db, 'clientDepartments')),
+      getDocs(collection(db, 'clientMemberships')),
+    ]);
+    const departmentIdsByClient = new Map<string, Set<string>>();
+    const agentIdsByClient = new Map<string, Set<string>>();
+    const activeMembershipIdsByClient = new Map<string, Set<string>>();
+    const portalUserIdsByClient = new Map<string, Set<string>>();
+
+    departmentSnapshot.docs.forEach(document => {
+      const data = document.data();
+      const clientId = String(data.clientId || '');
+      if (!clientId || String(data.status || 'ACTIVE').toUpperCase() === 'ARCHIVED') return;
+      const ids = departmentIdsByClient.get(clientId) || new Set<string>();
+      ids.add(document.id);
+      departmentIdsByClient.set(clientId, ids);
+    });
+    membershipSnapshot.docs.forEach(document => {
+      const data = document.data();
+      const clientId = String(data.clientId || '');
+      if (!clientId) return;
+      const agentId = String(data.agentId || '');
+      const userId = String(data.userId || '');
+      if (agentId) {
+        const ids = agentIdsByClient.get(clientId) || new Set<string>();
+        ids.add(agentId);
+        agentIdsByClient.set(clientId, ids);
+      }
+      if (String(data.status || 'ACTIVE').toUpperCase() === 'ACTIVE') {
+        const ids = activeMembershipIdsByClient.get(clientId) || new Set<string>();
+        ids.add(document.id);
+        activeMembershipIdsByClient.set(clientId, ids);
+      }
+      if (userId) {
+        const ids = portalUserIdsByClient.get(clientId) || new Set<string>();
+        ids.add(userId);
+        portalUserIdsByClient.set(clientId, ids);
+      }
+    });
+
+    const clientIds = new Set([
+      ...departmentIdsByClient.keys(),
+      ...agentIdsByClient.keys(),
+      ...activeMembershipIdsByClient.keys(),
+      ...portalUserIdsByClient.keys(),
+    ]);
+    return Object.fromEntries(Array.from(clientIds).map(clientId => [
+      clientId,
+      {
+        departmentCount: departmentIdsByClient.get(clientId)?.size || 0,
+        agentCount: agentIdsByClient.get(clientId)?.size || 0,
+        activeMembershipCount: activeMembershipIdsByClient.get(clientId)?.size || 0,
+        portalUserCount: portalUserIdsByClient.get(clientId)?.size || 0,
+      },
+    ]));
+  },
+
   getForClient: async (clientId: string): Promise<ClientHierarchyBundle> => {
     const [departmentSnapshot, membershipSnapshot] = await Promise.all([
       getDocs(query(collection(db, 'clientDepartments'), where('clientId', '==', clientId))),

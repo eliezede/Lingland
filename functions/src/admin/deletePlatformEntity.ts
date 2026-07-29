@@ -74,6 +74,11 @@ export const deletePlatformEntity = functions.https.onCall(async (data, context)
     const isClient = entityType === 'CLIENT';
     await assertEmpty('bookings', isClient ? 'clientId' : 'interpreterId', id, `This ${entityType.toLowerCase()} has job history and cannot be deleted`);
     await assertEmpty(isClient ? 'clientInvoices' : 'interpreterInvoices', isClient ? 'clientId' : 'interpreterId', id, `This ${entityType.toLowerCase()} has invoice history and cannot be deleted`);
+    if (isClient) {
+      await assertEmpty('clientDepartments', 'clientId', id, 'This client has departments and cannot be deleted');
+      await assertEmpty('clientMemberships', 'clientId', id, 'This client has agent access and cannot be deleted');
+      await assertEmpty('chatThreads', 'clientId', id, 'This client has communication history and cannot be deleted');
+    }
     if (!isClient) await assertEmpty('timesheets', 'interpreterId', id, 'This interpreter has timesheet history and cannot be deleted');
 
     const profileRef = db.collection(isClient ? 'clients' : 'interpreters').doc(id);

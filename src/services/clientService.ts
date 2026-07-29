@@ -61,6 +61,22 @@ export const ClientService = {
     return (await callable(input)).data;
   },
 
+  createOrganizationAccount: async (input: {
+    companyName: string;
+    invoiceEmail?: string;
+    billingAddress?: string;
+    paymentTermsDays: number;
+    defaultCostCodeType: string;
+  }): Promise<Client> => {
+    const callable = httpsCallable<typeof input, Client>(functions, 'createClientOrganizationAccount');
+    return (await callable(input)).data;
+  },
+
+  promoteIncomingOrganization: async (clientId: string): Promise<Client> => {
+    const callable = httpsCallable<{ clientId: string }, Client>(functions, 'promoteIncomingClientOrganization');
+    return (await callable({ clientId })).data;
+  },
+
   delete: async (id: string): Promise<void> => {
     await httpsCallable(functions, 'deletePlatformEntity')({ entityType: 'CLIENT', id });
   }

@@ -764,6 +764,16 @@ export const ClientIdentityAudit = () => {
           {inspectedAt && <span className="shrink-0 text-xs text-emerald-700 dark:text-emerald-300">Generated {inspectedAt}</span>}
         </div>
 
+        {audit && (
+          <div className="flex items-start gap-2 border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+            <Database className="mt-0.5 h-4 w-4 shrink-0 text-blue-700 dark:text-blue-300" />
+            <p>
+              <strong>Current CRM baseline:</strong> this audit covers the finite set already under review.
+              {' '}{audit.excludedIncomingRecords || 0} new intake record{audit.excludedIncomingRecords === 1 ? '' : 's'} remain outside this audit until promoted from Client CRM.
+            </p>
+          </div>
+        )}
+
         <section className="border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col gap-3 border-b border-slate-200 px-3 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -775,7 +785,16 @@ export const ClientIdentityAudit = () => {
                   </span>
                 )}
               </div>
-              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Checks jobs, memberships, invoices and invoice lines before legacy client-wide access can be removed.</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                Checks jobs, memberships, invoices and invoice lines before legacy client-wide access can be removed.
+                {integrity?.scope === 'CURRENT' && (
+                  <>
+                    {' '}New Airtable intake is isolated:
+                    {' '}{Number(integrity.excludedIncomingRecords?.bookings || 0).toLocaleString('en-GB')} jobs and
+                    {' '}{Number(integrity.excludedIncomingRecords?.invoices || 0).toLocaleString('en-GB')} invoices are outside this baseline.
+                  </>
+                )}
+              </p>
             </div>
             <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               <Button className="w-full sm:w-auto" variant="secondary" size="sm" icon={RefreshCw} isLoading={integrityLoading} onClick={() => void loadIntegrity()}>Refresh integrity</Button>

@@ -26,6 +26,7 @@ export * from './clients/clientIdentityAuditFunctions';
 export * from './clients/clientHierarchyFunctions';
 export * from './clients/clientPortalAccess';
 export * from './clients/clientHierarchyIntegrityFunctions';
+export * from './clients/onAirtableCrmRecordCreated';
 export * from './notifications/onNotificationCreated';
 export * from './notifications/onTimesheetSubmit'; // NT-05: Notify admins + interpreter on timesheet creation
 export * from './notifications/onBookingOffer';
