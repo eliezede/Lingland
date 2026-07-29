@@ -186,6 +186,16 @@ describe('client hierarchy seed preview', () => {
     expect(preview.departments).toHaveLength(0);
   });
 
+  it('does not turn an alias abbreviation or numeric suffix into a department', () => {
+    const preview = buildClientHierarchySeedPreview([
+      { id: 'canonical', data: { companyName: 'HCC-Refugee Team' } },
+      { id: 'abbreviation', data: { companyName: 'HCC CS Refugee Team' } },
+      { id: 'numbered', data: { companyName: 'HCC Refugee Team 2' } },
+    ], 'canonical');
+
+    expect(preview.departments).toHaveLength(0);
+  });
+
   it('extracts delimiter-separated wards and uses the ward name to identify functional mailboxes', () => {
     const preview = buildClientHierarchySeedPreview([
       {

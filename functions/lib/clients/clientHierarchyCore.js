@@ -116,7 +116,10 @@ const inferDepartmentFromOrganisationVariant = (document, canonicalDocument) => 
     const sharedCoreTokens = sourceCore.filter(token => canonicalCore.has(token)).length;
     const requiredSharedTokens = Math.min(2, canonicalCore.size);
     const hasUnitDelimiter = /[-,:/()]/.test(sourceCompanyValue);
-    const hasStructuralWord = sourceTokens.some(token => DEPARTMENT_WORDS.has(token));
+    const extraHasStructuralWord = extraTokens.some(token => DEPARTMENT_WORDS.has(token));
+    const extraHasSubstantiveToken = extraTokens.some(token => (!DEPARTMENT_WORDS.has(token)
+        && token.length >= 3
+        && !/^\d+$/.test(token)));
     if (hasUnitDelimiter && sharedCoreTokens >= 1) {
         const unitSegment = sourceCompanyValue
             .split(/\s*[-,:/()]\s*/)
@@ -138,7 +141,8 @@ const inferDepartmentFromOrganisationVariant = (document, canonicalDocument) => 
     if (extraTokens.length === 0
         || extraTokens.length > 4
         || sharedCoreTokens < requiredSharedTokens
-        || (!hasUnitDelimiter && !hasStructuralWord))
+        || !extraHasSubstantiveToken
+        || (!hasUnitDelimiter && !extraHasStructuralWord))
         return null;
     const name = titleCase(extraTokens.join(' '));
     return {
