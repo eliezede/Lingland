@@ -566,3 +566,46 @@ All merge manifests preserve source snapshots, dependency ledgers, field winners
 - a candidate produced by a prior split can be reviewed and split again without bypassing the current audited state.
 
 Identity closure does not mean hierarchy and finance reconciliation are complete. Jobs without canonical departments or requester agents, invoice headers and lines needing hierarchy backfill, and intentionally deferred high-risk organisations remain in separate controlled queues. Those queues must be worked from their saved decisions and manifests; they must not restart the completed baseline duplicate review.
+
+### SAGE canonical account register refresh - 31 July 2026
+
+A new read-only inspection of Airtable base `Lingland MASTER 24 NEW`, table `Clients`, confirmed that the refreshed SAGE register is now strong enough to anchor organisation identity:
+
+| Measure | Airtable `Clients` |
+| --- | ---: |
+| Account records | 301 |
+| Records with `Sage Account Ref` | 301 |
+| Unique SAGE references | 301 |
+| Duplicate SAGE references | 0 |
+| Records added on 31 July 2026 | 250 |
+| Records with invoice email | 42 |
+| Records currently linked to jobs | 53 |
+
+The SAGE reference is therefore the first canonical organisation key. It must not be replaced by contact email, invoice email, requester name or department name. Invoice email remains routing evidence only: some addresses are shared by several accounts, and ten rows contain the instruction `send to whoever authorised the booking` rather than an email address.
+
+The existing mirror resolver already reads `Sage Account Ref`, invoice contact, invoice email, invoice address, booking contact and account aliases. It resolves by source record and SAGE/account key before considering one unique normalised name. The next Clients Full Audit must ingest this refreshed register before any further organisation creation or finance repair is approved.
+
+Source ownership is now explicit:
+
+- `Clients` is the SAGE-backed canonical account register.
+- `Clients Book` enriches agents, shared mailboxes and memberships; it cannot create a client by itself.
+- `Departments` enriches the organisational hierarchy; an orphan department remains blocked until its SAGE-backed parent is selected.
+- Newly discovered SAGE accounts enter `New intake` and do not reopen the closed current-baseline identity queue.
+- Airtable remains read-only and communication remains suppressed during this reconciliation.
+
+### Invoice-linked job repair control - 31 July 2026
+
+The current finance dry run scans 1,959 invoice headers and 2,532 lines. It proposes 1,881 header updates and 307 line updates but remains correctly blocked by 78 invoice relationships: 48 invoices link jobs from multiple clients, 18 contain invalid booking scope and 12 have unresolved client identity. Sixteen invoices have no linked job and remain client-level records.
+
+The previous interface exposed roughly 450 separate `Repair job` actions. The replacement workflow operates per invoice:
+
+- [x] Select one reviewed canonical organisation from current invoice evidence.
+- [x] Preview every linked job and count client moves, preserved scope, cleared departments and cleared requesters.
+- [x] Reject archived/merged targets, targets outside current evidence, unsupported blockers, missing jobs, stale finance fingerprints and batches above 100 jobs.
+- [x] Apply all reviewed job changes in one Firestore transaction with per-job backups, root manifest, job events and audit event.
+- [x] Leave the invoice unchanged until a fresh finance dry run recalculates its ownership and backfill.
+- [x] Provide all-or-nothing rollback guarded by manifest ownership and current job fingerprints.
+- [x] Collapse job-level detail in the audit UI while retaining one-job repair as a diagnostic fallback.
+- [x] Deploy the three invoice-job repair callables and validate desktop, mobile and dark-mode behaviour in the authenticated browser. The selector exposes only the current invoice client and evidence-backed candidates; no repair was applied during validation.
+- [ ] Work the 78 blockers from the refreshed SAGE-backed evidence until the finance dry run reports zero blockers.
+- [ ] Apply the final header/line reconciliation only after the zero-blocker fingerprint is reviewed and explicitly confirmed.

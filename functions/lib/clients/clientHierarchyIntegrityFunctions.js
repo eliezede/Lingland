@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.rollbackClientFinanceHierarchyReconciliation = exports.resolveClientInvoiceIdentity = exports.rollbackClientBookingHierarchyRepair = exports.repairClientBookingHierarchy = exports.getClientBookingHierarchyRepairPreview = exports.rollbackClientHierarchyScopeBatch = exports.applyClientHierarchyScopeBatch = exports.getClientHierarchyScopeBatchPreview = exports.reconcileClientFinanceHierarchy = exports.getClientHierarchyIntegrityAudit = void 0;
+exports.rollbackClientFinanceHierarchyReconciliation = exports.resolveClientInvoiceIdentity = exports.rollbackClientBookingHierarchyRepair = exports.repairClientBookingHierarchy = exports.getClientBookingHierarchyRepairPreview = exports.rollbackClientInvoiceBookingRepair = exports.applyClientInvoiceBookingRepair = exports.getClientInvoiceBookingRepairPreview = exports.rollbackClientHierarchyScopeBatch = exports.applyClientHierarchyScopeBatch = exports.getClientHierarchyScopeBatchPreview = exports.reconcileClientFinanceHierarchy = exports.getClientHierarchyIntegrityAudit = void 0;
 const admin = __importStar(require("firebase-admin"));
 const functions = __importStar(require("firebase-functions/v1"));
 const clientHierarchyIntegrityCore_1 = require("./clientHierarchyIntegrityCore");
@@ -59,6 +59,7 @@ const BOOKING_HIERARCHY_FIELDS = [
     'lastHierarchyRepairManifestId',
 ];
 const MAX_SCOPE_BATCH_JOBS = 50;
+const MAX_INVOICE_REPAIR_JOBS = 100;
 const assertAdmin = async (uid, superAdminOnly = false) => {
     if (!uid)
         throw new functions.https.HttpsError('unauthenticated', 'Authentication is required.');
@@ -632,6 +633,300 @@ exports.rollbackClientHierarchyScopeBatch = functions.runWith(RUNTIME).https.onC
         };
     });
     return result;
+});
+exports.getClientInvoiceBookingRepairPreview = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+    await assertAdmin(context.auth?.uid);
+    const invoiceId = text(data?.invoiceId);
+    const clientId = text(data?.clientId);
+    if (!invoiceId || !clientId) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invoice and reviewed canonical client are required.');
+    }
+    const input = await loadIntegrityInput();
+    const plan = (0, clientHierarchyIntegrityCore_1.buildClientInvoiceBookingRepairPlan)(input, invoiceId, clientId);
+    return {
+        success: true,
+        readOnly: true,
+        truncated: input.truncated === true,
+        canApply: !input.truncated
+            && plan.blockers.length === 0
+            && plan.repairableBookingCount > 0
+            && plan.repairableBookingCount <= MAX_INVOICE_REPAIR_JOBS,
+        confirmationPhrase: 'REPAIR INVOICE JOBS',
+        maxJobs: MAX_INVOICE_REPAIR_JOBS,
+        ...plan,
+    };
+});
+exports.applyClientInvoiceBookingRepair = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+    const actor = await assertAdmin(context.auth?.uid, true);
+    const invoiceId = text(data?.invoiceId);
+    const clientId = text(data?.clientId);
+    const expectedFingerprint = text(data?.expectedFingerprint);
+    const expectedFinanceFingerprint = text(data?.expectedFinanceFingerprint);
+    const reason = text(data?.reason).slice(0, 500);
+    if (!invoiceId || !clientId || !expectedFingerprint || !expectedFinanceFingerprint) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invoice, canonical client and both reviewed fingerprints are required.');
+    }
+    if (reason.length < 5) {
+        throw new functions.https.HttpsError('invalid-argument', 'Record a short operational reason for this invoice repair.');
+    }
+    if (text(data?.confirmation).toUpperCase() !== 'REPAIR INVOICE JOBS') {
+        throw new functions.https.HttpsError('failed-precondition', 'Type REPAIR INVOICE JOBS to confirm this financial-scope batch.');
+    }
+    const input = await loadIntegrityInput();
+    if (input.truncated)
+        throw new functions.https.HttpsError('failed-precondition', 'The hierarchy audit exceeded its safety limit.');
+    const plan = (0, clientHierarchyIntegrityCore_1.buildClientInvoiceBookingRepairPlan)(input, invoiceId, clientId);
+    if (plan.financeFingerprint !== expectedFinanceFingerprint) {
+        throw new functions.https.HttpsError('aborted', 'Finance relationships changed after preview. Run a new dry run.');
+    }
+    if (plan.fingerprint !== expectedFingerprint) {
+        throw new functions.https.HttpsError('aborted', 'One or more jobs changed after preview. Review the invoice batch again.');
+    }
+    if (plan.blockers.length > 0) {
+        throw new functions.https.HttpsError('failed-precondition', plan.blockers.map(blocker => blocker.message).join(' '));
+    }
+    if (plan.repairableBookingCount === 0 || plan.repairableBookingCount > MAX_INVOICE_REPAIR_JOBS) {
+        throw new functions.https.HttpsError('failed-precondition', `The reviewed invoice batch must contain between 1 and ${MAX_INVOICE_REPAIR_JOBS} changed jobs.`);
+    }
+    const manifestRef = db.collection('clientInvoiceBookingRepairManifests').doc();
+    const auditRef = db.collection('auditEvents').doc();
+    const bookingRefs = plan.jobs.map(job => db.collection('bookings').doc(job.bookingId));
+    const eventRefs = plan.jobs.map(() => db.collection('jobEvents').doc());
+    const createdAt = new Date().toISOString();
+    await db.runTransaction(async (transaction) => {
+        const currentBookings = await Promise.all(bookingRefs.map(ref => transaction.get(ref)));
+        const manifestJobs = [];
+        currentBookings.forEach((current, index) => {
+            const planned = plan.jobs[index];
+            if (!current.exists)
+                throw new functions.https.HttpsError('not-found', `Job ${planned.reference} no longer exists.`);
+            const currentData = current.data() || {};
+            const currentFingerprint = (0, clientHierarchyIntegrityCore_1.createBookingHierarchyFingerprint)(planned.bookingId, currentData);
+            if (currentFingerprint !== planned.currentFingerprint) {
+                throw new functions.https.HttpsError('aborted', `Job ${planned.reference} changed after preview.`);
+            }
+            const currentSnapshot = currentData.clientSnapshot && typeof currentData.clientSnapshot === 'object'
+                ? currentData.clientSnapshot
+                : {};
+            const nextSnapshot = {
+                ...currentSnapshot,
+                organizationName: plan.organizationName,
+            };
+            if (planned.departmentName)
+                nextSnapshot.departmentName = planned.departmentName;
+            else
+                delete nextSnapshot.departmentName;
+            if (planned.requesterName)
+                nextSnapshot.requesterName = planned.requesterName;
+            else
+                delete nextSnapshot.requesterName;
+            if (planned.requesterEmail)
+                nextSnapshot.requesterEmail = planned.requesterEmail;
+            else
+                delete nextSnapshot.requesterEmail;
+            const nextData = {
+                ...currentData,
+                clientId: plan.clientId,
+                clientName: plan.organizationName,
+                clientIdentityStatus: 'RESOLVED',
+                clientSnapshot: nextSnapshot,
+            };
+            if (planned.nextClientDepartmentId)
+                nextData.clientDepartmentId = planned.nextClientDepartmentId;
+            else
+                delete nextData.clientDepartmentId;
+            if (planned.nextRequestedByAgentId)
+                nextData.requestedByAgentId = planned.nextRequestedByAgentId;
+            else
+                delete nextData.requestedByAgentId;
+            if (planned.nextRequestedByUserId)
+                nextData.requestedByUserId = planned.nextRequestedByUserId;
+            else
+                delete nextData.requestedByUserId;
+            const appliedFingerprint = (0, clientHierarchyIntegrityCore_1.createBookingHierarchyFingerprint)(planned.bookingId, nextData);
+            if (appliedFingerprint !== planned.nextFingerprint) {
+                throw new functions.https.HttpsError('aborted', `Job ${planned.reference} no longer matches the reviewed target scope.`);
+            }
+            const presentFields = BOOKING_HIERARCHY_FIELDS.filter(field => Object.prototype.hasOwnProperty.call(currentData, field));
+            const previousValues = Object.fromEntries(presentFields.map(field => [field, currentData[field]]));
+            const patch = {
+                clientId: plan.clientId,
+                clientName: plan.organizationName,
+                clientIdentityStatus: 'RESOLVED',
+                clientSnapshot: nextSnapshot,
+                clientDepartmentId: planned.nextClientDepartmentId || admin.firestore.FieldValue.delete(),
+                clientDepartmentSource: planned.nextClientDepartmentId
+                    ? (currentData.clientDepartmentSource || 'STAFF_MANUAL')
+                    : admin.firestore.FieldValue.delete(),
+                requestedByAgentId: planned.nextRequestedByAgentId || admin.firestore.FieldValue.delete(),
+                requestedByAgentSource: planned.nextRequestedByAgentId
+                    ? (currentData.requestedByAgentSource || 'STAFF_MANUAL')
+                    : admin.firestore.FieldValue.delete(),
+                requestedByUserId: planned.nextRequestedByUserId || admin.firestore.FieldValue.delete(),
+                requesterIdentityStatus: planned.nextRequestedByAgentId ? 'RESOLVED' : admin.firestore.FieldValue.delete(),
+                lastHierarchyRepairManifestId: manifestRef.id,
+                hierarchyRepairedAt: admin.firestore.FieldValue.serverTimestamp(),
+                hierarchyRepairedBy: actor.uid,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            transaction.set(manifestRef.collection('bookings').doc(planned.bookingId), {
+                bookingId: planned.bookingId,
+                reference: planned.reference,
+                currentFingerprint: planned.currentFingerprint,
+                appliedFingerprint,
+                touchedFields: [...BOOKING_HIERARCHY_FIELDS],
+                presentFields,
+                previousValues,
+            });
+            transaction.set(current.ref, patch, { merge: true });
+            transaction.set(eventRefs[index], {
+                type: 'CLIENT_INVOICE_JOB_SCOPE_REPAIRED',
+                jobId: planned.bookingId,
+                invoiceId,
+                actorId: actor.uid,
+                manifestId: manifestRef.id,
+                reason,
+                createdAt,
+            });
+            manifestJobs.push({
+                bookingId: planned.bookingId,
+                reference: planned.reference,
+                previousClientId: planned.currentClientId,
+                clientId: planned.nextClientId,
+                appliedFingerprint,
+            });
+        });
+        transaction.set(manifestRef, {
+            type: 'CLIENT_INVOICE_BOOKING_REPAIR',
+            status: 'COMPLETED',
+            actorId: actor.uid,
+            reason,
+            invoiceId,
+            invoiceNumber: plan.invoiceNumber,
+            blockerReason: plan.reason,
+            clientId: plan.clientId,
+            expectedFingerprint,
+            financeFingerprint: plan.financeFingerprint,
+            bookingCount: manifestJobs.length,
+            departmentsCleared: plan.departmentsCleared,
+            requestersCleared: plan.requestersCleared,
+            jobs: manifestJobs,
+            createdAt,
+            rollbackAvailable: true,
+            financeReconciliationRequired: true,
+        });
+        transaction.set(auditRef, {
+            type: 'CLIENT_INVOICE_BOOKING_REPAIR_APPLIED',
+            actorId: actor.uid,
+            manifestId: manifestRef.id,
+            invoiceId,
+            clientId: plan.clientId,
+            bookingIds: plan.jobs.map(job => job.bookingId),
+            reason,
+            occurredAt: createdAt,
+        });
+    });
+    return {
+        success: true,
+        manifestId: manifestRef.id,
+        invoiceId,
+        clientId: plan.clientId,
+        bookingCount: plan.repairableBookingCount,
+        departmentsCleared: plan.departmentsCleared,
+        requestersCleared: plan.requestersCleared,
+        financeReconciliationRequired: true,
+    };
+});
+exports.rollbackClientInvoiceBookingRepair = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
+    const actor = await assertAdmin(context.auth?.uid, true);
+    const manifestId = text(data?.manifestId);
+    if (!manifestId)
+        throw new functions.https.HttpsError('invalid-argument', 'An invoice job repair manifest is required.');
+    if (text(data?.confirmation).toUpperCase() !== 'ROLLBACK INVOICE JOBS') {
+        throw new functions.https.HttpsError('failed-precondition', 'Type ROLLBACK INVOICE JOBS to restore the previous job scope.');
+    }
+    const manifestRef = db.collection('clientInvoiceBookingRepairManifests').doc(manifestId);
+    const backups = await manifestRef.collection('bookings').limit(MAX_INVOICE_REPAIR_JOBS + 1).get();
+    if (backups.size > MAX_INVOICE_REPAIR_JOBS) {
+        throw new functions.https.HttpsError('failed-precondition', 'This manifest exceeds the reviewed invoice repair limit.');
+    }
+    const backupDocuments = backups.docs.sort((left, right) => left.id.localeCompare(right.id));
+    const bookingRefs = backupDocuments.map(backup => db.collection('bookings').doc(backup.id));
+    const eventRefs = backupDocuments.map(() => db.collection('jobEvents').doc());
+    const auditRef = db.collection('auditEvents').doc();
+    const rolledBackAt = new Date().toISOString();
+    return db.runTransaction(async (transaction) => {
+        const manifest = await transaction.get(manifestRef);
+        if (!manifest.exists)
+            throw new functions.https.HttpsError('not-found', 'Invoice job repair manifest not found.');
+        const manifestData = manifest.data() || {};
+        if (text(manifestData.type) !== 'CLIENT_INVOICE_BOOKING_REPAIR') {
+            throw new functions.https.HttpsError('failed-precondition', 'This manifest does not belong to an invoice job repair.');
+        }
+        if (text(manifestData.status).toUpperCase() === 'ROLLED_BACK') {
+            return { success: true, idempotent: true, manifestId, bookingCount: Number(manifestData.bookingCount || 0) };
+        }
+        if (text(manifestData.status).toUpperCase() !== 'COMPLETED' || backupDocuments.length === 0) {
+            throw new functions.https.HttpsError('failed-precondition', 'Only a completed invoice job repair with backups can be restored.');
+        }
+        const currentBookings = await Promise.all(bookingRefs.map(ref => transaction.get(ref)));
+        currentBookings.forEach((current, index) => {
+            const backup = backupDocuments[index].data();
+            if (!current.exists)
+                throw new functions.https.HttpsError('not-found', `Job ${text(backup.reference || current.id)} no longer exists.`);
+            const currentData = current.data() || {};
+            if (text(currentData.lastHierarchyRepairManifestId) !== manifestId
+                || (0, clientHierarchyIntegrityCore_1.createBookingHierarchyFingerprint)(current.id, currentData) !== text(backup.appliedFingerprint)) {
+                throw new functions.https.HttpsError('aborted', `Job ${text(backup.reference || current.id)} changed after this repair.`);
+            }
+        });
+        currentBookings.forEach((current, index) => {
+            const backup = backupDocuments[index].data();
+            const presentFields = new Set(stringValues(backup.presentFields));
+            const previousValues = backup.previousValues && typeof backup.previousValues === 'object'
+                ? backup.previousValues
+                : {};
+            const restorePatch = {
+                hierarchyRepairedAt: admin.firestore.FieldValue.serverTimestamp(),
+                hierarchyRepairedBy: actor.uid,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            stringValues(backup.touchedFields).forEach(field => {
+                restorePatch[field] = presentFields.has(field)
+                    ? previousValues[field]
+                    : admin.firestore.FieldValue.delete();
+            });
+            transaction.set(current.ref, restorePatch, { merge: true });
+            transaction.set(eventRefs[index], {
+                type: 'CLIENT_INVOICE_JOB_SCOPE_ROLLED_BACK',
+                jobId: current.id,
+                invoiceId: text(manifestData.invoiceId),
+                actorId: actor.uid,
+                manifestId,
+                createdAt: rolledBackAt,
+            });
+        });
+        transaction.set(manifestRef, {
+            status: 'ROLLED_BACK',
+            rollbackAvailable: false,
+            rolledBackAt,
+            rolledBackBy: actor.uid,
+        }, { merge: true });
+        transaction.set(auditRef, {
+            type: 'CLIENT_INVOICE_BOOKING_REPAIR_ROLLED_BACK',
+            actorId: actor.uid,
+            manifestId,
+            invoiceId: text(manifestData.invoiceId),
+            bookingIds: backupDocuments.map(backup => backup.id),
+            occurredAt: rolledBackAt,
+        });
+        return {
+            success: true,
+            manifestId,
+            invoiceId: text(manifestData.invoiceId),
+            bookingCount: backupDocuments.length,
+        };
+    });
 });
 exports.getClientBookingHierarchyRepairPreview = functions.runWith(RUNTIME).https.onCall(async (data, context) => {
     await assertAdmin(context.auth?.uid);

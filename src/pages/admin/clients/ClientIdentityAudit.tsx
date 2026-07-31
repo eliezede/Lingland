@@ -43,6 +43,8 @@ import {
   ClientFinanceHierarchyReconciliation,
   ClientFinanceBlockedBooking,
   ClientBookingHierarchyRepairResult,
+  ClientInvoiceBookingRepairPreview,
+  ClientInvoiceBookingRepairResult,
   ClientInvoiceIdentityBlocker,
   ClientInvoiceIdentityResolutionResult,
 } from '../../../services/clientIdentityAuditService';
@@ -171,6 +173,17 @@ export const ClientIdentityAudit = () => {
   const [bookingRepairConfirmation, setBookingRepairConfirmation] = useState('');
   const [bookingRepairRollbackConfirmation, setBookingRepairRollbackConfirmation] = useState('');
   const [bookingRepairResult, setBookingRepairResult] = useState<ClientBookingHierarchyRepairResult | null>(null);
+  const [invoiceBookingRepairBlocker, setInvoiceBookingRepairBlocker] = useState<ClientInvoiceIdentityBlocker | null>(null);
+  const [invoiceBookingRepairOpen, setInvoiceBookingRepairOpen] = useState(false);
+  const [invoiceBookingRepairLoading, setInvoiceBookingRepairLoading] = useState(false);
+  const [invoiceBookingRepairError, setInvoiceBookingRepairError] = useState('');
+  const [invoiceBookingRepairClientQuery, setInvoiceBookingRepairClientQuery] = useState('');
+  const [invoiceBookingRepairClientId, setInvoiceBookingRepairClientId] = useState('');
+  const [invoiceBookingRepairPreview, setInvoiceBookingRepairPreview] = useState<ClientInvoiceBookingRepairPreview | null>(null);
+  const [invoiceBookingRepairResult, setInvoiceBookingRepairResult] = useState<ClientInvoiceBookingRepairResult | null>(null);
+  const [invoiceBookingRepairReason, setInvoiceBookingRepairReason] = useState('');
+  const [invoiceBookingRepairConfirmation, setInvoiceBookingRepairConfirmation] = useState('');
+  const [invoiceBookingRepairRollbackConfirmation, setInvoiceBookingRepairRollbackConfirmation] = useState('');
   const [decisionMode, setDecisionMode] = useState<ClientIdentityDecisionType | null>(null);
   const [decisionReason, setDecisionReason] = useState('');
   const [decisionNotes, setDecisionNotes] = useState('');
@@ -461,6 +474,119 @@ export const ClientIdentityAudit = () => {
     await previewFinanceReconciliation();
   };
 
+  const chooseInvoiceBookingRepairClient = async (
+    clientId: string,
+    blocker = invoiceBookingRepairBlocker,
+  ) => {
+    setInvoiceBookingRepairClientId(clientId);
+    setInvoiceBookingRepairPreview(null);
+    setInvoiceBookingRepairResult(null);
+    setInvoiceBookingRepairConfirmation('');
+    setInvoiceBookingRepairRollbackConfirmation('');
+    setInvoiceBookingRepairError('');
+    if (!clientId || !blocker) return;
+    setInvoiceBookingRepairLoading(true);
+    try {
+      setInvoiceBookingRepairPreview(await ClientIdentityAuditService.getClientInvoiceBookingRepairPreview({
+        invoiceId: blocker.invoiceId,
+        clientId,
+      }));
+    } catch (previewError) {
+      console.error('Failed to preview invoice job scope repair', previewError);
+      setInvoiceBookingRepairError(previewError instanceof Error ? previewError.message : 'The invoice job repair preview could not be prepared.');
+    } finally {
+      setInvoiceBookingRepairLoading(false);
+    }
+  };
+
+  const openInvoiceBookingRepair = async (blocker: ClientInvoiceIdentityBlocker) => {
+    setFinanceModalOpen(false);
+    setInvoiceBookingRepairBlocker(blocker);
+    setInvoiceBookingRepairOpen(true);
+    setInvoiceBookingRepairLoading(true);
+    setInvoiceBookingRepairError('');
+    setInvoiceBookingRepairClientQuery('');
+    setInvoiceBookingRepairClientId('');
+    setInvoiceBookingRepairPreview(null);
+    setInvoiceBookingRepairResult(null);
+    setInvoiceBookingRepairReason('');
+    setInvoiceBookingRepairConfirmation('');
+    setInvoiceBookingRepairRollbackConfirmation('');
+    try {
+      let clients = identityClients;
+      if (clients.length === 0) {
+        clients = (await ClientService.getAll()).sort((left, right) => left.companyName.localeCompare(right.companyName));
+        setIdentityClients(clients);
+      }
+      const placeholderNames = new Set(['airtable client', 'translation client', 'unknown client', 'client']);
+      const usableClientIds = new Set(clients
+        .filter(client => client.recordState !== 'MERGED' && !placeholderNames.has(client.companyName.trim().toLowerCase()))
+        .map(client => client.id));
+      const supportedClientIds = Array.from(new Set([
+        ...blocker.candidateClientIds,
+        blocker.currentClientId,
+      ].filter(clientId => usableClientIds.has(clientId))));
+      const suggestedClientId = supportedClientIds.length === 1 ? supportedClientIds[0] : '';
+      setInvoiceBookingRepairLoading(false);
+      if (suggestedClientId) await chooseInvoiceBookingRepairClient(suggestedClientId, blocker);
+    } catch (clientError) {
+      console.error('Failed to prepare invoice job scope repair', clientError);
+      setInvoiceBookingRepairError(clientError instanceof Error ? clientError.message : 'The invoice repair case could not be prepared.');
+      setInvoiceBookingRepairLoading(false);
+    }
+  };
+
+  const applyInvoiceBookingRepair = async () => {
+    if (!invoiceBookingRepairPreview || !invoiceBookingRepairBlocker) return;
+    setInvoiceBookingRepairLoading(true);
+    setInvoiceBookingRepairError('');
+    try {
+      const result = await ClientIdentityAuditService.applyClientInvoiceBookingRepair({
+        invoiceId: invoiceBookingRepairBlocker.invoiceId,
+        clientId: invoiceBookingRepairPreview.clientId,
+        expectedFingerprint: invoiceBookingRepairPreview.fingerprint,
+        expectedFinanceFingerprint: invoiceBookingRepairPreview.financeFingerprint,
+        confirmation: invoiceBookingRepairConfirmation,
+        reason: invoiceBookingRepairReason,
+      });
+      setInvoiceBookingRepairResult(result);
+      setInvoiceBookingRepairConfirmation('');
+      await loadIntegrity();
+    } catch (repairError) {
+      console.error('Failed to apply invoice job scope repair', repairError);
+      setInvoiceBookingRepairError(repairError instanceof Error ? repairError.message : 'The invoice job scope could not be repaired.');
+    } finally {
+      setInvoiceBookingRepairLoading(false);
+    }
+  };
+
+  const rollbackInvoiceBookingRepair = async () => {
+    if (!invoiceBookingRepairResult?.manifestId) return;
+    setInvoiceBookingRepairLoading(true);
+    setInvoiceBookingRepairError('');
+    try {
+      await ClientIdentityAuditService.rollbackClientInvoiceBookingRepair(
+        invoiceBookingRepairResult.manifestId,
+        invoiceBookingRepairRollbackConfirmation,
+      );
+      setInvoiceBookingRepairOpen(false);
+      setInvoiceBookingRepairResult(null);
+      await loadIntegrity();
+      await previewFinanceReconciliation();
+    } catch (rollbackError) {
+      console.error('Failed to restore invoice job scope repair', rollbackError);
+      setInvoiceBookingRepairError(rollbackError instanceof Error ? rollbackError.message : 'The previous invoice job scope could not be restored.');
+    } finally {
+      setInvoiceBookingRepairLoading(false);
+    }
+  };
+
+  const refreshFinanceAfterInvoiceBookingRepair = async () => {
+    setInvoiceBookingRepairOpen(false);
+    setInvoiceBookingRepairResult(null);
+    await previewFinanceReconciliation();
+  };
+
   const candidates = useMemo(() => {
     const source = tab === 'ORGANIZATIONS' ? audit?.organizationCandidates || [] : audit?.agentCandidates || [];
     const needle = query.trim().toLowerCase();
@@ -522,6 +648,32 @@ export const ClientIdentityAudit = () => {
       .slice(0, 30);
   }, [bookingRepairBlocker, bookingRepairClientQuery, identityClients]);
 
+  const visibleInvoiceBookingRepairClients = useMemo(() => {
+    const needle = invoiceBookingRepairClientQuery.trim().toLowerCase();
+    const suggestedIds = new Set(invoiceBookingRepairBlocker?.candidateClientIds || []);
+    const supportedIds = new Set([
+      ...(invoiceBookingRepairBlocker?.candidateClientIds || []),
+      invoiceBookingRepairBlocker?.currentClientId || '',
+    ].filter(Boolean));
+    return identityClients
+      .filter(client => {
+        const companyName = client.companyName.trim().toLowerCase();
+        if (!supportedIds.has(client.id) || client.recordState === 'MERGED' || ['airtable client', 'translation client', 'unknown client', 'client'].includes(companyName)) return false;
+        if (!needle) return true;
+        return [client.companyName, client.id, client.sageAccountRef, client.airtableClientKey, client.invoiceEmail, client.email]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(needle);
+      })
+      .sort((left, right) => {
+        const leftSuggested = suggestedIds.has(left.id) ? 1 : 0;
+        const rightSuggested = suggestedIds.has(right.id) ? 1 : 0;
+        return rightSuggested - leftSuggested || left.companyName.localeCompare(right.companyName);
+      })
+      .slice(0, 30);
+  }, [identityClients, invoiceBookingRepairBlocker, invoiceBookingRepairClientQuery]);
+
   const bookingRepairAgentOptions = useMemo(() => {
     if (!bookingRepairHierarchy) return [];
     const membershipByAgent = new Map(bookingRepairHierarchy.memberships
@@ -541,6 +693,11 @@ export const ClientIdentityAudit = () => {
   const bookingRepairSelectedClient = useMemo(
     () => identityClients.find(client => client.id === bookingRepairClientId) || null,
     [bookingRepairClientId, identityClients],
+  );
+
+  const invoiceBookingRepairSelectedClient = useMemo(
+    () => identityClients.find(client => client.id === invoiceBookingRepairClientId) || null,
+    [identityClients, invoiceBookingRepairClientId],
   );
 
   const visibleFinanceBlockers = useMemo(() => {
@@ -1648,26 +1805,39 @@ export const ClientIdentityAudit = () => {
                             <p className="font-semibold">{blocker.clientName || blocker.invoiceNumber || 'Client identity missing'} - {blocker.reason.replaceAll('_', ' ')}</p>
                             {blocker.candidateClientIds.length > 0 && <p className="break-all text-[10px]">Candidates: {blocker.candidateClientIds.join(', ')}</p>}
                           </div>
-                          {blocker.reason === 'CLIENT_IDENTITY_UNRESOLVED' && blocker.bookings.length === 0 && (
-                            <button type="button" onClick={() => void openInvoiceIdentityResolver(blocker)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
-                              Resolve invoice
-                            </button>
-                          )}
+                          <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                            {blocker.bookings.length > 0 && ['MULTIPLE_CLIENTS', 'INVALID_BOOKING_SCOPE'].includes(blocker.reason) && (
+                              <button type="button" onClick={() => void openInvoiceBookingRepair(blocker)} className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
+                                <Wrench className="h-3 w-3" />Repair invoice jobs
+                              </button>
+                            )}
+                            {blocker.reason === 'CLIENT_IDENTITY_UNRESOLVED' && blocker.bookings.length === 0 && (
+                              <button type="button" onClick={() => void openInvoiceIdentityResolver(blocker)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
+                                Resolve invoice
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {blocker.bookings.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {blocker.bookings.map(booking => (
-                              <div key={booking.bookingId} className="flex items-center justify-between gap-3 border border-red-200 bg-white px-2 py-1.5 dark:border-red-900/60 dark:bg-slate-950/70">
-                                <div className="min-w-0">
-                                  <p className="truncate font-semibold text-slate-900 dark:text-white">{booking.reference}</p>
-                                  <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{booking.date || 'No date'} - {booking.issueCodes.length > 0 ? booking.issueCodes.join(', ').replaceAll('_', ' ') : 'Conflicting invoice client scope'}</p>
+                          <details className="group mt-2 border border-red-200 bg-white dark:border-red-900/60 dark:bg-slate-950/70">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-2 py-1.5 font-semibold text-slate-800 marker:hidden dark:text-slate-200">
+                              <span>Inspect {quantityLabel(blocker.bookings.length, 'linked job')}</span>
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                            </summary>
+                            <div className="space-y-1 border-t border-red-200 p-1.5 dark:border-red-900/60">
+                              {blocker.bookings.map(booking => (
+                                <div key={booking.bookingId} className="flex items-center justify-between gap-3 border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+                                  <div className="min-w-0">
+                                    <p className="truncate font-semibold text-slate-900 dark:text-white">{booking.reference}</p>
+                                    <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">{booking.date || 'No date'} - {booking.issueCodes.length > 0 ? booking.issueCodes.join(', ').replaceAll('_', ' ') : 'Conflicting invoice client scope'}</p>
+                                  </div>
+                                  <button type="button" onClick={() => void openBookingHierarchyRepair(blocker, booking)} className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:border-blue-400 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                                    Repair one job
+                                  </button>
                                 </div>
-                                <button type="button" onClick={() => void openBookingHierarchyRepair(blocker, booking)} className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:border-red-500 dark:border-red-900 dark:bg-slate-950 dark:text-red-300">
-                                  Repair job
-                                </button>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          </details>
                         )}
                         {blocker.missingBookingIds.length > 0 && (
                           <p className="mt-2 break-all border border-red-200 bg-white px-2 py-1.5 text-[10px] dark:border-red-900/60 dark:bg-slate-950/70">Missing job IDs: {blocker.missingBookingIds.join(', ')}</p>
@@ -1705,6 +1875,172 @@ export const ClientIdentityAudit = () => {
               <p className="break-all font-mono text-[10px] text-slate-400">Fingerprint {financePreview.fingerprint}</p>
             </>
           ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={invoiceBookingRepairOpen}
+        onClose={() => { if (!invoiceBookingRepairLoading) setInvoiceBookingRepairOpen(false); }}
+        title="Repair invoice job scope"
+        maxWidth="2xl"
+        footer={(
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" disabled={invoiceBookingRepairLoading} onClick={() => setInvoiceBookingRepairOpen(false)}>Close</Button>
+            {!invoiceBookingRepairResult ? (
+              <Button
+                icon={Wrench}
+                isLoading={invoiceBookingRepairLoading}
+                disabled={!isSuperAdmin
+                  || !invoiceBookingRepairPreview?.canApply
+                  || invoiceBookingRepairReason.trim().length < 5
+                  || invoiceBookingRepairConfirmation.toUpperCase() !== 'REPAIR INVOICE JOBS'}
+                onClick={() => void applyInvoiceBookingRepair()}
+              >Repair reviewed jobs</Button>
+            ) : (
+              <>
+                <Button variant="secondary" icon={RefreshCw} disabled={invoiceBookingRepairLoading} onClick={() => void refreshFinanceAfterInvoiceBookingRepair()}>Re-run finance dry run</Button>
+                <Button
+                  variant="danger"
+                  icon={Undo2}
+                  isLoading={invoiceBookingRepairLoading}
+                  disabled={invoiceBookingRepairRollbackConfirmation.toUpperCase() !== 'ROLLBACK INVOICE JOBS'}
+                  onClick={() => void rollbackInvoiceBookingRepair()}
+                >Restore previous job scope</Button>
+              </>
+            )}
+          </div>
+        )}
+      >
+        <div className="space-y-4">
+          {invoiceBookingRepairBlocker && (
+            <div className="border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-950 dark:text-white">{invoiceBookingRepairBlocker.invoiceNumber || invoiceBookingRepairBlocker.invoiceId}</p>
+                  <p className="mt-1 text-slate-600 dark:text-slate-300">{invoiceBookingRepairBlocker.clientName || 'Client identity not established'} - {quantityLabel(invoiceBookingRepairBlocker.bookings.length, 'linked job')}</p>
+                </div>
+                <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{invoiceBookingRepairBlocker.reason.replaceAll('_', ' ')}</span>
+              </div>
+              <p className="mt-2 break-all font-mono text-[10px] text-slate-400">Invoice ID: {invoiceBookingRepairBlocker.invoiceId}</p>
+            </div>
+          )}
+
+          {invoiceBookingRepairError && (
+            <div className="flex items-start gap-2 border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{invoiceBookingRepairError}
+            </div>
+          )}
+
+          {invoiceBookingRepairResult ? (
+            <>
+              <div className="border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <p className="font-semibold">Invoice job scope repaired</p>
+                <p className="mt-1">{quantityLabel(invoiceBookingRepairResult.bookingCount, 'job')} now point to the reviewed canonical organisation. The invoice itself was deliberately left unchanged until the next finance dry run.</p>
+              </div>
+              <div className="grid grid-cols-2 border border-slate-200 text-xs dark:border-slate-800 sm:grid-cols-4">
+                {[
+                  ['Jobs repaired', invoiceBookingRepairResult.bookingCount],
+                  ['Departments cleared', invoiceBookingRepairResult.departmentsCleared],
+                  ['Requesters cleared', invoiceBookingRepairResult.requestersCleared],
+                  ['Finance review', invoiceBookingRepairResult.financeReconciliationRequired ? 'Required' : 'Clear'],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="border-b border-r border-slate-200 p-3 last:border-r-0 dark:border-slate-800 sm:border-b-0">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+                    <p className="mt-1 font-semibold text-slate-950 dark:text-white">{typeof value === 'number' ? value.toLocaleString('en-GB') : value}</p>
+                  </div>
+                ))}
+              </div>
+              <label className="block text-xs font-semibold text-red-800 dark:text-red-200">
+                Emergency restoration
+                <span className="mt-1 block font-normal leading-5 text-slate-500 dark:text-slate-400">Type <strong>ROLLBACK INVOICE JOBS</strong>. Restoration stops if any job received a newer hierarchy edit.</span>
+                <input value={invoiceBookingRepairRollbackConfirmation} onChange={event => setInvoiceBookingRepairRollbackConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-red-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-red-600 dark:border-red-900 dark:bg-slate-950 dark:text-white" />
+              </label>
+              <p className="break-all font-mono text-[10px] text-slate-400">Manifest {invoiceBookingRepairResult.manifestId}</p>
+            </>
+          ) : (
+            <>
+              {!isSuperAdmin && (
+                <div className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">A Super Admin must approve a batch that changes jobs linked to finance records.</div>
+              )}
+              <div>
+                <label htmlFor="invoice-booking-repair-client-search" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Canonical organisation</label>
+                <div className="relative mt-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input id="invoice-booking-repair-client-search" value={invoiceBookingRepairClientQuery} onChange={event => setInvoiceBookingRepairClientQuery(event.target.value)} placeholder="Filter invoice evidence by company, SAGE code or client ID" className="h-10 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </div>
+              </div>
+              <div role="group" aria-label="Invoice repair client choices" className="max-h-44 divide-y divide-slate-200 overflow-y-auto border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {visibleInvoiceBookingRepairClients.map(client => {
+                  const selectedClient = client.id === invoiceBookingRepairClientId;
+                  const suggested = invoiceBookingRepairBlocker?.candidateClientIds.includes(client.id);
+                  return (
+                    <button key={client.id} type="button" aria-pressed={selectedClient} onClick={() => void chooseInvoiceBookingRepairClient(client.id)} className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors ${selectedClient ? 'bg-blue-50 text-blue-900 dark:bg-blue-950/40 dark:text-blue-100' : 'bg-white text-slate-800 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'}`}>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2 text-sm font-semibold"><span className="truncate">{client.companyName}</span>{suggested && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 text-[9px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Invoice evidence</span>}</span>
+                        <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">{[client.sageAccountRef ? `SAGE ${client.sageAccountRef}` : '', client.invoiceEmail || client.email].filter(Boolean).join(' - ') || 'No SAGE code or billing email'}</span>
+                      </span>
+                      <span className="max-w-[42%] truncate font-mono text-[9px] text-slate-400">{client.id}</span>
+                    </button>
+                  );
+                })}
+                {visibleInvoiceBookingRepairClients.length === 0 && <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No active canonical organisation is supported by the current invoice evidence. Resolve the invoice identity first.</p>}
+              </div>
+
+              {invoiceBookingRepairLoading && invoiceBookingRepairClientId && !invoiceBookingRepairPreview ? (
+                <div className="flex min-h-28 flex-col items-center justify-center gap-2 border border-slate-200 dark:border-slate-800"><Spinner size="sm" /><p className="text-xs text-slate-500 dark:text-slate-400">Checking every linked job against this organisation...</p></div>
+              ) : invoiceBookingRepairPreview ? (
+                <div className="space-y-3">
+                  <div className={`border p-3 ${invoiceBookingRepairPreview.canApply ? 'border-blue-200 bg-blue-50 dark:border-blue-900/60 dark:bg-blue-950/20' : 'border-red-200 bg-red-50 dark:border-red-900/60 dark:bg-red-950/20'}`}>
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">{invoiceBookingRepairSelectedClient?.companyName || invoiceBookingRepairPreview.organizationName}</p>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{invoiceBookingRepairSelectedClient?.sageAccountRef ? `SAGE ${invoiceBookingRepairSelectedClient.sageAccountRef} - ` : ''}{invoiceBookingRepairPreview.canApply ? 'This target matches the current invoice evidence.' : 'This target cannot be applied safely.'}</p>
+                    {invoiceBookingRepairPreview.blockers.length > 0 && <ul className="mt-2 space-y-1 text-xs text-red-700 dark:text-red-300">{invoiceBookingRepairPreview.blockers.map(blocker => <li key={blocker.code}>{blocker.message}</li>)}</ul>}
+                  </div>
+                  <div className="grid grid-cols-2 border border-slate-200 text-xs dark:border-slate-800 sm:grid-cols-5">
+                    {[
+                      ['Jobs reviewed', invoiceBookingRepairPreview.requestedBookingCount],
+                      ['Will change', invoiceBookingRepairPreview.repairableBookingCount],
+                      ['Unchanged', invoiceBookingRepairPreview.unchangedBookingCount],
+                      ['Departments cleared', invoiceBookingRepairPreview.departmentsCleared],
+                      ['Requesters cleared', invoiceBookingRepairPreview.requestersCleared],
+                    ].map(([label, value]) => (
+                      <div key={String(label)} className="border-b border-r border-slate-200 p-2.5 last:border-r-0 dark:border-slate-800 sm:border-b-0">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+                        <p className="mt-1 text-base font-semibold text-slate-950 dark:text-white">{Number(value).toLocaleString('en-GB')}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {invoiceBookingRepairPreview.jobs.length > 0 && (
+                    <details className="group border border-slate-200 dark:border-slate-800">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold text-slate-700 marker:hidden dark:text-slate-200">
+                        <span>Inspect {quantityLabel(invoiceBookingRepairPreview.jobs.length, 'changed job')}</span>
+                        <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
+                      </summary>
+                      <div className="max-h-48 divide-y divide-slate-200 overflow-y-auto border-t border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                        {invoiceBookingRepairPreview.jobs.map(job => (
+                          <div key={job.bookingId} className="flex items-start justify-between gap-3 px-3 py-2 text-xs">
+                            <span className="min-w-0"><span className="block truncate font-semibold text-slate-950 dark:text-white">{job.reference}</span><span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">{job.date || 'No date'} - {job.departmentName || 'Organisation-wide'} - {job.requesterName || 'No requester'}</span></span>
+                            <span className="shrink-0 text-right text-[10px] text-slate-500 dark:text-slate-400">{job.currentClientId === job.nextClientId ? 'Scope cleanup' : 'Client reassignment'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ) : invoiceBookingRepairLoading ? (
+                <div className="flex min-h-28 flex-col items-center justify-center gap-2"><Spinner size="sm" /><p className="text-xs text-slate-500 dark:text-slate-400">Loading canonical organisations...</p></div>
+              ) : null}
+
+              <label htmlFor="invoice-booking-repair-reason" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Review reason
+                <textarea id="invoice-booking-repair-reason" value={invoiceBookingRepairReason} onChange={event => setInvoiceBookingRepairReason(event.target.value)} placeholder="Evidence reviewed, including the SAGE account when available" className="mt-2 min-h-20 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              </label>
+              <label htmlFor="invoice-booking-repair-confirmation" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Final confirmation
+                <span className="mt-1 block font-normal leading-5 text-slate-500 dark:text-slate-400">Type <strong>REPAIR INVOICE JOBS</strong>. The finance plan and every job fingerprint are rechecked inside the transaction.</span>
+                <input id="invoice-booking-repair-confirmation" autoComplete="off" value={invoiceBookingRepairConfirmation} onChange={event => setInvoiceBookingRepairConfirmation(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-950 outline-none focus:border-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              </label>
+            </>
+          )}
         </div>
       </Modal>
 

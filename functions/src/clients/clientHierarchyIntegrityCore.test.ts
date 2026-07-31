@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildClientInvoiceBookingRepairPlan,
   buildClientHierarchyScopeBatchPlan,
   buildClientFinanceBackfillPlan,
   buildClientHierarchyIntegrityAudit,
@@ -185,6 +186,72 @@ describe('client hierarchy integrity audit', () => {
         expect.objectContaining({ bookingId: 'job-b', issueCodes: [] }),
       ],
     });
+  });
+
+  it('previews one reversible repair for every conflicting job on an invoice', () => {
+    const input = base();
+    input.clients.push({ id: 'client-b', data: { companyName: 'Client B', recordState: 'ACTIVE' } });
+    input.departments.push({ id: 'dept-b', data: { clientId: 'client-b', status: 'ACTIVE' } });
+    input.agents.push({ id: 'agent-b', data: { userId: 'user-b', status: 'ACTIVE' } });
+    input.memberships.push({ id: 'member-b', data: { clientId: 'client-b', agentId: 'agent-b', userId: 'user-b', departmentIds: ['dept-b'], status: 'ACTIVE' } });
+    input.bookings.push({ id: 'job-b', data: { clientId: 'client-b', clientDepartmentId: 'dept-b', requestedByAgentId: 'agent-b', requestedByUserId: 'user-b' } });
+    input.invoiceLines.push({ id: 'line-b', data: { invoiceId: 'invoice-a', bookingId: 'job-b' } });
+
+    const plan = buildClientInvoiceBookingRepairPlan(input, 'invoice-a', 'client-a');
+
+    expect(plan).toMatchObject({
+      invoiceId: 'invoice-a',
+      reason: 'MULTIPLE_CLIENTS',
+      clientId: 'client-a',
+      requestedBookingCount: 2,
+      repairableBookingCount: 2,
+      unchangedBookingCount: 0,
+      departmentsCleared: 1,
+      requestersCleared: 1,
+      blockers: [],
+    });
+    expect(plan.jobs.find(job => job.bookingId === 'job-b')).toMatchObject({
+      bookingId: 'job-b',
+      currentClientId: 'client-b',
+      nextClientId: 'client-a',
+      currentClientDepartmentId: 'dept-b',
+      nextClientDepartmentId: '',
+      currentRequestedByAgentId: 'agent-b',
+      nextRequestedByAgentId: '',
+    });
+    expect(plan.fingerprint).toHaveLength(64);
+  });
+
+  it('preserves valid target hierarchy and clears only invalid booking scope', () => {
+    const input = base();
+    input.bookings[0].data.clientDepartmentId = 'missing-department';
+    input.bookings[0].data.requestedByAgentId = 'missing-agent';
+
+    const plan = buildClientInvoiceBookingRepairPlan(input, 'invoice-a', 'client-a');
+
+    expect(plan.reason).toBe('INVALID_BOOKING_SCOPE');
+    expect(plan.blockers).toEqual([]);
+    expect(plan.jobs[0]).toMatchObject({
+      bookingId: 'job-a',
+      nextClientId: 'client-a',
+      nextClientDepartmentId: '',
+      nextRequestedByAgentId: '',
+    });
+  });
+
+  it('rejects an invoice repair target that is outside the current evidence', () => {
+    const input = base();
+    input.clients.push(
+      { id: 'client-b', data: { companyName: 'Client B', recordState: 'ACTIVE' } },
+      { id: 'client-c', data: { companyName: 'Client C', recordState: 'ACTIVE' } },
+    );
+    input.bookings.push({ id: 'job-b', data: { clientId: 'client-b' } });
+    input.invoiceLines.push({ id: 'line-b', data: { invoiceId: 'invoice-a', bookingId: 'job-b' } });
+
+    const plan = buildClientInvoiceBookingRepairPlan(input, 'invoice-a', 'client-c');
+
+    expect(plan.repairableBookingCount).toBe(0);
+    expect(plan.blockers).toEqual([expect.objectContaining({ code: 'TARGET_NOT_CANDIDATE' })]);
   });
 
   it('repairs an unlinked legacy invoice from a unique account key', () => {

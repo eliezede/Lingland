@@ -136,6 +136,44 @@ export interface ClientHierarchyScopeBatchPlan {
   }>;
 }
 
+export interface ClientInvoiceBookingRepairPlan {
+  fingerprint: string;
+  financeFingerprint: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceClientName: string;
+  reason: ClientFinanceBackfillPlan['blockedInvoices'][number]['reason'] | '';
+  clientId: string;
+  organizationName: string;
+  candidateClientIds: string[];
+  requestedBookingCount: number;
+  repairableBookingCount: number;
+  unchangedBookingCount: number;
+  departmentsCleared: number;
+  requestersCleared: number;
+  jobs: Array<{
+    bookingId: string;
+    reference: string;
+    date: string;
+    currentFingerprint: string;
+    nextFingerprint: string;
+    currentClientId: string;
+    nextClientId: string;
+    currentClientDepartmentId: string;
+    nextClientDepartmentId: string;
+    currentRequestedByAgentId: string;
+    nextRequestedByAgentId: string;
+    nextRequestedByUserId: string;
+    departmentName: string;
+    requesterName: string;
+    requesterEmail: string;
+  }>;
+  blockers: Array<{
+    code: 'INVOICE_NOT_BLOCKED' | 'UNSUPPORTED_REASON' | 'TARGET_INVALID' | 'TARGET_NOT_CANDIDATE' | 'NO_LINKED_JOBS';
+    message: string;
+  }>;
+}
+
 const text = (value: unknown) => String(value ?? '').trim();
 const values = (value: unknown) => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -618,3 +656,178 @@ export const buildClientHierarchyIntegrityAudit = (input: ClientHierarchyIntegri
 };
 
 export const buildClientFinanceBackfillPlan = buildFinancePlan;
+
+export const buildClientInvoiceBookingRepairPlan = (
+  input: ClientHierarchyIntegrityInput,
+  requestedInvoiceId: string,
+  requestedClientId: string,
+): ClientInvoiceBookingRepairPlan => {
+  const invoiceId = text(requestedInvoiceId);
+  const requestedTargetId = text(requestedClientId);
+  const financePlan = buildFinancePlan(input);
+  const financeBlocker = financePlan.blockedInvoices.find(item => item.invoiceId === invoiceId);
+  const { byId: clients, resolve } = clientResolver(input.clients);
+  const target = resolve(requestedTargetId);
+  const targetDocument = target.exists ? clients.get(target.id) : undefined;
+  const targetIsValid = Boolean(
+    target.exists
+    && target.id === requestedTargetId
+    && targetDocument
+    && !isPlaceholderClientIdentity(target.id, targetDocument.data)
+    && text(targetDocument.data.recordState).toUpperCase() !== 'MERGED',
+  );
+  const blockers: ClientInvoiceBookingRepairPlan['blockers'] = [];
+  if (!financeBlocker) {
+    blockers.push({ code: 'INVOICE_NOT_BLOCKED', message: 'This invoice is no longer in the blocked repair queue.' });
+  } else if (!['MULTIPLE_CLIENTS', 'INVALID_BOOKING_SCOPE'].includes(financeBlocker.reason)) {
+    blockers.push({ code: 'UNSUPPORTED_REASON', message: 'This blocker requires invoice identity or missing-job repair instead.' });
+  }
+  if (!targetIsValid) {
+    blockers.push({ code: 'TARGET_INVALID', message: 'Select an active canonical client, not a placeholder or merged record.' });
+  }
+
+  const currentInvoiceClient = financeBlocker ? resolve(financeBlocker.currentClientId) : { id: '', exists: false, redirected: false };
+  const allowedClientIds = unique([
+    ...(financeBlocker?.candidateClientIds || []).map(clientId => resolve(clientId)).filter(item => item.exists).map(item => item.id),
+    currentInvoiceClient.exists ? currentInvoiceClient.id : '',
+  ]);
+  if (targetIsValid && financeBlocker && !allowedClientIds.includes(target.id)) {
+    blockers.push({
+      code: 'TARGET_NOT_CANDIDATE',
+      message: 'The selected client is not supported by the invoice or linked-job evidence in this dry run.',
+    });
+  }
+  if (financeBlocker && financeBlocker.bookings.length === 0) {
+    blockers.push({ code: 'NO_LINKED_JOBS', message: 'This invoice has no linked jobs that can be repaired as a batch.' });
+  }
+
+  const organizationName = targetDocument
+    ? text(targetDocument.data.companyName || targetDocument.data.name || target.id)
+    : '';
+  const departmentById = new Map(input.departments.map(item => [item.id, item]));
+  const agentById = new Map(input.agents.map(item => [item.id, item]));
+  const activeMemberships = input.memberships.filter(item => text(item.data.status).toUpperCase() !== 'INACTIVE');
+  const bookingById = new Map(input.bookings.map(item => [item.id, item]));
+  let unchangedBookingCount = 0;
+  let departmentsCleared = 0;
+  let requestersCleared = 0;
+
+  const jobs = blockers.length > 0 || !financeBlocker || !targetDocument
+    ? []
+    : financeBlocker.bookings.flatMap(blockedBooking => {
+      const booking = bookingById.get(blockedBooking.bookingId);
+      if (!booking) return [];
+      const currentDepartmentId = text(booking.data.clientDepartmentId);
+      const department = currentDepartmentId ? departmentById.get(currentDepartmentId) : undefined;
+      const departmentClient = department ? resolve(text(department.data.clientId)) : null;
+      const nextDepartmentId = department
+        && text(department.data.status).toUpperCase() !== 'ARCHIVED'
+        && departmentClient?.exists
+        && departmentClient.id === target.id
+        ? currentDepartmentId
+        : '';
+
+      const currentAgentId = text(booking.data.requestedByAgentId);
+      const agent = currentAgentId ? agentById.get(currentAgentId) : undefined;
+      const membership = agent ? activeMemberships.find(item => {
+        if (text(item.data.agentId) !== currentAgentId) return false;
+        const membershipClient = resolve(text(item.data.clientId));
+        if (!membershipClient.exists || membershipClient.id !== target.id) return false;
+        const departmentIds = values(item.data.departmentIds);
+        const accessLevel = text(item.data.accessLevel).toUpperCase();
+        return !nextDepartmentId || departmentIds.length === 0 || accessLevel === 'CLIENT_MASTER' || departmentIds.includes(nextDepartmentId);
+      }) : undefined;
+      const membershipUserId = text(membership?.data.userId);
+      const agentUserId = text(agent?.data.userId);
+      const requesterUserConflict = Boolean(membershipUserId && agentUserId && membershipUserId !== agentUserId);
+      const nextAgentId = agent
+        && text(agent.data.status).toUpperCase() !== 'INACTIVE'
+        && text(agent.data.agentType).toUpperCase() !== 'SHARED_MAILBOX'
+        && membership
+        && !requesterUserConflict
+        ? currentAgentId
+        : '';
+      const nextRequestedByUserId = nextAgentId ? (membershipUserId || agentUserId) : '';
+      const departmentName = nextDepartmentId ? text(department?.data.name) : '';
+      const requesterName = nextAgentId ? text(agent?.data.displayName || agent?.data.name) : '';
+      const requesterEmail = nextAgentId ? text(agent?.data.email).toLowerCase() : '';
+      const currentSnapshot = booking.data.clientSnapshot && typeof booking.data.clientSnapshot === 'object'
+        ? booking.data.clientSnapshot as Record<string, unknown>
+        : {};
+      const nextSnapshot: Record<string, unknown> = { ...currentSnapshot, organizationName };
+      if (departmentName) nextSnapshot.departmentName = departmentName;
+      else delete nextSnapshot.departmentName;
+      if (requesterName) nextSnapshot.requesterName = requesterName;
+      else delete nextSnapshot.requesterName;
+      if (requesterEmail) nextSnapshot.requesterEmail = requesterEmail;
+      else delete nextSnapshot.requesterEmail;
+      const nextData: Record<string, unknown> = {
+        ...booking.data,
+        clientId: target.id,
+        clientName: organizationName,
+        clientIdentityStatus: 'RESOLVED',
+        clientSnapshot: nextSnapshot,
+      };
+      if (nextDepartmentId) nextData.clientDepartmentId = nextDepartmentId;
+      else delete nextData.clientDepartmentId;
+      if (nextAgentId) nextData.requestedByAgentId = nextAgentId;
+      else delete nextData.requestedByAgentId;
+      if (nextRequestedByUserId) nextData.requestedByUserId = nextRequestedByUserId;
+      else delete nextData.requestedByUserId;
+      const currentFingerprint = createBookingHierarchyFingerprint(booking.id, booking.data);
+      const nextFingerprint = createBookingHierarchyFingerprint(booking.id, nextData);
+      if (currentFingerprint === nextFingerprint) {
+        unchangedBookingCount += 1;
+        return [];
+      }
+      if (currentDepartmentId && !nextDepartmentId) departmentsCleared += 1;
+      if (currentAgentId && !nextAgentId) requestersCleared += 1;
+      return [{
+        bookingId: booking.id,
+        reference: text(booking.data.displayRef || booking.data.jobNumber || booking.data.bookingRef || booking.data.legacyPlatformRef || booking.id),
+        date: text(booking.data.date),
+        currentFingerprint,
+        nextFingerprint,
+        currentClientId: text(booking.data.clientId),
+        nextClientId: target.id,
+        currentClientDepartmentId: currentDepartmentId,
+        nextClientDepartmentId: nextDepartmentId,
+        currentRequestedByAgentId: currentAgentId,
+        nextRequestedByAgentId: nextAgentId,
+        nextRequestedByUserId,
+        departmentName,
+        requesterName,
+        requesterEmail,
+      }];
+    }).sort((left, right) => left.bookingId.localeCompare(right.bookingId));
+
+  const stable = {
+    financeFingerprint: financePlan.fingerprint,
+    invoiceId,
+    clientId: targetIsValid ? target.id : requestedTargetId,
+    jobs: jobs.map(job => ({
+      bookingId: job.bookingId,
+      currentFingerprint: job.currentFingerprint,
+      nextFingerprint: job.nextFingerprint,
+    })),
+    blockers: blockers.map(blocker => blocker.code).sort(),
+  };
+  return {
+    fingerprint: createHash('sha256').update(JSON.stringify(stable)).digest('hex'),
+    financeFingerprint: financePlan.fingerprint,
+    invoiceId,
+    invoiceNumber: financeBlocker?.invoiceNumber || '',
+    invoiceClientName: financeBlocker?.clientName || '',
+    reason: financeBlocker?.reason || '',
+    clientId: targetIsValid ? target.id : requestedTargetId,
+    organizationName,
+    candidateClientIds: allowedClientIds,
+    requestedBookingCount: financeBlocker?.bookings.length || 0,
+    repairableBookingCount: jobs.length,
+    unchangedBookingCount,
+    departmentsCleared,
+    requestersCleared,
+    jobs,
+    blockers,
+  };
+};

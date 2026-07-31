@@ -427,6 +427,63 @@ export interface ClientBookingHierarchyRepairPreview {
   };
 }
 
+export interface ClientInvoiceBookingRepairJob {
+  bookingId: string;
+  reference: string;
+  date: string;
+  currentFingerprint: string;
+  nextFingerprint: string;
+  currentClientId: string;
+  nextClientId: string;
+  currentClientDepartmentId: string;
+  nextClientDepartmentId: string;
+  currentRequestedByAgentId: string;
+  nextRequestedByAgentId: string;
+  nextRequestedByUserId: string;
+  departmentName: string;
+  requesterName: string;
+  requesterEmail: string;
+}
+
+export interface ClientInvoiceBookingRepairPreview {
+  success: true;
+  readOnly: true;
+  truncated: boolean;
+  canApply: boolean;
+  confirmationPhrase: string;
+  maxJobs: number;
+  fingerprint: string;
+  financeFingerprint: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceClientName: string;
+  reason: ClientInvoiceIdentityBlocker['reason'] | '';
+  clientId: string;
+  organizationName: string;
+  candidateClientIds: string[];
+  requestedBookingCount: number;
+  repairableBookingCount: number;
+  unchangedBookingCount: number;
+  departmentsCleared: number;
+  requestersCleared: number;
+  jobs: ClientInvoiceBookingRepairJob[];
+  blockers: Array<{
+    code: 'INVOICE_NOT_BLOCKED' | 'UNSUPPORTED_REASON' | 'TARGET_INVALID' | 'TARGET_NOT_CANDIDATE' | 'NO_LINKED_JOBS';
+    message: string;
+  }>;
+}
+
+export interface ClientInvoiceBookingRepairResult {
+  success: true;
+  manifestId: string;
+  invoiceId: string;
+  clientId: string;
+  bookingCount: number;
+  departmentsCleared: number;
+  requestersCleared: number;
+  financeReconciliationRequired: true;
+}
+
 export interface ClientHierarchyScopeBatchPreview {
   success: true;
   readOnly: true;
@@ -726,6 +783,43 @@ export const ClientIdentityAuditService = {
     const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientBookingHierarchyRepairResult>(
       functions,
       'rollbackClientBookingHierarchyRepair',
+      { timeout: 300000 },
+    );
+    return (await callable({ manifestId, confirmation })).data;
+  },
+  getClientInvoiceBookingRepairPreview: async (input: {
+    invoiceId: string;
+    clientId: string;
+  }): Promise<ClientInvoiceBookingRepairPreview> => {
+    const callable = httpsCallable<typeof input, ClientInvoiceBookingRepairPreview>(
+      functions,
+      'getClientInvoiceBookingRepairPreview',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  applyClientInvoiceBookingRepair: async (input: {
+    invoiceId: string;
+    clientId: string;
+    expectedFingerprint: string;
+    expectedFinanceFingerprint: string;
+    confirmation: string;
+    reason: string;
+  }): Promise<ClientInvoiceBookingRepairResult> => {
+    const callable = httpsCallable<typeof input, ClientInvoiceBookingRepairResult>(
+      functions,
+      'applyClientInvoiceBookingRepair',
+      { timeout: 300000 },
+    );
+    return (await callable(input)).data;
+  },
+  rollbackClientInvoiceBookingRepair: async (
+    manifestId: string,
+    confirmation: string,
+  ): Promise<ClientInvoiceBookingRepairResult> => {
+    const callable = httpsCallable<{ manifestId: string; confirmation: string }, ClientInvoiceBookingRepairResult>(
+      functions,
+      'rollbackClientInvoiceBookingRepair',
       { timeout: 300000 },
     );
     return (await callable({ manifestId, confirmation })).data;
