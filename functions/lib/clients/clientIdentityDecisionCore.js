@@ -1,17 +1,31 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildExcludedOrganizationPairs = exports.normalizeDecisionPartitions = void 0;
+exports.buildExcludedOrganizationPairs = exports.normalizeDecisionPartitions = exports.decodeDecisionPartitions = exports.encodeDecisionPartitions = void 0;
 const clean = (value) => String(value ?? '').trim();
 const unique = (values) => Array.from(new Set(values.map(clean).filter(Boolean))).sort((left, right) => left.localeCompare(right));
 const pairKey = (left, right) => [left, right].sort().join('|');
-const normalizeDecisionPartitions = (clientIds, rawPartitions) => {
-    const expected = unique(clientIds);
+const encodeDecisionPartitions = (partitions) => partitions
+    .map(clientIds => ({ clientIds: unique(clientIds) }))
+    .filter(partition => partition.clientIds.length > 0);
+exports.encodeDecisionPartitions = encodeDecisionPartitions;
+const decodeDecisionPartitions = (rawPartitions) => {
     if (!Array.isArray(rawPartitions))
         return [];
-    const partitions = rawPartitions
-        .filter(Array.isArray)
-        .map(partition => unique(partition))
-        .filter(partition => partition.length > 0)
+    return rawPartitions
+        .map(partition => {
+        if (Array.isArray(partition))
+            return unique(partition);
+        if (!partition || typeof partition !== 'object')
+            return [];
+        const clientIds = partition.clientIds;
+        return Array.isArray(clientIds) ? unique(clientIds) : [];
+    })
+        .filter(partition => partition.length > 0);
+};
+exports.decodeDecisionPartitions = decodeDecisionPartitions;
+const normalizeDecisionPartitions = (clientIds, rawPartitions) => {
+    const expected = unique(clientIds);
+    const partitions = (0, exports.decodeDecisionPartitions)(rawPartitions)
         .sort((left, right) => left.join('|').localeCompare(right.join('|')));
     const assigned = partitions.flat();
     if (partitions.length < 2 || assigned.length !== expected.length)

@@ -18,6 +18,8 @@ import {
   buildExcludedOrganizationPairs,
   ClientIdentityDecisionRecord,
   ClientIdentityDecisionType,
+  decodeDecisionPartitions,
+  encodeDecisionPartitions,
   normalizeDecisionPartitions,
 } from './clientIdentityDecisionCore';
 import {
@@ -150,9 +152,7 @@ const decisionFromDocument = (document: admin.firestore.QueryDocumentSnapshot): 
       : 'DEFERRED',
     candidateLabel: text(data.candidateLabel),
     clientIds: uniqueStrings(Array.isArray(data.clientIds) ? data.clientIds : []),
-    partitions: Array.isArray(data.partitions)
-      ? data.partitions.filter(Array.isArray).map((partition: unknown[]) => uniqueStrings(partition))
-      : [],
+    partitions: decodeDecisionPartitions(data.partitions),
     reason: text(data.reason),
     notes: text(data.notes),
     revisitAt: text(data.revisitAt),
@@ -497,8 +497,8 @@ export const saveClientIdentityDecision = functions
     if (!expectedFingerprint || reason.length < 5) {
       throw new functions.https.HttpsError('invalid-argument', 'A current candidate fingerprint and a review reason are required.');
     }
-    const baseline = (await loadAuditContext(false)).audit;
-    const candidate = [...baseline.organizationCandidates, ...baseline.agentCandidates]
+    const currentAudit = (await loadAuditContext()).audit;
+    const candidate = [...currentAudit.organizationCandidates, ...currentAudit.agentCandidates]
       .find(item => item.id === candidateId);
     if (!candidate) {
       throw new functions.https.HttpsError('not-found', 'This candidate changed or no longer exists. Refresh the audit.');
@@ -539,14 +539,17 @@ export const saveClientIdentityDecision = functions
       updatedByName: actor.displayName,
       updatedAt: changedAt,
     };
-    await decisionRef.set(record, { merge: false });
+    await decisionRef.set({
+      ...record,
+      partitions: encodeDecisionPartitions(partitions),
+    }, { merge: false });
     await persistAuditEvent({
       action: 'CLIENT_IDENTITY_DECISION_SAVED',
       candidateId,
       candidateFingerprint: candidate.fingerprint,
       decision,
       clientIds: candidate.clientIds,
-      partitions,
+      partitions: encodeDecisionPartitions(partitions),
       reason,
       actorId: actor.uid,
       actorName: actor.displayName,

@@ -25,13 +25,25 @@ const clean = (value: unknown) => String(value ?? '').trim();
 const unique = (values: unknown[]) => Array.from(new Set(values.map(clean).filter(Boolean))).sort((left, right) => left.localeCompare(right));
 const pairKey = (left: string, right: string) => [left, right].sort().join('|');
 
+export const encodeDecisionPartitions = (partitions: string[][]) => partitions
+  .map(clientIds => ({ clientIds: unique(clientIds) }))
+  .filter(partition => partition.clientIds.length > 0);
+
+export const decodeDecisionPartitions = (rawPartitions: unknown): string[][] => {
+  if (!Array.isArray(rawPartitions)) return [];
+  return rawPartitions
+    .map(partition => {
+      if (Array.isArray(partition)) return unique(partition);
+      if (!partition || typeof partition !== 'object') return [];
+      const clientIds = (partition as { clientIds?: unknown }).clientIds;
+      return Array.isArray(clientIds) ? unique(clientIds) : [];
+    })
+    .filter(partition => partition.length > 0);
+};
+
 export const normalizeDecisionPartitions = (clientIds: string[], rawPartitions: unknown): string[][] => {
   const expected = unique(clientIds);
-  if (!Array.isArray(rawPartitions)) return [];
-  const partitions = rawPartitions
-    .filter(Array.isArray)
-    .map(partition => unique(partition as unknown[]))
-    .filter(partition => partition.length > 0)
+  const partitions = decodeDecisionPartitions(rawPartitions)
     .sort((left, right) => left.join('|').localeCompare(right.join('|')));
   const assigned = partitions.flat();
   if (partitions.length < 2 || assigned.length !== expected.length) return [];

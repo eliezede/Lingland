@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildExcludedOrganizationPairs,
   ClientIdentityDecisionRecord,
+  decodeDecisionPartitions,
+  encodeDecisionPartitions,
   normalizeDecisionPartitions,
 } from './clientIdentityDecisionCore';
 
@@ -36,6 +38,14 @@ describe('client identity decision policy', () => {
   it('rejects incomplete or overlapping partitions', () => {
     expect(normalizeDecisionPartitions(['a', 'b', 'c'], [['a'], ['b']])).toEqual([]);
     expect(normalizeDecisionPartitions(['a', 'b', 'c'], [['a', 'b'], ['b', 'c']])).toEqual([]);
+  });
+
+  it('encodes split groups without Firestore-incompatible nested arrays', () => {
+    const encoded = encodeDecisionPartitions([['b', 'a'], ['c']]);
+
+    expect(encoded).toEqual([{ clientIds: ['a', 'b'] }, { clientIds: ['c'] }]);
+    expect(decodeDecisionPartitions(encoded)).toEqual([['a', 'b'], ['c']]);
+    expect(normalizeDecisionPartitions(['a', 'b', 'c'], encoded)).toEqual([['a', 'b'], ['c']]);
   });
 
   it('excludes every cross-partition pair for a split decision', () => {

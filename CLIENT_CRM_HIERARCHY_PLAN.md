@@ -530,5 +530,39 @@ These 68 organisation groups are now a finite reviewed queue. They must not be a
 - [x] Validate list rendering, setup-issue filtering, pagination, creation modal and dark mode in the authenticated browser.
 - [x] Deploy the Client CRM callables, current-scope audits and Airtable intake creation guards.
 - [ ] Confirm in production that a controlled new Airtable record appears only in `New intake`; do not run a broad Write Sync for this test.
-- [ ] Work the 68 baseline organisation groups through reviewed merge, distinct, split or defer decisions.
+- [x] Work the 68 baseline organisation groups through reviewed merge, distinct, split or defer decisions.
 - [ ] Re-run the current-scope hierarchy audit after each approved batch and record the blocker delta.
+
+### Baseline consolidation closure - 31 July 2026
+
+The finite current-CRM identity queue is closed. Every organisation candidate still visible after the reviewed merge batches has an explicit saved decision; there are no unreviewed candidates left in the current baseline. This closes identity consolidation for the data already present without allowing future Airtable intake to reopen the same queue.
+
+Final reviewed state:
+
+| Measure | Result |
+| --- | ---: |
+| Reversible merge manifests, cumulative | 50 |
+| Remaining candidate groups | 18 |
+| Explicitly deferred | 18 |
+| Explicitly not duplicates | 3 |
+| Explicit split decisions | 4 |
+| Candidates without a saved decision | 0 |
+| New-intake organisations at validation | 0 |
+
+The authenticated closing audit reported 691 current client records, 162 possible duplicate records, 1,707 jobs and 1,168 client invoices in identity scope. The separate integrity queue reported 2,763 jobs without a department, 2,523 without a requester, 1,881 invoice headers and 203 invoice lines requiring backfill, 78 blocked invoice relationships, 43 critical links and 16 warnings. These are the starting measures for hierarchy and finance reconciliation, not unfinished identity decisions.
+
+The 13 manifests completed in the final consolidation batch are:
+
+- `h7RriaiKKXjJ73vZnTd8`, `4R1wqPZIINVNxyMdr0VE`, `x9CKOFdMvhYlm4msyVKe`
+- `Pm72VUMR1ax49SsEqXOe`, `bmYqjpxCS4PopYVXZUzC`, `rtyum1H3pbQ7o9E9InTt`
+- `ySZ86TKpiywxn1M3AZPT`, `lZGD1ggv2HarX4aHzSaV`, `UzKyBCSVM2xS8BoVRAZZ`
+- `Bp6tFVnTTiZ5tJzfR33L`, `1v9ZdSIccbHHJggkO2Jw`, `Kbl5phpEcePWoFXyk4Gk`
+- `UXSUBHZp1KaHPAlcBp4n`
+
+All merge manifests preserve source snapshots, dependency ledgers, field winners and rollback metadata. The closing batch also hardened the workflow in three places:
+
+- malformed phone values and email addresses cannot be promoted into telephone fields;
+- split decisions are persisted in a Firestore-compatible structure, with backward-compatible reads;
+- a candidate produced by a prior split can be reviewed and split again without bypassing the current audited state.
+
+Identity closure does not mean hierarchy and finance reconciliation are complete. Jobs without canonical departments or requester agents, invoice headers and lines needing hierarchy backfill, and intentionally deferred high-risk organisations remain in separate controlled queues. Those queues must be worked from their saved decisions and manifests; they must not restart the completed baseline duplicate review.

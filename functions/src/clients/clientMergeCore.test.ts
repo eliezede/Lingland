@@ -77,6 +77,23 @@ describe('client merge preview', () => {
     });
   });
 
+  it('does not promote email addresses or malformed values into phone fields', () => {
+    const dirtyPhoneDocuments = documents.map(document => ({
+      ...document,
+      data: {
+        ...document.data,
+        phone: document.id === 'duplicate' ? 'requester@example.test' : undefined,
+        invoicePhone: document.id === 'duplicate' ? 'ext 22' : undefined,
+      },
+    }));
+    const preview = buildClientMergePreview(candidate, 'canonical', dirtyPhoneDocuments, dependencies);
+
+    expect(preview.canonicalPatch.phone).toBeUndefined();
+    expect(preview.canonicalPatch.invoicePhone).toBeUndefined();
+    expect(preview.fields.find(field => field.field === 'phone')?.selectedValue).toBeUndefined();
+    expect(preview.warnings).toContain('Invalid values were ignored for: Main phone, Invoice phone.');
+  });
+
   it('requires a second administrator for a material dependency footprint', () => {
     const materialDependencies = Array.from({ length: 100 }, (_, index) => ({
       collection: 'bookings',

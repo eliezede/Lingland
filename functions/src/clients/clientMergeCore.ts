@@ -79,6 +79,12 @@ const MERGE_FIELDS = [
 
 const text = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const isPresent = (value: unknown) => value !== undefined && value !== null && text(value) !== '';
+const isValidFieldValue = (field: string, value: unknown) => {
+  if (!isPresent(value)) return false;
+  if (field !== 'phone' && field !== 'invoicePhone') return true;
+  const phone = text(value);
+  return !phone.includes('@') && phone.replace(/\D/g, '').length >= 7;
+};
 const comparable = (value: unknown) => typeof value === 'string' ? text(value).toLowerCase() : JSON.stringify(value);
 const uniqueStrings = (values: unknown[]) => Array.from(new Set(values.flatMap(value => (
   Array.isArray(value) ? value : [value]
@@ -148,11 +154,15 @@ export const buildClientMergePreview = (
     .map(record => record.id);
   const canonicalPatch: Record<string, unknown> = {};
   const fieldSelections: Record<string, string> = {};
+  const ignoredInvalidFieldLabels = new Set<string>();
   const fields: ClientMergeFieldDecision[] = MERGE_FIELDS.map(([field, label]) => {
-    const values = candidate.clientIds
+    const rawValues = candidate.clientIds
       .map(clientId => ({ clientId, value: documentsById.get(clientId)?.data[field] }))
       .filter(item => isPresent(item.value));
-    const canonicalValue = canonical.data[field];
+    const values = rawValues.filter(item => isValidFieldValue(field, item.value));
+    if (values.length !== rawValues.length) ignoredInvalidFieldLabels.add(label);
+    const rawCanonicalValue = canonical.data[field];
+    const canonicalValue = isValidFieldValue(field, rawCanonicalValue) ? rawCanonicalValue : undefined;
     const requestedClientId = requestedFieldSelections[field];
     const requestedWinner = requestedClientId ? values.find(item => item.clientId === requestedClientId) : undefined;
     const selectsEmptyCanonical = requestedClientId === canonicalClientId && values.length === 0;
@@ -210,6 +220,9 @@ export const buildClientMergePreview = (
     : candidate.executionEligibility;
   const warnings = Array.from(new Set([
     ...candidate.conflicts.filter(conflict => !candidate.blockers.includes(conflict)),
+    ignoredInvalidFieldLabels.size > 0
+      ? `Invalid values were ignored for: ${Array.from(ignoredInvalidFieldLabels).join(', ')}.`
+      : '',
     fields.some(field => field.conflict) ? 'Some canonical fields have different non-empty values. Review every selected field winner.' : '',
     hierarchySeed.totals.sharedMailboxes > 0 ? 'Functional shared mailboxes will be preserved but not assigned to historical jobs automatically.' : '',
     hierarchySeed.totals.unresolvedContacts > 0 ? 'Contacts without a deterministic email remain in source snapshots and require manual classification.' : '',
