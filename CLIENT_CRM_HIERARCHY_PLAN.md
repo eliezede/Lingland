@@ -609,3 +609,21 @@ The previous interface exposed roughly 450 separate `Repair job` actions. The re
 - [x] Deploy the three invoice-job repair callables and validate desktop, mobile and dark-mode behaviour in the authenticated browser. The selector exposes only the current invoice client and evidence-backed candidates; no repair was applied during validation.
 - [ ] Work the 78 blockers from the refreshed SAGE-backed evidence until the finance dry run reports zero blockers.
 - [ ] Apply the final header/line reconciliation only after the zero-blocker fingerprint is reviewed and explicitly confirmed.
+
+### Guest requester hierarchy resolution - 1 August 2026
+
+The public Request form now treats an email match as recognition evidence, not account authentication. An exact known email can recover only its permitted organisation and department choices; the request still enters as `PENDING_VERIFICATION` until staff or a future verified account flow confirms the requester.
+
+- [x] Resolve an exact `clientAgent` email through an anonymous authenticated session with per-session rate limiting.
+- [x] Bind the suggestion to a short-lived server token containing the anonymous UID, email hash, canonical client scope and permitted department IDs.
+- [x] Return only organisation and department choices. Never expose the stored agent name, phone, billing route, SAGE reference or other private CRM fields through public lookup.
+- [x] Require the guest to select the organisation and then an existing department, organisation-wide scope, or `Department not listed`.
+- [x] Validate the token, email, membership, canonical client and department again on submission so client-side values cannot expand access.
+- [x] Store a genuinely new department as a pending `clientDepartmentRequests` proposal linked to the job; never create a canonical department directly from public input.
+- [x] Let an administrator approve or reject the proposal from Booking Detail. Approval reuses an exact active department or creates one canonical department, scopes the job and adds the department to the requester's membership for future requests.
+- [x] Keep unknown or ambiguous emails on the manual organisation path. If the organisation itself is unresolved, mark the department `PENDING_CLIENT_REVIEW` instead of creating an incomplete hierarchy record.
+- [x] Preserve shared mailboxes as non-person requesters and keep all communication suppressed under the current platform policy.
+- [x] Cover token ownership, expiry, client scope, department scope and reviewed reuse of an existing hidden department with automated tests; the full suite passes 269 tests across 44 files.
+- [x] Deploy the requester lookup, booking submission and department-resolution callables.
+- [x] Complete desktop and 390 x 844 mobile browser QA without submitting a production booking. The recognised, unknown and new-department states rendered without horizontal overflow or runtime warnings; submit remained disabled while lookup was pending.
+- [x] Deploy the verified frontend bundle to Hosting.

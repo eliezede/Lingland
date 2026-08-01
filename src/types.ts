@@ -185,8 +185,12 @@ export interface Booking extends SourceTrackingFields {
   clientId: string;
   clientDepartmentId?: string;
   clientDepartmentSource?: 'CLIENT_PORTAL' | 'PUBLIC_INTAKE' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'CLIENT_IDENTITY_MIGRATION';
+  clientDepartmentRequestId?: string;
+  proposedDepartmentName?: string;
+  departmentIdentityStatus?: 'RESOLVED' | 'PENDING_APPROVAL' | 'PENDING_CLIENT_REVIEW' | 'ORGANISATION_WIDE' | 'REJECTED';
   requestedByAgentId?: string;
   requestedByAgentSource?: 'CLIENT_PORTAL' | 'PUBLIC_INTAKE' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'CLIENT_IDENTITY_MIGRATION';
+  requesterContextStatus?: 'MATCHED_GUEST' | 'SELF_ASSERTED';
   clientIdentityStatus?: 'RESOLVED' | 'PROVISIONAL' | 'AMBIGUOUS';
   clientIdentityCandidateIds?: string[];
   requesterIdentityStatus?: 'RESOLVED' | 'PENDING_VERIFICATION' | 'AMBIGUOUS';

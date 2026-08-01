@@ -253,6 +253,40 @@ export const AdminBookingDetails = () => {
     }
   };
 
+  const handleDepartmentRequestDecision = async (action: 'APPROVE' | 'REJECT') => {
+    if (!booking?.clientDepartmentRequestId) return;
+    const proposedName = booking.proposedDepartmentName || booking.clientSnapshot?.departmentName || 'the proposed department';
+    const approved = await confirm({
+      title: action === 'APPROVE' ? 'Approve Department' : 'Reject Department',
+      message: action === 'APPROVE'
+        ? `Approve ${proposedName} and link it to this job? An existing department with the same name will be reused.`
+        : `Reject ${proposedName}? The job will remain linked at organisation level.`,
+      confirmLabel: action === 'APPROVE' ? 'Approve and Link' : 'Reject Proposal',
+      variant: action === 'APPROVE' ? 'primary' : 'danger',
+    });
+    if (!approved) return;
+    setIsActionLoading(true);
+    try {
+      const result = await BookingService.resolveClientDepartmentRequest({
+        requestId: booking.clientDepartmentRequestId,
+        action,
+        reason: action === 'REJECT' ? 'Rejected during booking review' : 'Approved during booking review',
+      });
+      showToast(
+        action === 'APPROVE'
+          ? `Department ${result.departmentName || proposedName} linked to the job`
+          : 'Department proposal rejected',
+        'success',
+      );
+      await loadBooking();
+      await loadOperationalArtifacts();
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to review the department proposal', 'error');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleVerifyTimesheet = async () => {
     if (!booking || !id) return;
     setIsActionLoading(true);
@@ -697,9 +731,35 @@ export const AdminBookingDetails = () => {
                   <p className="truncate text-xs text-slate-500">{contactName}</p>
                 </div>
                 <InfoItem icon={CreditCard} label="PO / cost code" value={booking.costCode || 'N/A'} />
+                <InfoItem icon={Building2} label="Department" value={booking.clientSnapshot?.departmentName || booking.proposedDepartmentName || 'Organisation-wide'} />
                 <InfoItem icon={Mail} label="Email" value={contactEmail || 'N/A'} />
                 <InfoItem icon={Phone} label="Phone" value={contactPhone || 'N/A'} />
               </div>
+              {booking.departmentIdentityStatus === 'PENDING_APPROVAL' && booking.clientDepartmentRequestId && (
+                <div className="mt-3 flex flex-col gap-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">New department review</p>
+                    <p className="mt-1 truncate text-sm font-semibold">{booking.proposedDepartmentName || booking.clientSnapshot?.departmentName}</p>
+                    <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Submitted with this public request. Approving reuses an existing exact match or creates one canonical department.</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button size="sm" variant="secondary" icon={XCircle} disabled={isActionLoading} onClick={() => void handleDepartmentRequestDecision('REJECT')}>Reject</Button>
+                    <Button size="sm" icon={CheckCircle2} isLoading={isActionLoading} onClick={() => void handleDepartmentRequestDecision('APPROVE')}>Approve and link</Button>
+                  </div>
+                </div>
+              )}
+              {booking.departmentIdentityStatus === 'PENDING_CLIENT_REVIEW' && booking.proposedDepartmentName && (
+                <div className="mt-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">Client identity review required</p>
+                  <p className="mt-1 text-sm font-semibold">{booking.proposedDepartmentName}</p>
+                  <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Resolve the client in Client CRM first. The department proposal can then be linked without creating an incomplete client record.</p>
+                </div>
+              )}
+              {booking.departmentIdentityStatus === 'REJECTED' && booking.proposedDepartmentName && (
+                <div className="mt-3 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                  Department proposal <strong>{booking.proposedDepartmentName}</strong> was rejected; this job remains organisation-wide.
+                </div>
+              )}
             </Section>
 
             <Section title={isTranslationJob ? 'Service' : 'Service and schedule'} icon={Globe2}>

@@ -13,6 +13,35 @@ import { PublicSessionService } from './publicSessionService';
 const COLLECTION_NAME = 'bookings';
 const ASSIGNMENTS_COLLECTION = 'assignments';
 
+export interface GuestRequesterDepartmentOption {
+  id: string;
+  name: string;
+  locationName: string;
+}
+
+export interface GuestRequesterOrganizationOption {
+  id: string;
+  name: string;
+  requiresReview: boolean;
+  departments: GuestRequesterDepartmentOption[];
+}
+
+export interface GuestRequesterContextResult {
+  status: 'MATCHED' | 'NO_MATCH' | 'AMBIGUOUS';
+  contextToken?: string;
+  expiresAt?: string;
+  organizations: GuestRequesterOrganizationOption[];
+}
+
+export interface ClientDepartmentRequestResolution {
+  success: true;
+  requestId: string;
+  bookingId: string;
+  status: 'APPROVED' | 'REJECTED';
+  departmentId: string | null;
+  departmentName: string | null;
+}
+
 export const BookingService = {
   getAll: async (): Promise<Booking[]> => {
     try {
@@ -83,6 +112,23 @@ export const BookingService = {
     const result = response.data as { success: boolean; booking: Booking };
     if (!result.success || !result.booking?.id) throw new Error('Booking request was not persisted.');
     return result.booking;
+  },
+
+  lookupGuestRequesterContext: async (email: string): Promise<GuestRequesterContextResult> => {
+    await PublicSessionService.ensure();
+    const lookup = httpsCallable<{ email: string }, GuestRequesterContextResult>(functions, 'lookupPublicRequesterContext');
+    const response = await lookup({ email });
+    return response.data;
+  },
+
+  resolveClientDepartmentRequest: async (input: {
+    requestId: string;
+    action: 'APPROVE' | 'REJECT';
+    reason?: string;
+  }): Promise<ClientDepartmentRequestResolution> => {
+    const resolveRequest = httpsCallable<typeof input, ClientDepartmentRequestResolution>(functions, 'adminResolveClientDepartmentRequest');
+    const response = await resolveRequest(input);
+    return response.data;
   },
 
   updateStatus: async (id: string, status: BookingStatus): Promise<void> => {

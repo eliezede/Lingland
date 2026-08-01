@@ -33,15 +33,17 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitClientBookingRequest = exports.submitPublicBookingRequest = exports.submitPublicInterpreterApplication = void 0;
+exports.submitClientBookingRequest = exports.adminResolveClientDepartmentRequest = exports.submitPublicBookingRequest = exports.submitPublicInterpreterApplication = exports.lookupPublicRequesterContext = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const bookingEmail_1 = require("../mail/bookingEmail");
 const crypto_1 = require("crypto");
 const clientPortalAccess_1 = require("../clients/clientPortalAccess");
+const publicRequesterContextCore_1 = require("./publicRequesterContextCore");
 const db = admin.firestore();
 const cleanString = (value, max = 5000) => String(value ?? '').trim().slice(0, max);
 const cleanEmail = (value) => cleanString(value, 320).toLowerCase();
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 const normalizeOrganizationName = (value) => cleanString(value, 250)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -53,6 +55,9 @@ const normalizeOrganizationName = (value) => cleanString(value, 250)
 const stableId = (prefix, value) => `${prefix}_${(0, crypto_1.createHash)('sha1').update(value).digest('hex').slice(0, 20)}`;
 const placeholderOrganizations = new Set(['client', 'airtable client', 'unknown client', 'guest org', 'home', 'n a']);
 const sharedMailboxPrefixes = /^(accounts?|admin|appointments?|bookings?|enquiries?|finance|info|invoices?|office|payments?|reception|referrals?|team)([._+-]|$)/i;
+const publicRequesterContextTtlMs = 20 * 60 * 1000;
+const blockedMembershipStatuses = new Set(['ARCHIVED', 'BLOCKED', 'REVOKED']);
+const blockedClientStatuses = new Set(['ARCHIVED', 'BLOCKED', 'INACTIVE', 'SUSPENDED']);
 const canonicalClientDocument = async (document) => {
     let current = document;
     for (let depth = 0; depth < 4; depth += 1) {
@@ -187,6 +192,233 @@ const enforceRateLimit = async (kind, context, email) => {
         }, { merge: true });
     });
 };
+const enforceRequesterLookupRateLimit = async (context, email) => {
+    const uid = context.auth?.uid || '';
+    const ref = db.collection('publicSubmissionLimits').doc((0, crypto_1.createHash)('sha256').update(`REQUESTER_LOOKUP:${uid}`).digest('hex'));
+    const now = Date.now();
+    await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        const data = snapshot.data() || {};
+        const windowStartedAt = Number(data.windowStartedAt || 0);
+        const lastSubmittedAt = Number(data.lastSubmittedAt || 0);
+        const insideWindow = windowStartedAt > 0 && now - windowStartedAt < 15 * 60 * 1000;
+        const lookupCount = insideWindow ? Number(data.lookupCount || 0) : 0;
+        if (lastSubmittedAt && now - lastSubmittedAt < 1000) {
+            throw new functions.https.HttpsError('resource-exhausted', 'Wait a moment before checking another email.');
+        }
+        if (lookupCount >= 20) {
+            throw new functions.https.HttpsError('resource-exhausted', 'Too many requester checks. Try again later.');
+        }
+        transaction.set(ref, {
+            kind: 'REQUESTER_LOOKUP',
+            authUid: uid,
+            emailHash: (0, crypto_1.createHash)('sha256').update(email).digest('hex'),
+            windowStartedAt: insideWindow ? windowStartedAt : now,
+            lookupCount: lookupCount + 1,
+            lastSubmittedAt: now,
+            expiresAt: admin.firestore.Timestamp.fromMillis(now + 24 * 60 * 60 * 1000),
+        }, { merge: true });
+    });
+};
+const stringList = (value) => Array.isArray(value)
+    ? value.map(item => cleanString(item, 160)).filter(Boolean)
+    : [];
+exports.lookupPublicRequesterContext = functions.runWith({
+    timeoutSeconds: 60,
+    memory: '256MB',
+}).https.onCall(async (data, context) => {
+    requireAnonymousOrUser(context);
+    const email = cleanEmail(data?.email);
+    if (!email || !isValidEmail(email)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Enter one valid requester email.');
+    }
+    await enforceRequesterLookupRateLimit(context, email);
+    const agentMatches = await db.collection('clientAgents').where('normalizedEmail', '==', email).limit(3).get();
+    if (agentMatches.empty)
+        return { status: 'NO_MATCH', organizations: [] };
+    if (agentMatches.size !== 1)
+        return { status: 'AMBIGUOUS', organizations: [] };
+    const agentDocument = agentMatches.docs[0];
+    const agentData = agentDocument.data();
+    const agentStatus = cleanString(agentData.status, 40).toUpperCase();
+    if (blockedMembershipStatuses.has(agentStatus)) {
+        return { status: 'NO_MATCH', organizations: [] };
+    }
+    const memberships = await db.collection('clientMemberships')
+        .where('agentId', '==', agentDocument.id)
+        .limit(30)
+        .get();
+    const candidates = new Map();
+    for (const membershipDocument of memberships.docs) {
+        const membershipData = membershipDocument.data();
+        const membershipStatus = cleanString(membershipData.status || 'INACTIVE', 40).toUpperCase();
+        if (blockedMembershipStatuses.has(membershipStatus))
+            continue;
+        const requestedClientId = cleanString(membershipData.clientId, 160);
+        if (!requestedClientId)
+            continue;
+        const requestedClient = await db.collection('clients').doc(requestedClientId).get();
+        if (!requestedClient.exists)
+            continue;
+        const client = await canonicalClientDocument(requestedClient);
+        const clientData = client.data() || {};
+        if (blockedClientStatuses.has(cleanString(clientData.status, 40).toUpperCase())
+            || blockedClientStatuses.has(cleanString(clientData.recordState, 40).toUpperCase()))
+            continue;
+        const departmentIds = stringList(membershipData.departmentIds);
+        const accessLevel = cleanString(membershipData.accessLevel || 'AGENT', 40).toUpperCase();
+        const current = candidates.get(client.id);
+        if (!current) {
+            candidates.set(client.id, {
+                client,
+                membershipId: membershipDocument.id,
+                membershipStatus,
+                unrestricted: accessLevel === 'CLIENT_MASTER',
+                requestedDepartmentIds: new Set(departmentIds),
+            });
+            continue;
+        }
+        departmentIds.forEach(departmentId => current.requestedDepartmentIds.add(departmentId));
+        current.unrestricted = current.unrestricted || accessLevel === 'CLIENT_MASTER';
+        if (current.membershipStatus !== 'ACTIVE' && membershipStatus === 'ACTIVE') {
+            current.membershipId = membershipDocument.id;
+            current.membershipStatus = membershipStatus;
+        }
+    }
+    const organizations = (await Promise.all(Array.from(candidates.entries()).map(async ([clientId, candidate]) => {
+        const departments = await db.collection('clientDepartments').where('clientId', '==', clientId).get();
+        const activeDepartments = departments.docs
+            .filter(document => cleanString(document.data().status || 'ACTIVE', 40).toUpperCase() === 'ACTIVE')
+            .map(document => ({
+            id: document.id,
+            name: cleanString(document.data().name, 160),
+            locationName: cleanString(document.data().locationName, 160),
+        }))
+            .filter(department => department.name)
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const allowedDepartments = activeDepartments.filter(department => (candidate.unrestricted || candidate.requestedDepartmentIds.has(department.id)));
+        return {
+            id: clientId,
+            name: cleanString(candidate.client.data()?.companyName, 250),
+            membershipId: candidate.membershipId,
+            membershipStatus: candidate.membershipStatus,
+            requiresReview: candidate.membershipStatus !== 'ACTIVE' || agentStatus !== 'ACTIVE',
+            departments: allowedDepartments,
+        };
+    }))).filter(organization => organization.name)
+        .sort((left, right) => left.name.localeCompare(right.name));
+    if (organizations.length === 0)
+        return { status: 'NO_MATCH', organizations: [] };
+    const now = Date.now();
+    const tokenRef = db.collection('publicRequesterContexts').doc();
+    const tokenData = {
+        version: 1,
+        authUid: context.auth.uid,
+        emailHash: (0, crypto_1.createHash)('sha256').update(email).digest('hex'),
+        agentId: agentDocument.id,
+        agentType: cleanString(agentData.agentType || 'PERSON', 40).toUpperCase(),
+        expiresAtMs: now + publicRequesterContextTtlMs,
+        clients: organizations.map(organization => ({
+            clientId: organization.id,
+            membershipId: organization.membershipId,
+            membershipStatus: organization.membershipStatus,
+            allowedDepartmentIds: organization.departments.map(department => department.id),
+        })),
+    };
+    await tokenRef.set({
+        ...tokenData,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: admin.firestore.Timestamp.fromMillis(tokenData.expiresAtMs),
+    });
+    return {
+        status: 'MATCHED',
+        contextToken: tokenRef.id,
+        expiresAt: new Date(tokenData.expiresAtMs).toISOString(),
+        organizations: organizations.map(({ membershipId: _membershipId, membershipStatus: _membershipStatus, ...organization }) => organization),
+    };
+});
+const resolveSubmittedRequesterContext = async (rawContext, context, email) => {
+    const requesterContext = rawContext && typeof rawContext === 'object'
+        ? rawContext
+        : {};
+    const tokenId = cleanString(requesterContext.contextToken, 160);
+    if (!tokenId)
+        return null;
+    const tokenDocument = await db.collection('publicRequesterContexts').doc(tokenId).get();
+    if (!tokenDocument.exists) {
+        throw new functions.https.HttpsError('failed-precondition', 'Check the requester email again before submitting.');
+    }
+    const tokenData = tokenDocument.data();
+    const selectedClientId = cleanString(requesterContext.clientId, 160);
+    const selectedDepartmentId = cleanString(requesterContext.departmentId, 160);
+    const proposedDepartmentName = cleanString(requesterContext.proposedDepartmentName, 160);
+    const validation = (0, publicRequesterContextCore_1.validatePublicRequesterSelection)(tokenData, {
+        authUid: context.auth?.uid || '',
+        emailHash: (0, crypto_1.createHash)('sha256').update(email).digest('hex'),
+        clientId: selectedClientId,
+        departmentId: selectedDepartmentId,
+        proposedDepartmentName,
+        nowMs: Date.now(),
+    });
+    if (!validation.ok) {
+        throw new functions.https.HttpsError('failed-precondition', validation.message);
+    }
+    const clientDocument = await db.collection('clients').doc(validation.client.clientId).get();
+    if (!clientDocument.exists)
+        throw new functions.https.HttpsError('failed-precondition', 'The selected organisation is no longer available.');
+    const canonicalClient = await canonicalClientDocument(clientDocument);
+    if (canonicalClient.id !== validation.client.clientId) {
+        throw new functions.https.HttpsError('failed-precondition', 'The organisation changed. Check the requester email again.');
+    }
+    const clientData = canonicalClient.data() || {};
+    if (blockedClientStatuses.has(cleanString(clientData.status, 40).toUpperCase())
+        || blockedClientStatuses.has(cleanString(clientData.recordState, 40).toUpperCase()))
+        throw new functions.https.HttpsError('failed-precondition', 'The selected organisation cannot receive public requests.');
+    const membershipDocument = await db.collection('clientMemberships').doc(validation.client.membershipId).get();
+    const membershipData = membershipDocument.data() || {};
+    const membershipClientId = cleanString(membershipData.clientId, 160);
+    const membershipClientDocument = membershipClientId
+        ? await db.collection('clients').doc(membershipClientId).get()
+        : null;
+    const canonicalMembershipClient = membershipClientDocument?.exists
+        ? await canonicalClientDocument(membershipClientDocument)
+        : null;
+    if (!membershipDocument.exists
+        || cleanString(membershipData.agentId, 160) !== tokenData.agentId
+        || canonicalMembershipClient?.id !== validation.client.clientId
+        || blockedMembershipStatuses.has(cleanString(membershipData.status, 40).toUpperCase()))
+        throw new functions.https.HttpsError('failed-precondition', 'The requester membership must be reviewed before this request can be linked.');
+    let departmentName = '';
+    if (validation.departmentId) {
+        const department = await db.collection('clientDepartments').doc(validation.departmentId).get();
+        if (!department.exists
+            || cleanString(department.data()?.clientId, 160) !== validation.client.clientId
+            || cleanString(department.data()?.status || 'ACTIVE', 40).toUpperCase() !== 'ACTIVE')
+            throw new functions.https.HttpsError('failed-precondition', 'The selected department is no longer available.');
+        departmentName = cleanString(department.data()?.name, 160);
+    }
+    if (validation.proposedDepartmentName) {
+        departmentName = validation.proposedDepartmentName;
+    }
+    const agentDocument = await db.collection('clientAgents').doc(tokenData.agentId).get();
+    const agentData = agentDocument.data() || {};
+    if (!agentDocument.exists || blockedMembershipStatuses.has(cleanString(agentData.status, 40).toUpperCase())) {
+        throw new functions.https.HttpsError('failed-precondition', 'The requester identity is no longer available.');
+    }
+    return {
+        tokenRef: tokenDocument.ref,
+        clientId: canonicalClient.id,
+        clientName: cleanString(clientData.companyName, 250),
+        clientDepartmentId: validation.departmentId,
+        departmentName,
+        proposedDepartmentName: validation.proposedDepartmentName,
+        membershipId: validation.client.membershipId,
+        membershipStatus: cleanString(membershipData.status || 'INACTIVE', 40).toUpperCase(),
+        identityAgentId: tokenData.agentId,
+        requesterAgentId: tokenData.agentType === 'PERSON' ? tokenData.agentId : '',
+        agentType: tokenData.agentType,
+    };
+};
 const notifyAdmins = async (payload) => {
     const admins = await db.collection('users').where('role', 'in', ['ADMIN', 'SUPER_ADMIN']).get();
     if (admins.empty)
@@ -317,42 +549,63 @@ exports.submitPublicBookingRequest = functions.runWith({
     const email = cleanEmail(guest.email);
     const contactName = cleanString(guest.name, 200);
     const languageTo = bookingInput.languageTo;
-    if (!email || !email.includes('@') || !contactName || !languageTo) {
+    if (!email || !isValidEmail(email) || !contactName || !languageTo) {
         throw new functions.https.HttpsError('invalid-argument', 'Contact name, email and target language are required.');
     }
     if (!bookingInput.gdprConsent || !bookingInput.agreedToTerms) {
         throw new functions.https.HttpsError('failed-precondition', 'Consent and terms acceptance are required.');
     }
     await enforceRateLimit('BOOKING_REQUEST', context, email);
-    const organizationName = cleanString(guest.organisation, 250);
-    const organization = await resolvePublicOrganization(organizationName);
+    const requesterContext = await resolveSubmittedRequesterContext(raw.requesterContext, context, email);
+    const organizationName = requesterContext?.clientName || cleanString(guest.organisation, 250);
+    const organization = requesterContext ? {
+        clientId: requesterContext.clientId,
+        clientName: requesterContext.clientName,
+        status: 'RESOLVED',
+        candidateClientIds: [requesterContext.clientId],
+        createPatch: null,
+    } : await resolvePublicOrganization(organizationName);
     const clientId = organization.clientId;
     const billingEmail = cleanEmail(guest.billingEmail);
-    if (organization.createPatch && billingEmail && billingEmail.includes('@')) {
+    if (organization.createPatch && billingEmail && isValidEmail(billingEmail)) {
         organization.createPatch.data.invoiceEmail = billingEmail;
     }
-    const agentMatches = await db.collection('clientAgents').where('normalizedEmail', '==', email).limit(2).get();
-    const agentMatchStatus = agentMatches.size > 1 ? 'AMBIGUOUS' : agentMatches.empty ? 'PROVISIONAL' : 'MATCHED';
-    const existingAgent = agentMatches.size === 1 ? agentMatches.docs[0] : null;
-    const agentId = agentMatchStatus === 'AMBIGUOUS'
+    const agentMatches = requesterContext
+        ? null
+        : await db.collection('clientAgents').where('normalizedEmail', '==', email).limit(2).get();
+    const agentMatchStatus = requesterContext
+        ? 'MATCHED'
+        : agentMatches && agentMatches.size > 1
+            ? 'AMBIGUOUS'
+            : agentMatches?.empty
+                ? 'PROVISIONAL'
+                : 'MATCHED';
+    const existingAgent = requesterContext?.identityAgentId
+        ? await db.collection('clientAgents').doc(requesterContext.identityAgentId).get()
+        : agentMatches?.size === 1 ? agentMatches.docs[0] : null;
+    const agentId = requesterContext?.identityAgentId || (agentMatchStatus === 'AMBIGUOUS'
         ? ''
-        : existingAgent?.id || stableId('client_agent', email);
+        : existingAgent?.id || stableId('client_agent', email));
+    const bookingRequesterAgentId = requesterContext ? requesterContext.requesterAgentId : agentId;
     const agentData = existingAgent?.data() || {};
     const mailboxPrefix = email.split('@')[0] || '';
-    const agentType = cleanString(agentData.agentType, 40).toUpperCase()
+    const agentType = requesterContext?.agentType || cleanString(agentData.agentType, 40).toUpperCase()
         || (sharedMailboxPrefixes.test(mailboxPrefix) ? 'SHARED_MAILBOX' : 'PERSON');
-    const membershipId = clientId && agentId ? stableId('client_membership', `${clientId}|${agentId}`) : '';
+    const membershipId = requesterContext?.membershipId
+        || (clientId && agentId ? stableId('client_membership', `${clientId}|${agentId}`) : '');
     const membershipRef = membershipId ? db.collection('clientMemberships').doc(membershipId) : null;
     const membershipDocument = membershipRef ? await membershipRef.get() : null;
     const membershipData = membershipDocument?.data() || {};
-    const agentIdentityStatus = agentMatchStatus === 'AMBIGUOUS'
-        ? 'AMBIGUOUS'
-        : cleanString(membershipData.status, 40).toUpperCase() === 'ACTIVE'
-            ? 'RESOLVED'
-            : 'PENDING_VERIFICATION';
+    const agentIdentityStatus = requesterContext
+        ? 'PENDING_VERIFICATION'
+        : agentMatchStatus === 'AMBIGUOUS'
+            ? 'AMBIGUOUS'
+            : cleanString(membershipData.status, 40).toUpperCase() === 'ACTIVE'
+                ? 'RESOLVED'
+                : 'PENDING_VERIFICATION';
     const contactPhone = cleanString(guest.phone, 80);
     const requesterRoles = billingEmail && billingEmail === email ? ['REQUESTER', 'FINANCE'] : ['REQUESTER'];
-    const separateFinanceEmail = billingEmail && billingEmail.includes('@') && billingEmail !== email ? billingEmail : '';
+    const separateFinanceEmail = billingEmail && isValidEmail(billingEmail) && billingEmail !== email ? billingEmail : '';
     const financeAgentMatches = separateFinanceEmail
         ? await db.collection('clientAgents').where('normalizedEmail', '==', separateFinanceEmail).limit(2).get()
         : null;
@@ -379,6 +632,13 @@ exports.submitPublicBookingRequest = functions.runWith({
     const numbering = await allocateJobNumber(languageTo);
     const bookingRef = db.collection('bookings').doc();
     const isTranslation = bookingInput.serviceType.toLowerCase() === 'translation';
+    const clientDepartmentId = requesterContext?.clientDepartmentId || '';
+    const proposedDepartmentName = requesterContext?.proposedDepartmentName
+        || (!requesterContext ? cleanString(guest.department, 160) : '');
+    const departmentName = requesterContext?.departmentName || proposedDepartmentName;
+    const departmentRequestRef = proposedDepartmentName && clientId
+        ? db.collection('clientDepartmentRequests').doc(`public_${bookingRef.id}`)
+        : null;
     const booking = {
         ...bookingInput,
         id: bookingRef.id,
@@ -386,18 +646,33 @@ exports.submitPublicBookingRequest = functions.runWith({
         clientName: organization.clientName,
         clientIdentityStatus: organization.status,
         clientIdentityCandidateIds: organization.candidateClientIds,
-        requestedByAgentId: agentId,
-        requestedByAgentSource: agentId ? 'PUBLIC_INTAKE' : '',
+        clientDepartmentId: clientDepartmentId || null,
+        clientDepartmentSource: clientDepartmentId ? 'PUBLIC_INTAKE' : null,
+        clientDepartmentRequestId: departmentRequestRef?.id || null,
+        proposedDepartmentName: proposedDepartmentName || null,
+        departmentIdentityStatus: clientDepartmentId
+            ? 'RESOLVED'
+            : proposedDepartmentName
+                ? departmentRequestRef ? 'PENDING_APPROVAL' : 'PENDING_CLIENT_REVIEW'
+                : 'ORGANISATION_WIDE',
+        requestedByAgentId: bookingRequesterAgentId || null,
+        requestedByAgentSource: bookingRequesterAgentId ? 'PUBLIC_INTAKE' : null,
         requesterIdentityStatus: agentIdentityStatus,
         billingContactAgentId: financeAgentId || (billingEmail === email ? agentId : ''),
         financeIdentityStatus,
+        requesterContextStatus: requesterContext ? 'MATCHED_GUEST' : 'SELF_ASSERTED',
         clientSnapshot: {
-            organizationName,
-            departmentName: '',
+            organizationName: organization.clientName,
+            departmentName,
             requesterName: contactName,
             requesterEmail: email,
         },
-        guestContact: { ...guest, email },
+        guestContact: {
+            ...guest,
+            email,
+            organisation: organization.clientName,
+            department: departmentName,
+        },
         bookingRef: numbering.base,
         displayRef: numbering.display,
         jobNumber: numbering.base,
@@ -415,6 +690,30 @@ exports.submitPublicBookingRequest = functions.runWith({
     const intakeBatch = db.batch();
     if (organization.createPatch) {
         intakeBatch.set(organization.createPatch.ref, organization.createPatch.data, { merge: false });
+    }
+    if (departmentRequestRef) {
+        intakeBatch.set(departmentRequestRef, {
+            id: departmentRequestRef.id,
+            bookingId: bookingRef.id,
+            clientId,
+            requestedName: proposedDepartmentName,
+            normalizedName: (0, publicRequesterContextCore_1.normalizePublicDepartmentName)(proposedDepartmentName),
+            requestedByAgentId: bookingRequesterAgentId || agentId || null,
+            requesterIdentityAgentId: agentId || null,
+            requesterMembershipId: membershipId || null,
+            requesterEmailHash: (0, crypto_1.createHash)('sha256').update(email).digest('hex'),
+            status: 'PENDING',
+            sourceSystem: 'PUBLIC_INTAKE',
+            organizationId: 'lingland-main',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }
+    if (requesterContext?.tokenRef) {
+        intakeBatch.set(requesterContext.tokenRef, {
+            lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastUsedByBookingId: bookingRef.id,
+        }, { merge: true });
     }
     if (agentId) {
         const agentRef = db.collection('clientAgents').doc(agentId);
@@ -495,8 +794,12 @@ exports.submitPublicBookingRequest = functions.runWith({
             publicRequest: true,
             clientId: clientId || null,
             clientIdentityStatus: organization.status,
-            requestedByAgentId: agentId || null,
+            clientDepartmentId: clientDepartmentId || null,
+            clientDepartmentRequestId: departmentRequestRef?.id || null,
+            proposedDepartmentName: proposedDepartmentName || null,
+            requestedByAgentId: bookingRequesterAgentId || null,
             requesterIdentityStatus: agentIdentityStatus,
+            requesterContextStatus: requesterContext ? 'MATCHED_GUEST' : 'SELF_ASSERTED',
             billingContactAgentId: financeAgentId || (billingEmail === email ? agentId || null : null),
             financeIdentityStatus,
         },
@@ -505,11 +808,17 @@ exports.submitPublicBookingRequest = functions.runWith({
     await intakeBatch.commit();
     await Promise.allSettled([
         notifyAdmins({
-            title: 'New Booking Request',
-            message: `${numbering.display}: ${contactName} requested ${languageTo}.`,
+            title: departmentRequestRef ? 'New booking and department review' : 'New Booking Request',
+            message: departmentRequestRef
+                ? `${numbering.display}: ${contactName} requested ${languageTo}; review department ${proposedDepartmentName}.`
+                : `${numbering.display}: ${contactName} requested ${languageTo}.`,
             type: 'URGENT',
             link: `/admin/bookings/${bookingRef.id}`,
-            data: { bookingId: bookingRef.id }
+            data: {
+                bookingId: bookingRef.id,
+                clientId,
+                clientDepartmentRequestId: departmentRequestRef?.id || null,
+            }
         }),
         (0, bookingEmail_1.queueBookingStatusEmails)(bookingRef.id, booking, 'INCOMING', {}, bookingRef.id),
     ]);
@@ -520,6 +829,161 @@ exports.submitPublicBookingRequest = functions.runWith({
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         }
+    };
+});
+exports.adminResolveClientDepartmentRequest = functions.runWith({
+    timeoutSeconds: 60,
+    memory: '256MB',
+}).https.onCall(async (data, context) => {
+    if (!context.auth?.uid)
+        throw new functions.https.HttpsError('unauthenticated', 'Authentication is required.');
+    const staff = await db.collection('users').doc(context.auth.uid).get();
+    const role = cleanString(staff.data()?.role, 40).toUpperCase();
+    if (!staff.exists || !['ADMIN', 'SUPER_ADMIN'].includes(role)) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin access is required.');
+    }
+    const requestId = cleanString(data?.requestId, 160);
+    const action = cleanString(data?.action, 20).toUpperCase();
+    const reason = cleanString(data?.reason, 1000);
+    if (!requestId || !['APPROVE', 'REJECT'].includes(action)) {
+        throw new functions.https.HttpsError('invalid-argument', 'requestId and a valid action are required.');
+    }
+    if (action === 'REJECT' && reason.length < 3) {
+        throw new functions.https.HttpsError('invalid-argument', 'A short rejection reason is required.');
+    }
+    const requestRef = db.collection('clientDepartmentRequests').doc(requestId);
+    const requestSnapshot = await requestRef.get();
+    if (!requestSnapshot.exists)
+        throw new functions.https.HttpsError('not-found', 'Department request not found.');
+    const requestData = requestSnapshot.data() || {};
+    const clientId = cleanString(requestData.clientId, 160);
+    const bookingId = cleanString(requestData.bookingId, 160);
+    const requestedName = cleanString(requestData.requestedName, 160);
+    const normalizedName = (0, publicRequesterContextCore_1.normalizePublicDepartmentName)(requestedName);
+    const requesterMembershipId = cleanString(requestData.requesterMembershipId, 160);
+    const requesterIdentityAgentId = cleanString(requestData.requesterIdentityAgentId, 160);
+    if (!clientId || !bookingId || !requestedName || !normalizedName) {
+        throw new functions.https.HttpsError('failed-precondition', 'The department request is incomplete.');
+    }
+    let resolvedDepartmentId = '';
+    let resolvedDepartmentName = requestedName;
+    if (action === 'APPROVE') {
+        const departments = await db.collection('clientDepartments').where('clientId', '==', clientId).get();
+        const existing = departments.docs.find(document => (cleanString(document.data().status || 'ACTIVE', 40).toUpperCase() === 'ACTIVE'
+            && (0, publicRequesterContextCore_1.normalizePublicDepartmentName)(document.data().name) === normalizedName));
+        resolvedDepartmentId = existing?.id || stableId('client_department', `${clientId}|${normalizedName}`);
+        resolvedDepartmentName = cleanString(existing?.data().name || requestedName, 160);
+    }
+    await db.runTransaction(async (transaction) => {
+        const requesterMembershipRef = requesterMembershipId
+            ? db.collection('clientMemberships').doc(requesterMembershipId)
+            : null;
+        const [freshRequest, booking, requesterMembership] = await Promise.all([
+            transaction.get(requestRef),
+            transaction.get(db.collection('bookings').doc(bookingId)),
+            requesterMembershipRef ? transaction.get(requesterMembershipRef) : Promise.resolve(null),
+        ]);
+        if (!freshRequest.exists || cleanString(freshRequest.data()?.status, 40).toUpperCase() !== 'PENDING') {
+            throw new functions.https.HttpsError('failed-precondition', 'This department request has already been reviewed.');
+        }
+        if (!booking.exists)
+            throw new functions.https.HttpsError('not-found', 'The linked booking no longer exists.');
+        if (cleanString(booking.data()?.clientId, 160) !== clientId) {
+            throw new functions.https.HttpsError('failed-precondition', 'The booking client changed after this request was created.');
+        }
+        const reviewedAt = new Date().toISOString();
+        if (action === 'APPROVE') {
+            const departmentRef = db.collection('clientDepartments').doc(resolvedDepartmentId);
+            const department = await transaction.get(departmentRef);
+            if (department.exists && cleanString(department.data()?.clientId, 160) !== clientId) {
+                throw new functions.https.HttpsError('already-exists', 'The generated department identity conflicts with another client.');
+            }
+            if (department.exists && (cleanString(department.data()?.status || 'ACTIVE', 40).toUpperCase() !== 'ACTIVE'
+                || (0, publicRequesterContextCore_1.normalizePublicDepartmentName)(department.data()?.name) !== normalizedName)) {
+                throw new functions.https.HttpsError('failed-precondition', 'The matching department changed and must be reviewed from Client CRM.');
+            }
+            if (!department.exists) {
+                transaction.set(departmentRef, {
+                    id: resolvedDepartmentId,
+                    clientId,
+                    name: requestedName,
+                    normalizedName,
+                    status: 'ACTIVE',
+                    organizationId: 'lingland-main',
+                    sourceSystem: 'PUBLIC_INTAKE_APPROVAL',
+                    syncStatus: 'LOCAL_ONLY',
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            const currentSnapshot = booking.data()?.clientSnapshot && typeof booking.data()?.clientSnapshot === 'object'
+                ? booking.data()?.clientSnapshot
+                : {};
+            transaction.set(booking.ref, {
+                clientDepartmentId: resolvedDepartmentId,
+                clientDepartmentSource: 'STAFF_MANUAL',
+                departmentIdentityStatus: 'RESOLVED',
+                clientSnapshot: { ...currentSnapshot, departmentName: resolvedDepartmentName },
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            if (requesterMembershipRef
+                && requesterMembership?.exists
+                && requesterIdentityAgentId
+                && cleanString(requesterMembership.data()?.agentId, 160) === requesterIdentityAgentId) {
+                transaction.set(requesterMembershipRef, {
+                    departmentIds: admin.firestore.FieldValue.arrayUnion(resolvedDepartmentId),
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+        }
+        else {
+            transaction.set(booking.ref, {
+                departmentIdentityStatus: 'REJECTED',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        transaction.set(requestRef, {
+            status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+            resolvedDepartmentId: resolvedDepartmentId || null,
+            resolutionReason: reason || (action === 'APPROVE' ? 'Approved from booking review' : ''),
+            reviewedByUserId: context.auth.uid,
+            reviewedAt,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        transaction.set(db.collection('jobEvents').doc(), {
+            jobId: bookingId,
+            organizationId: 'lingland-main',
+            type: action === 'APPROVE' ? 'CLIENT_DEPARTMENT_APPROVED' : 'CLIENT_DEPARTMENT_REJECTED',
+            source: 'admin',
+            actorUserId: context.auth.uid,
+            metadata: {
+                clientId,
+                clientDepartmentRequestId: requestId,
+                requestedName,
+                resolvedDepartmentId: resolvedDepartmentId || null,
+                reason,
+            },
+            createdAt: new Date().toISOString(),
+        });
+        transaction.set(db.collection('auditLogs').doc(), {
+            action: action === 'APPROVE' ? 'CLIENT_DEPARTMENT_REQUEST_APPROVED' : 'CLIENT_DEPARTMENT_REQUEST_REJECTED',
+            entityType: 'CLIENT_DEPARTMENT_REQUEST',
+            entityId: requestId,
+            actorUserId: context.auth.uid,
+            bookingId,
+            clientId,
+            resolvedDepartmentId: resolvedDepartmentId || null,
+            reason,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    });
+    return {
+        success: true,
+        requestId,
+        bookingId,
+        status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        departmentId: resolvedDepartmentId || null,
+        departmentName: action === 'APPROVE' ? resolvedDepartmentName : null,
     };
 });
 exports.submitClientBookingRequest = functions.runWith({

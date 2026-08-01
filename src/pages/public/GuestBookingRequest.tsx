@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BookingService, InterpreterService, StorageService } from '../../services/api';
+import type { GuestRequesterContextResult } from '../../services/bookingService';
 import { ServiceType, Booking } from '../../types';
 import {
   Globe2, CheckCircle2, ArrowRight, FileText, ShieldCheck,
@@ -25,6 +26,7 @@ const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any
 );
 
 const inputClasses = "w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-900 text-sm focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-all placeholder:text-slate-400 hover:border-blue-200";
+const isValidRequesterEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim().toLowerCase());
 
 export const GuestBookingRequest = () => {
   const [helpModal, setHelpModal] = useState<{ isOpen: boolean; title: string; content: React.ReactNode } | null>(null);
@@ -33,6 +35,12 @@ export const GuestBookingRequest = () => {
   const [step, setStep] = useState<'FORM' | 'SUCCESS'>('FORM');
   const [loading, setLoading] = useState(false);
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
+  const [requesterLookupState, setRequesterLookupState] = useState<'IDLE' | 'CHECKING' | 'MATCHED' | 'NO_MATCH' | 'AMBIGUOUS' | 'ERROR'>('IDLE');
+  const [requesterContext, setRequesterContext] = useState<GuestRequesterContextResult | null>(null);
+  const [selectedRequesterClientId, setSelectedRequesterClientId] = useState('');
+  const [requesterDepartmentMode, setRequesterDepartmentMode] = useState<'' | 'EXISTING' | 'ORGANISATION_WIDE' | 'NEW'>('');
+  const [selectedRequesterDepartmentId, setSelectedRequesterDepartmentId] = useState('');
+  const [proposedRequesterDepartmentName, setProposedRequesterDepartmentName] = useState('');
 
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [loadingLangs, setLoadingLangs] = useState(true);
@@ -81,6 +89,7 @@ export const GuestBookingRequest = () => {
     requiresCostCode: 'YES' as 'YES' | 'NO',
     name: '',
     organisation: '',
+    department: '',
     email: '',
     phone: '',
     billingEmail: '',
@@ -108,6 +117,65 @@ export const GuestBookingRequest = () => {
   });
 
   const isTranslation = formData.serviceType === ServiceType.TRANSLATION;
+  const selectedRequesterOrganization = requesterContext?.organizations.find(
+    organization => organization.id === selectedRequesterClientId,
+  ) || null;
+
+  const resetRequesterSelection = () => {
+    setRequesterContext(null);
+    setSelectedRequesterClientId('');
+    setRequesterDepartmentMode('');
+    setSelectedRequesterDepartmentId('');
+    setProposedRequesterDepartmentName('');
+  };
+
+  const handleRequesterEmailChange = (email: string) => {
+    const previouslyMatched = requesterLookupState === 'MATCHED';
+    resetRequesterSelection();
+    setRequesterLookupState('IDLE');
+    setFormData(previous => ({
+      ...previous,
+      email,
+      ...(previouslyMatched ? { organisation: '', department: '' } : {}),
+    }));
+  };
+
+  const selectRequesterOrganization = (
+    clientId: string,
+    contextResult = requesterContext,
+  ) => {
+    const organization = contextResult?.organizations.find(item => item.id === clientId);
+    setSelectedRequesterClientId(clientId);
+    setRequesterDepartmentMode('');
+    setSelectedRequesterDepartmentId('');
+    setProposedRequesterDepartmentName('');
+    setFormData(previous => ({
+      ...previous,
+      organisation: organization?.name || '',
+      department: '',
+    }));
+  };
+
+  const selectRequesterDepartment = (value: string) => {
+    if (value === '__NEW__') {
+      setRequesterDepartmentMode('NEW');
+      setSelectedRequesterDepartmentId('');
+      setFormData(previous => ({ ...previous, department: '' }));
+      return;
+    }
+    if (value === '__ORGANISATION_WIDE__') {
+      setRequesterDepartmentMode('ORGANISATION_WIDE');
+      setSelectedRequesterDepartmentId('');
+      setProposedRequesterDepartmentName('');
+      setFormData(previous => ({ ...previous, department: '' }));
+      return;
+    }
+    const department = selectedRequesterOrganization?.departments.find(item => item.id === value);
+    setRequesterDepartmentMode(value ? 'EXISTING' : '');
+    setSelectedRequesterDepartmentId(value);
+    setProposedRequesterDepartmentName('');
+    setFormData(previous => ({ ...previous, department: department?.name || '' }));
+  };
 
   useEffect(() => {
     const fetchLangs = async () => {
@@ -134,10 +202,69 @@ export const GuestBookingRequest = () => {
     window.scrollTo(0, 0);
   }, [searchParams]);
 
+  useEffect(() => {
+    const email = formData.email.trim().toLowerCase();
+    if (!isValidRequesterEmail(email)) return;
+    let cancelled = false;
+    setRequesterLookupState('CHECKING');
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await BookingService.lookupGuestRequesterContext(email);
+        if (cancelled) return;
+        setRequesterContext(result.status === 'MATCHED' ? result : null);
+        setRequesterLookupState(result.status);
+        if (result.status === 'MATCHED') {
+          const onlyOrganization = result.organizations.length === 1 ? result.organizations[0] : null;
+          setFormData(previous => ({
+            ...previous,
+            organisation: onlyOrganization?.name || '',
+            department: '',
+          }));
+          if (onlyOrganization) selectRequesterOrganization(onlyOrganization.id, result);
+        }
+      } catch (lookupError) {
+        if (cancelled) return;
+        console.error('Failed to identify guest requester', lookupError);
+        setRequesterContext(null);
+        setRequesterLookupState('ERROR');
+      }
+    }, 650);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [formData.email]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.languageTo) {
       showToast('Please select a target language', 'error');
+      return;
+    }
+    if (isValidRequesterEmail(formData.email) && ['IDLE', 'CHECKING'].includes(requesterLookupState)) {
+      showToast('Wait for the requester details check to finish.', 'error');
+      return;
+    }
+    if (requesterLookupState === 'MATCHED') {
+      if (!requesterContext?.contextToken || !selectedRequesterClientId) {
+        showToast('Select the organisation making this request.', 'error');
+        return;
+      }
+      if (!requesterDepartmentMode) {
+        showToast('Select a department option for this request.', 'error');
+        return;
+      }
+      if (requesterDepartmentMode === 'EXISTING' && !selectedRequesterDepartmentId) {
+        showToast('Select the department making this request.', 'error');
+        return;
+      }
+      if (requesterDepartmentMode === 'NEW' && proposedRequesterDepartmentName.trim().length < 2) {
+        showToast('Enter the new department name.', 'error');
+        return;
+      }
+    }
+    if (requesterLookupState !== 'MATCHED' && !formData.organisation.trim()) {
+      showToast('Enter the organisation making this request.', 'error');
       return;
     }
     setLoading(true);
@@ -146,6 +273,10 @@ export const GuestBookingRequest = () => {
         guestContact: {
           name: formData.name,
           organisation: formData.organisation,
+          department: requesterDepartmentMode === 'NEW'
+            ? proposedRequesterDepartmentName.trim()
+            : selectedRequesterOrganization?.departments.find(department => department.id === selectedRequesterDepartmentId)?.name
+              || formData.department,
           email: formData.email,
           phone: formData.phone,
           billingEmail: formData.billingEmail || formData.email,
@@ -161,7 +292,15 @@ export const GuestBookingRequest = () => {
         gdprConsent: formData.gdprConsent,
         agreedToTerms: formData.agreedToTerms,
         professionalName: formData.professionalName,
-        patientName: formData.patientName
+        patientName: formData.patientName,
+        requesterContext: requesterLookupState === 'MATCHED' && requesterContext?.contextToken
+          ? {
+            contextToken: requesterContext.contextToken,
+            clientId: selectedRequesterClientId,
+            departmentId: requesterDepartmentMode === 'EXISTING' ? selectedRequesterDepartmentId : '',
+            proposedDepartmentName: requesterDepartmentMode === 'NEW' ? proposedRequesterDepartmentName.trim() : '',
+          }
+          : undefined,
       };
 
       let finalBookingData = {};
@@ -200,7 +339,10 @@ export const GuestBookingRequest = () => {
       setStep('SUCCESS');
     } catch (err) {
       console.error(err);
-      showToast('Failed to submit request. Please try again.', 'error');
+      const message = err instanceof Error && err.message
+        ? err.message.replace(/^Firebase:\s*/i, '').replace(/^\[[^\]]+\]\s*/, '')
+        : 'Failed to submit request. Please try again.';
+      showToast(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -222,8 +364,8 @@ export const GuestBookingRequest = () => {
 
           <div className="p-8">
             <p className="text-center text-slate-500 text-sm mb-8">
-              We've sent a confirmation to <strong>{formData.email}</strong>.<br />
-              Our team will review your request shortly.
+              Your request was recorded for <strong>{formData.email}</strong>.<br />
+              Our team will review it shortly.
             </p>
 
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-5 text-center">
@@ -325,19 +467,105 @@ export const GuestBookingRequest = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <InputGroup label="Contact Email" icon={Mail} required hint="Use the email normally used to place requests">
+                      <div className="relative">
+                        <input
+                          type="email"
+                          required
+                          autoComplete="email"
+                          className={`${inputClasses} pr-11`}
+                          placeholder="name@organisation.com"
+                          value={formData.email}
+                          onChange={event => handleRequesterEmailChange(event.target.value)}
+                        />
+                        {requesterLookupState === 'CHECKING' && <Loader2 size={18} className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-blue-600" />}
+                        {requesterLookupState === 'MATCHED' && <CheckCircle2 size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-600" />}
+                      </div>
+                    </InputGroup>
+                    {requesterLookupState === 'MATCHED' && (
+                      <div className="mb-5 flex items-start gap-3 border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                        <BadgeCheck size={18} className="mt-0.5 shrink-0 text-emerald-600" />
+                        <div>
+                          <p className="font-bold">Existing requester details found</p>
+                          <p className="mt-0.5 text-xs text-emerald-800">Confirm the organisation and department for this request.</p>
+                        </div>
+                      </div>
+                    )}
+                    {requesterLookupState === 'NO_MATCH' && (
+                      <div className="mb-5 border border-slate-200 bg-white p-3 text-xs text-slate-600">No existing requester profile was found. The details entered below will be reviewed by Lingland staff.</div>
+                    )}
+                    {requesterLookupState === 'AMBIGUOUS' && (
+                      <div className="mb-5 flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><AlertTriangle size={16} className="mt-0.5 shrink-0" />The email matches more than one internal requester record. Continue with manual details for staff review.</div>
+                    )}
+                    {requesterLookupState === 'ERROR' && (
+                      <div className="mb-5 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Requester details could not be checked. You can continue and staff will verify them.</div>
+                    )}
+                  </div>
+
                   <InputGroup label="Booking By" icon={User} required hint="Your full name">
-                    <input type="text" required className={inputClasses} value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
-                  </InputGroup>
-                  <InputGroup label="Organisation / Department" icon={Building2} required hint="Example: NHS, Child Services, or Company Name">
-                    <input type="text" required className={inputClasses} value={formData.organisation} onChange={e => setFormData({ ...formData, organisation: e.target.value })} />
-                  </InputGroup>
-                  <InputGroup label="Contact Email" icon={Mail} required hint="Allows multiple emails separated by commas">
-                    <input type="text" required className={inputClasses} placeholder="e.g. name@org.com, admin@org.com" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                    <input type="text" required autoComplete="name" className={inputClasses} value={formData.name} onChange={event => setFormData({ ...formData, name: event.target.value })} />
                   </InputGroup>
                   <InputGroup label="Contact Phone Number" icon={Phone} required>
-                    <input type="tel" required className={inputClasses} value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+                    <input type="tel" required autoComplete="tel" className={inputClasses} value={formData.phone} onChange={event => setFormData({ ...formData, phone: event.target.value })} />
                   </InputGroup>
+
+                  {requesterLookupState === 'MATCHED' && requesterContext ? (
+                    <>
+                      <InputGroup label="Organisation" icon={Building2} required>
+                        <select aria-label="Requester organisation" required className={inputClasses} value={selectedRequesterClientId} onChange={event => selectRequesterOrganization(event.target.value)}>
+                          <option value="">Select organisation...</option>
+                          {requesterContext.organizations.map(organization => (
+                            <option key={organization.id} value={organization.id}>{organization.name}</option>
+                          ))}
+                        </select>
+                      </InputGroup>
+                      <InputGroup label="Department" icon={Building2} required>
+                        <select
+                          aria-label="Requester department"
+                          required
+                          disabled={!selectedRequesterOrganization}
+                          className={inputClasses}
+                          value={requesterDepartmentMode === 'EXISTING'
+                            ? selectedRequesterDepartmentId
+                            : requesterDepartmentMode === 'NEW' ? '__NEW__'
+                              : requesterDepartmentMode === 'ORGANISATION_WIDE' ? '__ORGANISATION_WIDE__' : ''}
+                          onChange={event => selectRequesterDepartment(event.target.value)}
+                        >
+                          <option value="">Select department option...</option>
+                          {selectedRequesterOrganization?.departments.map(department => (
+                            <option key={department.id} value={department.id}>{department.name}</option>
+                          ))}
+                          <option value="__ORGANISATION_WIDE__">Organisation-wide / not applicable</option>
+                          <option value="__NEW__">Department not listed...</option>
+                        </select>
+                      </InputGroup>
+                      {requesterDepartmentMode === 'NEW' && (
+                        <div className="md:col-span-2">
+                          <InputGroup label="New Department Name" icon={Building2} required hint="This will be reviewed before being added to the client account">
+                            <input
+                              type="text"
+                              aria-label="New department name"
+                              required
+                              className={inputClasses}
+                              value={proposedRequesterDepartmentName}
+                              onChange={event => setProposedRequesterDepartmentName(event.target.value)}
+                            />
+                          </InputGroup>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <InputGroup label="Organisation" icon={Building2} required hint="Company, NHS trust, council, school or other client">
+                        <input type="text" required className={inputClasses} value={formData.organisation} onChange={event => setFormData({ ...formData, organisation: event.target.value })} />
+                      </InputGroup>
+                      <InputGroup label="Department" icon={Building2} hint="Leave blank only when the request is organisation-wide">
+                        <input type="text" className={inputClasses} value={formData.department} onChange={event => setFormData({ ...formData, department: event.target.value })} />
+                      </InputGroup>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -803,7 +1031,7 @@ export const GuestBookingRequest = () => {
 
                 <button
                   type="submit"
-                  disabled={loading || availableLanguages.length === 0}
+                  disabled={loading || requesterLookupState === 'CHECKING' || availableLanguages.length === 0}
                   className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-xl shadow-xl shadow-slate-900/10 hover:bg-black hover:shadow-slate-900/20 hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 disabled:hover:scale-100 disabled:active:scale-100"
                 >
                   {loading ? (
