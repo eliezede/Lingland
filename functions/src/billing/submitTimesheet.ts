@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import { londonPeriodKey } from './settlementCycleCore';
 
 const db = admin.firestore();
 
@@ -74,6 +75,7 @@ export const submitTimesheet = functions.https.onCall(async (data, context) => {
     }
 
     const freshBookingData = freshBooking.data() || {};
+    const servicePeriod = String(freshBookingData.date || '').slice(0, 7) || londonPeriodKey(actualStart);
     const timesheet = {
       id: timesheetRef.id,
       organizationId: freshBookingData.organizationId || 'lingland-main',
@@ -84,6 +86,8 @@ export const submitTimesheet = functions.https.onCall(async (data, context) => {
       clientDepartmentId: freshBookingData.clientDepartmentId || null,
       requestedByAgentId: freshBookingData.requestedByAgentId || null,
       requestedByUserId: freshBookingData.requestedByUserId || null,
+      serviceCategory: freshBookingData.serviceCategory || 'INTERPRETATION',
+      servicePeriod,
       submittedAt: now,
       sessionMode: String(data?.sessionMode || bookingData.sessionMode || (bookingData.locationType === 'ONLINE' ? 'VIDEO' : 'F2F')),
       actualStart: actualStart.toISOString(),
@@ -129,6 +133,12 @@ export const submitTimesheet = functions.https.onCall(async (data, context) => {
       timesheetStatus: 'SUBMITTED',
       timesheetSubmittedAt: now,
       paymentStatus: 'NOT_READY',
+      operationalStatus: 'TIMESHEET_SUBMITTED',
+      servicePeriod,
+      clientBillingStatus: 'NOT_READY',
+      clientPaymentStatus: 'NOT_DUE',
+      interpreterPayableStatus: 'NOT_ELIGIBLE',
+      interpreterPaymentStatus: 'UNPAID',
       clientInvoiceId: null,
       interpreterInvoiceId: null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

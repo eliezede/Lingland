@@ -118,6 +118,8 @@ exports.updateClientInvoiceStatus = functions.https.onCall(async (data, context)
                 if (nextStatus === 'SENT') {
                     bookingPatch.status = 'INVOICED';
                     bookingPatch.paymentStatus = 'INVOICED';
+                    bookingPatch.clientBillingStatus = 'ISSUED';
+                    bookingPatch.clientPaymentStatus = 'DUE';
                     bookingPatch.clientInvoiceId = invoiceId;
                     bookingPatch.clientInvoiceNumber = current.invoiceNumber || current.reference || invoiceId;
                     bookingPatch.clientInvoiceReference = current.reference || current.invoiceNumber || invoiceId;
@@ -126,11 +128,15 @@ exports.updateClientInvoiceStatus = functions.https.onCall(async (data, context)
                 else if (nextStatus === 'PAID') {
                     bookingPatch.status = 'PAID';
                     bookingPatch.paymentStatus = 'PAID';
+                    bookingPatch.clientBillingStatus = 'PAID';
+                    bookingPatch.clientPaymentStatus = 'PAID';
                     bookingPatch.paidAt = now;
                 }
                 else if (nextStatus === 'CANCELLED') {
                     bookingPatch.status = 'READY_FOR_INVOICE';
                     bookingPatch.paymentStatus = 'READY_FOR_INVOICE';
+                    bookingPatch.clientBillingStatus = 'READY';
+                    bookingPatch.clientPaymentStatus = 'NOT_DUE';
                     bookingPatch.clientInvoiceId = null;
                     bookingPatch.clientInvoiceNumber = null;
                     bookingPatch.clientInvoiceReference = null;

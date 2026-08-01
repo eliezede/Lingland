@@ -117,6 +117,8 @@ exports.createInterpreterInvoiceUpload = functions.https.onCall(async (data, con
         if (submittedAmount > 0 && Math.abs(submittedAmount - payableTotal) > 0.01) {
             throw new functions.https.HttpsError('failed-precondition', `Invoice total must match the approved payable total of GBP ${payableTotal.toFixed(2)}`);
         }
+        const serviceCategories = Array.from(new Set(bookings.map(item => (String(item.data()?.serviceCategory || '').toUpperCase() === 'TRANSLATION' ? 'TRANSLATION' : 'INTERPRETATION'))));
+        const settlementPeriods = Array.from(new Set(timesheets.map(item => (String(item.data()?.servicePeriod || item.data()?.actualStart || now).slice(0, 7))).filter(Boolean)));
         const invoice = {
             organizationId: interpreter.data()?.organizationId || 'lingland-main',
             interpreterId,
@@ -136,6 +138,11 @@ exports.createInterpreterInvoiceUpload = functions.https.onCall(async (data, con
             updatedAt: now,
             createdBy: actor.uid,
             submittedByRole: actor.isAdmin ? 'ADMIN' : 'INTERPRETER',
+            settlementPeriod: settlementPeriods.length === 1 ? settlementPeriods[0] : null,
+            settlementPeriods,
+            serviceCategories,
+            primaryServiceCategory: serviceCategories.length === 1 ? serviceCategories[0] : null,
+            paymentStatus: 'UNPAID',
         };
         transaction.set(invoiceRef, invoice);
         timesheets.forEach(item => {
@@ -163,6 +170,9 @@ exports.createInterpreterInvoiceUpload = functions.https.onCall(async (data, con
                 interpreterInvoiceId: invoiceId,
                 interpreterInvoiceReference: externalReference,
                 interpreterInvoiceNumber: externalReference,
+                interpreterPayableStatus: 'INVOICE_RECEIVED',
+                interpreterPaymentStatus: 'UNPAID',
+                interpreterSettlementPeriod: settlementPeriods.length === 1 ? settlementPeriods[0] : String(booking.data()?.date || '').slice(0, 7),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             transaction.set(db.collection('jobEvents').doc(), {
@@ -244,7 +254,15 @@ exports.updateInterpreterInvoiceStatus = functions.https.onCall(async (data, con
         if (nextStatus === 'PAID') {
             bookings.forEach(booking => transaction.update(booking.ref, {
                 interpreterPaymentStatus: 'PAID',
+                interpreterPayableStatus: 'PAID',
                 interpreterPaidAt: now,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }));
+        }
+        if (nextStatus === 'APPROVED') {
+            bookings.forEach(booking => transaction.update(booking.ref, {
+                interpreterPayableStatus: 'APPROVED',
+                interpreterPaymentStatus: 'UNPAID',
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }));
         }
@@ -258,6 +276,8 @@ exports.updateInterpreterInvoiceStatus = functions.https.onCall(async (data, con
                 interpreterInvoiceId: admin.firestore.FieldValue.delete(),
                 interpreterInvoiceReference: admin.firestore.FieldValue.delete(),
                 interpreterInvoiceNumber: admin.firestore.FieldValue.delete(),
+                interpreterPayableStatus: 'ACCRUED',
+                interpreterPaymentStatus: 'UNPAID',
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }));
         }

@@ -128,6 +128,10 @@ export const generateClientInvoice = functions.https.onCall(async (data, context
       .map(timesheet => bookingById.get(String(timesheet.data()?.bookingId || '')))
       .filter((booking): booking is { id: string } & FirebaseFirestore.DocumentData => Boolean(booking));
     const hierarchy = projectClientFinanceHierarchy(invoiceBookings);
+    const serviceCategories = Array.from(new Set(invoiceBookings.map(booking => (
+      String(booking.serviceCategory || '').toUpperCase() === 'TRANSLATION' ? 'TRANSLATION' : 'INTERPRETATION'
+    ))));
+    const primaryServiceCategory = serviceCategories.length === 1 ? serviceCategories[0] : undefined;
 
     transaction.set(settingsRef, {
       finance: { ...finance, nextInvoiceNumber: nextNumber + 1 },
@@ -152,6 +156,7 @@ export const generateClientInvoice = functions.https.onCall(async (data, context
         lineAmount,
         total: lineAmount,
         ...lineHierarchy,
+        serviceCategory: String(booking?.serviceCategory || '').toUpperCase() === 'TRANSLATION' ? 'TRANSLATION' : 'INTERPRETATION',
       });
       transaction.update(timesheet.ref, {
         clientInvoiceId: invoiceRef.id,
@@ -169,6 +174,9 @@ export const generateClientInvoice = functions.https.onCall(async (data, context
           clientInvoiceNumber: invoiceNumber,
           clientInvoiceReference: invoiceNumber,
           paymentStatus: 'INVOICED',
+          clientBillingStatus: 'DRAFT',
+          clientPaymentStatus: 'NOT_DUE',
+          clientBillingPeriod: String(value.actualStart || periodEnd).slice(0, 7),
           invoicedAt: new Date().toISOString(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
@@ -197,6 +205,8 @@ export const generateClientInvoice = functions.https.onCall(async (data, context
       lineCount: timesheets.length,
       financialIntegrityStatus: 'VERIFIED',
       referenceIntegrityStatus: 'VERIFIED',
+      serviceCategories,
+      ...(primaryServiceCategory ? { primaryServiceCategory } : {}),
       ...hierarchy,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdBy: context.auth!.uid,

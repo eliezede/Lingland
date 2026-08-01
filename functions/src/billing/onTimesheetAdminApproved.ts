@@ -1,6 +1,7 @@
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
 import { queueBookingStatusEmails } from '../mail/bookingEmail';
+import { londonPeriodKey } from './settlementCycleCore';
 
 const db = admin.firestore();
 const CALCULATION_VERSION = '2026-07-11';
@@ -187,6 +188,7 @@ export const approveTimesheet = functions.https.onCall(async (data, context) => 
 
   interpreterAmount = Number(interpreterAmount.toFixed(2));
   clientAmount = Number(clientAmount.toFixed(2));
+  const servicePeriod = String(booking.date || '').slice(0, 7) || londonPeriodKey(timesheet.actualStart);
   const now = new Date().toISOString();
   const result = await db.runTransaction(async transaction => {
     const [freshTimesheet, freshBooking] = await Promise.all([
@@ -214,6 +216,8 @@ export const approveTimesheet = functions.https.onCall(async (data, context) => 
       interpreterAmountCalculated: interpreterAmount,
       readyForClientInvoice: clientAmount > 0,
       readyForInterpreterInvoice: Boolean(timesheet.interpreterId && timesheet.interpreterId !== 'unassigned' && interpreterAmount > 0),
+      serviceCategory: booking.serviceCategory || timesheet.serviceCategory || 'INTERPRETATION',
+      servicePeriod,
       billingCalculationVersion: CALCULATION_VERSION,
       billingCalculationSources: { client: clientAmountSource, interpreter: interpreterAmountSource },
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -225,6 +229,14 @@ export const approveTimesheet = functions.https.onCall(async (data, context) => 
       timesheetVerifiedAt: now,
       billingReadyAt: clientAmount > 0 || interpreterAmount > 0 ? now : null,
       paymentStatus: clientAmount > 0 || interpreterAmount > 0 ? 'READY_FOR_INVOICE' : 'NOT_READY',
+      operationalStatus: 'SESSION_COMPLETED',
+      servicePeriod,
+      clientBillingPeriod: clientAmount > 0 ? servicePeriod : null,
+      interpreterSettlementPeriod: interpreterAmount > 0 ? servicePeriod : null,
+      clientBillingStatus: clientAmount > 0 ? 'READY' : 'NOT_READY',
+      clientPaymentStatus: 'NOT_DUE',
+      interpreterPayableStatus: interpreterAmount > 0 ? 'ACCRUED' : 'NOT_ELIGIBLE',
+      interpreterPaymentStatus: interpreterAmount > 0 ? 'UNPAID' : null,
       billingIssueFlag: false,
       billingIssueReason: null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

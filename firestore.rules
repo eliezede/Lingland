@@ -201,6 +201,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /settlementCycles/{cycleId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /settlementCycleItems/{itemId} {
+      allow read, write: if isAdmin();
+    }
+
     match /notifications/{notificationId} {
       allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
       allow create: if isAdmin();

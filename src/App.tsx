@@ -11,7 +11,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { ScrollToTop } from './components/routing/ScrollToTop';
 import { CommandPalette } from './components/ui/CommandPalette';
-import { UserRole } from './types.ts';
+import { ServiceCategory, UserRole } from './types.ts';
 import { AIControlProvider } from './context/AIControlContext';
 
 const lazyNamed = (importer: () => Promise<any>, exportName: string) =>
@@ -45,6 +45,7 @@ const DataCenter = lazyNamed(() => import('./pages/admin/administration/DataCent
 const GoLiveControl = lazyNamed(() => import('./pages/admin/administration/GoLiveControl'), 'GoLiveControl');
 const AdminStaff = lazyNamed(() => import('./pages/admin/administration/AdminStaff'), 'AdminStaff');
 const AdminOrgChart = lazyNamed(() => import('./pages/admin/administration/AdminOrgChart'), 'AdminOrgChart');
+const AdminIntegrations = lazyNamed(() => import('./pages/admin/administration/AdminIntegrations'), 'AdminIntegrations');
 const AdminProfile = lazyNamed(() => import('./pages/admin/AdminProfile'), 'AdminProfile');
 const AuditLog = lazyNamed(() => import('./pages/admin/system/AuditLog'), 'AuditLog');
 const AdminBillingDashboard = lazyNamed(() => import('./pages/admin/billing/AdminBillingDashboard'), 'AdminBillingDashboard');
@@ -53,6 +54,8 @@ const AdminClientInvoicesPage = lazyNamed(() => import('./pages/admin/billing/Ad
 const AdminClientInvoiceDetailsPage = lazyNamed(() => import('./pages/admin/billing/AdminClientInvoiceDetailsPage'), 'AdminClientInvoiceDetailsPage');
 const AdminInterpreterInvoicesPage = lazyNamed(() => import('./pages/admin/billing/AdminInterpreterInvoicesPage'), 'AdminInterpreterInvoicesPage');
 const AdminInterpreterInvoiceDetailsPage = lazyNamed(() => import('./pages/admin/billing/AdminInterpreterInvoiceDetailsPage'), 'AdminInterpreterInvoiceDetailsPage');
+const AccountsReceivableWorkspace = lazyNamed(() => import('./pages/admin/finance/AccountsReceivableWorkspace'), 'AccountsReceivableWorkspace');
+const AccountsPayableWorkspace = lazyNamed(() => import('./pages/admin/finance/AccountsPayableWorkspace'), 'AccountsPayableWorkspace');
 const AdminClients = lazyNamed(() => import('./pages/admin/AdminClients'), 'AdminClients');
 const AdminClientDetails = lazyNamed(() => import('./pages/admin/clients/AdminClientDetails'), 'AdminClientDetails');
 const ClientIdentityAudit = lazyNamed(() => import('./pages/admin/clients/ClientIdentityAudit'), 'ClientIdentityAudit');
@@ -215,18 +218,24 @@ const App = () => {
                               <Route path="users" element={<AdminUsers />} />
                               <Route path="settings" element={<AdminSettings />} />
                               <Route path="settings/email-templates" element={<AdminEmailTemplates />} />
+                              <Route path="finance" element={<Navigate to="/admin/finance/overview" replace />} />
+                              <Route path="finance/overview" element={<AdminBillingDashboard />} />
+                              <Route path="finance/receivables" element={<AccountsReceivableWorkspace />} />
+                              <Route path="finance/payables/interpreting" element={<AccountsPayableWorkspace serviceCategory={ServiceCategory.INTERPRETATION} />} />
+                              <Route path="finance/payables/translations" element={<AccountsPayableWorkspace serviceCategory={ServiceCategory.TRANSLATION} />} />
                               <Route path="finance/documents" element={<Navigate to="/admin/billing/client-invoices" replace />} />
                               <Route path="finance/statements" element={<Navigate to="/admin/reports?report=FINANCE_OVERVIEW" replace />} />
-                              <Route path="finance/payroll" element={<Navigate to="/admin/billing/interpreter-invoices" replace />} />
+                              <Route path="finance/payroll" element={<Navigate to="/admin/finance/payables/interpreting" replace />} />
                               <Route path="finance/reports" element={<AdminReports />} />
                               <Route path="reports" element={<AdminReports />} />
                               <Route path="administration/data" element={<DataCenter />} />
                               <Route path="administration/go-live" element={<GoLiveControl />} />
                                <Route path="administration/staff" element={<AdminStaff />} />
                                <Route path="administration/org-chart" element={<AdminOrgChart />} />
+                               <Route path="administration/integrations" element={<AdminIntegrations />} />
                                <Route path="profile" element={<AdminProfile />} />
                               <Route path="billing" element={<JobsBoard workspace="finance" />} />
-                              <Route path="billing/overview" element={<AdminBillingDashboard />} />
+                              <Route path="billing/overview" element={<Navigate to="/admin/finance/overview" replace />} />
                               <Route path="billing/reports" element={<AdminReports />} />
                               <Route path="billing/timesheets" element={<Navigate to="/admin/operations/timesheets" replace />} />
                               <Route path="system/audit-log" element={<AuditLog />} />

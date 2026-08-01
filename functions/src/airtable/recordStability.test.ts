@@ -4,6 +4,7 @@ import {
   hashAirtableRecordFields,
   hashStableValue,
   mergeAirtableSnapshots,
+  stabilizeAirtableAttachments,
 } from './recordStability';
 
 describe('Airtable record stability', () => {
@@ -60,5 +61,32 @@ describe('Airtable record stability', () => {
     ];
 
     expect(fingerprintAirtableSnapshot(records)).toBe(fingerprintAirtableSnapshot([...records].reverse()));
+  });
+
+  it('removes expiring Airtable URLs from attachment fingerprints', () => {
+    const first = stabilizeAirtableAttachments([{
+      id: 'attStable',
+      filename: 'source.pdf',
+      type: 'application/pdf',
+      size: 2048,
+      url: 'https://v5.airtableusercontent.com/file/a?expires=100&signature=one',
+    }]);
+    const second = stabilizeAirtableAttachments([{
+      id: 'attStable',
+      filename: 'source.pdf',
+      type: 'application/pdf',
+      size: 2048,
+      url: 'https://v5.airtableusercontent.com/file/b?expires=200&signature=two',
+    }]);
+
+    expect(first).toEqual(second);
+    expect(hashStableValue(first)).toBe(hashStableValue(second));
+  });
+
+  it('detects a replaced Airtable attachment even when the filename is unchanged', () => {
+    const first = stabilizeAirtableAttachments([{ id: 'attOne', filename: 'source.pdf', size: 2048 }]);
+    const second = stabilizeAirtableAttachments([{ id: 'attTwo', filename: 'source.pdf', size: 2048 }]);
+
+    expect(hashStableValue(first)).not.toBe(hashStableValue(second));
   });
 });

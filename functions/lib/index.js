@@ -41,6 +41,7 @@ admin.initializeApp();
 __exportStar(require("./billing/onTimesheetAdminApproved"), exports);
 __exportStar(require("./billing/generateClientInvoice"), exports);
 __exportStar(require("./billing/generateInterpreterInvoices"), exports);
+__exportStar(require("./billing/settlementCycles"), exports);
 __exportStar(require("./billing/updateClientInvoiceStatus"), exports);
 __exportStar(require("./billing/manageInterpreterInvoices"), exports);
 __exportStar(require("./billing/recordManualClientInvoice"), exports);
@@ -76,4 +77,5 @@ __exportStar(require("./public/submitPublicIntake"), exports);
 __exportStar(require("./audit/onCriticalChange"), exports);
 __exportStar(require("./audit/createAuditHealthCheck"), exports);
 __exportStar(require("./ai/aiFunctions"), exports);
+__exportStar(require("./integrations/xeroFunctions"), exports);
 //# sourceMappingURL=index.js.map

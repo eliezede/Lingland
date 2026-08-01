@@ -30,6 +30,7 @@ describe('translation client evidence', () => {
     expect(accountRefFromTranslationInvoice('HAM018.6313')).toBe('HAM018');
     expect(accountRefFromTranslationInvoice('ham007 August')).toBe('HAM007');
     expect(accountRefFromTranslationInvoice('rec7g3i6mEB4wrYMO')).toBe('');
+    expect(accountRefFromTranslationInvoice('Loss')).toBe('');
   });
 
   it('indexes invoice evidence by linked translation record', () => {
@@ -133,6 +134,206 @@ describe('translation client evidence', () => {
       candidateAccountRefs: ['HAM007', 'HAM018'],
       accountRefSource: '',
       accountRefAmbiguous: true,
+    });
+  });
+
+  it('uses a dominant agency account only when historical support is strong', () => {
+    const dominantHistory = Array.from({ length: 6 }, (_, index) => ({
+      id: `ham007-${index}`,
+      fields: {
+        'TR Invoice Nbr': `HAM007.${index}`,
+        Translations: [`recHcc${index}`],
+        'TR Agency': ['HCC'],
+      },
+    }));
+    const evidence = buildTranslationClientEvidence([
+      ...dominantHistory,
+      {
+        id: 'ham018',
+        fields: {
+          'TR Invoice Nbr': 'HAM018.1',
+          Translations: ['recOtherHcc'],
+          'TR Agency': ['HCC'],
+        },
+      },
+      {
+        id: 'unnumbered',
+        fields: {
+          Translations: ['recTarget'],
+          'TR Agency': ['HCC'],
+        },
+      },
+    ]).get('recTarget');
+
+    expect(evidence).toMatchObject({
+      accountRefs: ['HAM007'],
+      candidateAccountRefs: ['HAM007', 'HAM018'],
+      accountRefSource: 'DOMINANT_AGENCY',
+      accountRefAmbiguous: false,
+    });
+  });
+
+  it('prefers an exact department history over an email shared with its parent organisation', () => {
+    const evidence = buildTranslationClientEvidence([
+      {
+        id: 'emtas-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM016.7936',
+          Translations: ['recEmtasNumbered'],
+          'TR Agency': ['EMTAS - Hampshire County Council'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'hcc-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM007.JULY',
+          Translations: ['recHccNumbered'],
+          'TR Agency': ['HCC'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'emtas-unumbered',
+        fields: {
+          Translations: ['recEmtasUnumbered'],
+          'TR Agency': ['EMTAS - Hampshire County Council'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+    ]).get('recEmtasUnumbered');
+
+    expect(evidence).toMatchObject({
+      accountRefs: ['HAM016'],
+      candidateAccountRefs: ['HAM016', 'HAM007'],
+      accountRefSource: 'EXACT_AGENCY',
+      accountRefAmbiguous: false,
+    });
+  });
+
+  it('matches the same department when Airtable reverses or expands the agency label', () => {
+    const evidence = buildTranslationClientEvidence([
+      {
+        id: 'emtas-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM016.3251',
+          Translations: ['recEmtasNumbered'],
+          'TR Agency': ['Ethnic Minority Traveller Achievement Service (EMTAS) - HCC'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'hcc-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM007.JULY',
+          Translations: ['recHccNumbered'],
+          'TR Agency': ['HCC'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'emtas-unumbered',
+        fields: {
+          Translations: ['recEmtasUnumbered'],
+          'TR Agency': ['Hampshire County Council - EMTAS'],
+          'TR client email': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+    ]).get('recEmtasUnumbered');
+
+    expect(evidence).toMatchObject({
+      accountRefs: ['HAM016'],
+      candidateAccountRefs: ['HAM016', 'HAM007'],
+      accountRefSource: 'EXACT_AGENCY',
+      accountRefAmbiguous: false,
+    });
+  });
+
+  it('does not treat linked professional lookups as translation ownership', () => {
+    const evidence = buildTranslationClientEvidence([
+      {
+        id: 'emtas-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM016.7936',
+          Translations: ['recEmtasNumbered'],
+          'TR Agency (from Translations)': ['EMTAS - Hampshire County Council'],
+          'TR client email (from Translations)': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'hcc-numbered',
+        fields: {
+          'TR Invoice Nbr': 'HAM007.JULY',
+          Translations: ['recHccNumbered'],
+          'Assign to (from Translations)': ['recSharedProfessional'],
+          'TR Agency (from Translations)': ['HCC'],
+          'TR client email (from Translations)': ['hcc.team@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'emtas-unumbered-shared-professional',
+        fields: {
+          Translations: ['recEmtasUnumberedOne'],
+          'Assign to (from Translations)': ['recSharedProfessional'],
+          'TR Agency (from Translations)': ['EMTAS - Hampshire County Council'],
+          'TR client email (from Translations)': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+      {
+        id: 'emtas-unumbered-target',
+        fields: {
+          Translations: ['recEmtasUnumberedTwo'],
+          'TR Agency (from Translations)': ['Hampshire County Council - EMTAS'],
+          'TR client email (from Translations)': ['alison.dunphy@hants.gov.uk'],
+        },
+      },
+    ]);
+
+    expect(evidence.has('recSharedProfessional')).toBe(false);
+    expect(evidence.get('recEmtasUnumberedTwo')).toMatchObject({
+      accountRefs: ['HAM016'],
+      agencyCandidateAccountRefs: ['HAM016'],
+      emailCandidateAccountRefs: ['HAM016'],
+      accountRefSource: 'EXACT_AGENCY',
+      accountRefAmbiguous: false,
+    });
+  });
+
+  it('ignores a loss marker when inferring the Wessex account reference', () => {
+    const evidence = buildTranslationClientEvidence([
+      {
+        id: 'wessex-numbered',
+        fields: {
+          'TR Invoice Nbr': 'WES008.7457',
+          Translations: ['recWessexNumbered'],
+          'TR Agency': ['Wessex Solicitors'],
+          'TR client email': ['erica@wessexsolicitors.co.uk'],
+        },
+      },
+      {
+        id: 'wessex-loss',
+        fields: {
+          'TR Invoice Nbr': 'Loss',
+          Translations: ['recWessexLoss'],
+          'TR Agency': ['Wessex Solicitors'],
+          'TR client email': ['erica@wessexsolicitors.co.uk'],
+        },
+      },
+      {
+        id: 'wessex-unumbered',
+        fields: {
+          Translations: ['recWessexUnumbered'],
+          'TR Agency': ['Wessex Solicitors'],
+          'TR client email': ['erica@wessexsolicitors.co.uk'],
+        },
+      },
+    ]).get('recWessexUnumbered');
+
+    expect(evidence).toMatchObject({
+      accountRefs: ['WES008'],
+      candidateAccountRefs: ['WES008'],
+      accountRefSource: 'EXACT_AGENCY',
+      accountRefAmbiguous: false,
     });
   });
 });

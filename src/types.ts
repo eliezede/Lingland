@@ -280,6 +280,14 @@ export interface Booking extends SourceTrackingFields {
   professionalCost?: number;
   interpreterPaidAt?: string;
   paymentStatus?: 'NOT_READY' | 'READY_FOR_INVOICE' | 'INVOICED' | 'PAID' | 'ISSUE';
+  operationalStatus?: BookingStatus;
+  servicePeriod?: string;
+  clientBillingPeriod?: string;
+  interpreterSettlementPeriod?: string;
+  clientBillingStatus?: ReceivableStatus;
+  clientPaymentStatus?: ReceivablePaymentStatus;
+  interpreterPayableStatus?: PayableStatus;
+  settlementCycleId?: string | null;
   invoicedAt?: string;
   paidAt?: string;
   billingIssueFlag?: boolean;
@@ -545,6 +553,80 @@ export enum InvoiceStatus {
   APPROVED = 'APPROVED'
 }
 
+export type ReceivableStatus =
+  | 'NOT_READY'
+  | 'READY'
+  | 'DRAFT'
+  | 'ISSUED'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'OVERDUE'
+  | 'VOID'
+  | 'ISSUE';
+
+export type ReceivablePaymentStatus =
+  | 'NOT_DUE'
+  | 'DUE'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'OVERDUE'
+  | 'RECONCILED'
+  | 'ISSUE';
+
+export type PayableStatus =
+  | 'NOT_ELIGIBLE'
+  | 'ACCRUED'
+  | 'IN_CYCLE'
+  | 'STATEMENT_READY'
+  | 'INVOICE_RECEIVED'
+  | 'APPROVED'
+  | 'SCHEDULED'
+  | 'PAID'
+  | 'DISPUTED'
+  | 'VOID'
+  | 'ISSUE';
+
+export type SettlementCycleStatus = 'PREPARING' | 'OPEN' | 'REVIEW' | 'APPROVED' | 'POSTED' | 'CLOSED';
+
+export interface SettlementCycleSummary {
+  jobCount: number;
+  professionalCount: number;
+  readyCount: number;
+  invoicedCount?: number;
+  paidCount?: number;
+  exceptionCount: number;
+  totalAmount: number;
+  readyAmount?: number;
+}
+
+export interface SettlementCycle extends TenantScopedEntity {
+  periodKey: string;
+  periodStart: string;
+  periodEnd: string;
+  serviceCategory: ServiceCategory;
+  status: SettlementCycleStatus;
+  currency: string;
+  summary: SettlementCycleSummary;
+  preparedAt?: string;
+  preparedBy?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  postedAt?: string;
+  closedAt?: string;
+  refreshVersion?: number;
+}
+
+export interface SettlementPayeeSummary {
+  interpreterId: string;
+  interpreterName: string;
+  jobCount: number;
+  readyCount: number;
+  exceptionCount: number;
+  totalAmount: number;
+}
+
 export type TimesheetSource = 'INTERPRETER_APP' | 'STAFF_MANUAL' | 'AIRTABLE_MIRROR' | 'SYSTEM_IMPORT';
 
 export interface Timesheet extends TenantScopedEntity, SourceTrackingFields {
@@ -594,6 +676,10 @@ export interface Timesheet extends TenantScopedEntity, SourceTrackingFields {
   interpreterPhotoUrl?: string;
   source?: TimesheetSource;
   recordedByStaff?: boolean;
+  serviceCategory?: ServiceCategory;
+  servicePeriod?: string;
+  interpreterSettlementPeriod?: string;
+  settlementCycleId?: string | null;
 }
 
 export type FiscalCategory =
@@ -666,6 +752,10 @@ export interface ClientInvoice extends TenantScopedEntity, SourceTrackingFields 
     requesterLinkedBookings: number;
     fullyScopedBookings: number;
   };
+  serviceCategories?: ServiceCategory[];
+  primaryServiceCategory?: ServiceCategory;
+  xeroInvoiceId?: string;
+  xeroStatus?: string;
 }
 
 export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFields {
@@ -686,6 +776,17 @@ export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFi
   financialIntegrityStatus?: 'VERIFIED' | 'AMOUNT_MISSING' | 'LINK_MISSING' | 'REVIEW_REQUIRED';
   amountSourceField?: string;
   referenceIntegrityStatus?: 'VERIFIED' | 'MISSING';
+  periodStart?: string;
+  periodEnd?: string;
+  settlementPeriod?: string;
+  settlementPeriods?: string[];
+  settlementCycleId?: string;
+  dueDate?: string;
+  paymentStatus?: 'UNPAID' | 'SCHEDULED' | 'PAID' | 'RECONCILED' | 'ISSUE';
+  serviceCategories?: ServiceCategory[];
+  primaryServiceCategory?: ServiceCategory;
+  xeroBillId?: string;
+  xeroStatus?: string;
 }
 
 export interface Rate {

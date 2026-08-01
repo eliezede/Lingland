@@ -1,21 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Calculator, FileText, Loader2, Search } from 'lucide-react';
-import { httpsCallable } from 'firebase/functions';
+import { ArrowUpRight, FileText, Search } from 'lucide-react';
 import { BillingService } from '../../../services/billingService';
-import { functions } from '../../../services/firebaseConfig';
-import { InterpreterInvoice, InvoiceStatus } from '../../../types';
+import { InterpreterInvoice, InvoiceStatus, ServiceCategory } from '../../../types';
 import { InvoiceTable } from '../../../components/billing/InvoiceTable';
 import { TableSkeleton } from '../../../components/ui/Skeleton';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { useToast } from '../../../context/ToastContext';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { WorkspacePagination } from '../../../components/operations/WorkspacePagination';
+import { getServiceLabel, matchesServiceCategory } from '../../../domains/finance/financeLifecycle';
 
 export const AdminInterpreterInvoicesPage = () => {
   const [invoices, setInvoices] = useState<InterpreterInvoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
@@ -23,8 +21,16 @@ export const AdminInterpreterInvoicesPage = () => {
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const scopedInterpreterId = searchParams.get('interpreterId') || '';
+  const serviceCategory = searchParams.get('service') === 'translation'
+    ? ServiceCategory.TRANSLATION
+    : searchParams.get('service') === 'interpretation'
+      ? ServiceCategory.INTERPRETATION
+      : undefined;
+  const periodKey = searchParams.get('period') || '';
   const scopedInterpreterName = invoices.find(inv => inv.interpreterId === scopedInterpreterId)?.interpreterName || 'selected professional';
-  const payablesBoardPath = `/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables${scopedInterpreterId ? `&interpreterId=${encodeURIComponent(scopedInterpreterId)}` : ''}`;
+  const payablesBoardPath = serviceCategory === ServiceCategory.TRANSLATION
+    ? `/admin/finance/payables/translations${periodKey ? `?period=${encodeURIComponent(periodKey)}&view=documents` : '?view=documents'}`
+    : `/admin/finance/payables/interpreting${periodKey ? `?period=${encodeURIComponent(periodKey)}&view=documents` : '?view=documents'}`;
 
   const fetchInvoices = () => {
     setLoading(true);
@@ -44,6 +50,11 @@ export const AdminInterpreterInvoicesPage = () => {
   const filteredInvoices = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
     return invoices.filter(invoice => {
+      if (!matchesServiceCategory(invoice, serviceCategory)) return false;
+      if (periodKey) {
+        const periods = invoice.settlementPeriods || (invoice.settlementPeriod ? [invoice.settlementPeriod] : []);
+        if (!periods.includes(periodKey)) return false;
+      }
       const matchesStatus = statusFilter === 'ALL' || invoice.status === statusFilter;
       if (!matchesStatus) return false;
       if (!query) return true;
@@ -56,11 +67,11 @@ export const AdminInterpreterInvoicesPage = () => {
         invoice.model,
       ].filter(Boolean).some(value => String(value).toLowerCase().includes(query));
     });
-  }, [invoices, searchTerm, statusFilter]);
+  }, [invoices, periodKey, searchTerm, serviceCategory, statusFilter]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, scopedInterpreterId]);
+  }, [searchTerm, statusFilter, scopedInterpreterId, serviceCategory, periodKey]);
 
   const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -68,33 +79,11 @@ export const AdminInterpreterInvoicesPage = () => {
   const pageEndIndex = Math.min(pageStartIndex + pageSize, filteredInvoices.length);
   const paginatedInvoices = filteredInvoices.slice(pageStartIndex, pageEndIndex);
 
-  const handleGenerateInvoices = async () => {
-    setIsGenerating(true);
-    showToast('Calculating settlements and generating invoices...', 'info');
-    try {
-      const processSettlements = httpsCallable(functions, 'generateInterpreterInvoices');
-      const response = await processSettlements();
-      const result = response.data as { success: boolean; count: number; error?: string };
-
-      if (result.success) {
-        showToast(`Generated ${result.count} new invoices successfully!`, 'success');
-        fetchInvoices();
-      } else {
-        throw new Error(result.error || 'Failed to generate');
-      }
-    } catch (e: any) {
-      console.error(e);
-      showToast(e.message || 'Error executing billing bot.', 'error');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Interpreter Invoice Documents"
-        subtitle={scopedInterpreterId ? 'Payable documents filtered from an interpreter profile.' : 'Document registry for uploaded and self-billed interpreter invoices.'}
+        title={`${serviceCategory ? `${getServiceLabel(serviceCategory)} ` : ''}Payable Documents`}
+        subtitle={scopedInterpreterId ? 'Payable documents filtered from a professional profile.' : 'Registry for uploaded invoices and self-billed documents. Monthly processing starts in Accounts Payable.'}
       >
         <div className="flex flex-wrap items-center gap-2">
           {scopedInterpreterId && (
@@ -105,22 +94,22 @@ export const AdminInterpreterInvoicesPage = () => {
           <Link to={payablesBoardPath} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800">
             Finance queue <ArrowUpRight size={15} />
           </Link>
-          {!scopedInterpreterId && (
-            <button
-              onClick={handleGenerateInvoices}
-              disabled={isGenerating || loading}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white"
-            >
-              {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Calculator size={16} />}
-              Process Settlements
-            </button>
+          {!scopedInterpreterId && !serviceCategory && (
+            <>
+              <Link to="/admin/finance/payables/interpreting" className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800">
+                Interpreting cycles <ArrowUpRight size={15} />
+              </Link>
+              <Link to="/admin/finance/payables/translations" className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-bold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950">
+                Translation cycles <ArrowUpRight size={15} />
+              </Link>
+            </>
           )}
         </div>
       </PageHeader>
 
       {scopedInterpreterId && (
         <div className="rounded-md border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
-          Showing interpreter invoices for <span className="font-black">{scopedInterpreterName}</span>. Settlement processing is available from the full invoices list.
+          Showing payable documents for <span className="font-black">{scopedInterpreterName}</span>. Monthly settlement processing is controlled from the relevant Accounts Payable workspace.
         </div>
       )}
 

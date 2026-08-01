@@ -5,8 +5,8 @@ import {
   LayoutDashboard, CalendarDays, Users, Briefcase,
   LogOut, Globe2, Menu, FileText, PoundSterling,
   UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
-  UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert
+  UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon, Receipt,
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert, Cable
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -76,7 +76,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: 'CORE', label: 'Command', icon: LayoutDashboard, rootPath: '/admin/dashboard', module: SystemModule.DASHBOARD },
     { id: 'OPS', label: 'Job Centre', icon: Briefcase, rootPath: '/admin/bookings', module: SystemModule.BOOKINGS },
     { id: 'NET', label: 'Network', icon: Users, rootPath: '/admin/interpreters', modules: [SystemModule.INTERPRETERS, SystemModule.CLIENTS, SystemModule.RECRUITMENT] },
-    { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/billing', module: SystemModule.FINANCE },
+    { id: 'FIN', label: 'Finance', icon: PoundSterling, rootPath: '/admin/finance/overview', module: SystemModule.FINANCE },
     { id: 'REPORTS', label: 'Reports', icon: BarChart3, rootPath: '/admin/reports', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.INTERPRETERS, SystemModule.CLIENTS] },
     { id: 'AI', label: 'AI Command', icon: Bot, rootPath: '/admin/ai-command', modules: [SystemModule.BOOKINGS, SystemModule.FINANCE, SystemModule.SYSTEM_CONFIG, SystemModule.AUDIT_LOGS] },
     { id: 'COMMS', label: 'Comms', icon: MessageSquare, rootPath: '/admin/messages', modules: [SystemModule.MESSAGES] },
@@ -329,21 +329,19 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                 </div>
               )}
 
-                {activeCategory === 'FIN' && (
-                  <div className="space-y-4">
-                   {!isSecondarySlim && <div className="sidebar-group-label">Finance CRM</div>}
-                   <NavItem to={buildBoardModePath('/admin/billing', 'table')} icon={PoundSterling} label="Finance Board" active={isFinanceBoardView()} isCollapsed={isSecondarySlim} />
-                   <NavItem to={buildBoardModePath('/admin/billing', 'calendar')} icon={CalendarDays} label="Calendar" active={isFinanceCalendarView} isCollapsed={isSecondarySlim} />
-                    {!isSecondarySlim && <div className="sidebar-group-label">Service scope</div>}
-                   <NavItem to={buildScopedBoardPath('/admin/billing', 'interpreting')} icon={Users} label="Interpreting" active={location.pathname === '/admin/billing' && serviceScopeParam === 'interpreting'} isCollapsed={isSecondarySlim} />
-                   <NavItem to={buildScopedBoardPath('/admin/billing', 'translation')} icon={FileText} label="Translation" active={location.pathname === '/admin/billing' && serviceScopeParam === 'translation'} isCollapsed={isSecondarySlim} />
-                  {serviceScopeParam && location.pathname === '/admin/billing' && (
-                    <NavItem to={buildScopedBoardPath('/admin/billing')} icon={Briefcase} label="All services" active={false} isCollapsed={isSecondarySlim} />
-                  )}
-                    {!isSecondarySlim && <div className="sidebar-group-label">Accounting</div>}
-                    <NavItem to="/admin/billing/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/billing/overview'} isCollapsed={isSecondarySlim} />
-                  </div>
-                )}
+              {activeCategory === 'FIN' && (
+                <div className="space-y-4">
+                  {!isSecondarySlim && <div className="sidebar-group-label">Finance control</div>}
+                  <NavItem to="/admin/finance/overview" icon={BarChart3} label="Overview" active={location.pathname === '/admin/finance/overview'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/finance/receivables" icon={PoundSterling} label="Accounts Receivable" active={isActive('/admin/finance/receivables')} isCollapsed={isSecondarySlim} />
+                  {!isSecondarySlim && <div className="sidebar-group-label">Accounts Payable</div>}
+                  <NavItem to="/admin/finance/payables/interpreting" icon={Users} label="Interpreting" active={isActive('/admin/finance/payables/interpreting')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/finance/payables/translations" icon={FileText} label="Translations" active={isActive('/admin/finance/payables/translations')} isCollapsed={isSecondarySlim} />
+                  {!isSecondarySlim && <div className="sidebar-group-label">Documents</div>}
+                  <NavItem to="/admin/billing/client-invoices" icon={Receipt} label="Client Invoices" active={isActive('/admin/billing/client-invoices')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/billing/interpreter-invoices" icon={ClipboardList} label="Payable Documents" active={isActive('/admin/billing/interpreter-invoices')} isCollapsed={isSecondarySlim} />
+                </div>
+              )}
 
               {activeCategory === 'REPORTS' && (
                 <div className="space-y-4">
@@ -382,6 +380,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   {!isSecondarySlim && <div className="sidebar-group-label">System</div>}
                   <NavItem to="/admin/users" icon={UserCog} label="Users & Roles" active={isActive('/admin/users')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/settings" icon={Settings} label="System Config" active={location.pathname === '/admin/settings'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/administration/integrations" icon={Cable} label="Integrations" active={isActive('/admin/administration/integrations')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/ai" icon={BrainCircuit} label="AI Governance" active={isActive('/admin/administration/ai')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/migration" icon={Database} label="Airtable Migration" active={isActive('/admin/administration/migration')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/data" icon={Database} label="Data Center" active={isActive('/admin/administration/data')} isCollapsed={isSecondarySlim} />

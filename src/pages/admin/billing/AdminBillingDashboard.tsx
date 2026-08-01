@@ -15,7 +15,8 @@ import {
 import { BillingService } from '../../../services/billingService';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { useBookings } from '../../../hooks/useBookings';
-import { Booking, BookingStatus, ServiceCategory } from '../../../types';
+import { BookingStatus, ClientInvoice, ServiceCategory } from '../../../types';
+import { getInvoiceReceivableStatus, getPayableStatus, getReceivableStatus } from '../../../domains/finance/financeLifecycle';
 
 type FinanceTileTone = 'blue' | 'amber' | 'emerald' | 'rose' | 'slate';
 
@@ -60,7 +61,7 @@ const FinanceTile: React.FC<FinanceTileProps> = ({ label, value, meta, to, icon:
   </Link>
 );
 
-const sumTotal = (jobs: Booking[]) => jobs.reduce((sum, job) => sum + (Number(job.totalAmount) || 0), 0);
+const sumTotal = (records: Array<{ totalAmount?: number }>) => records.reduce((sum, record) => sum + (Number(record.totalAmount) || 0), 0);
 
 export const AdminBillingDashboard = () => {
   const { bookings, loading: jobsLoading } = useBookings();
@@ -71,18 +72,23 @@ export const AdminBillingDashboard = () => {
     pendingTimesheets: 0,
   });
   const [statsLoading, setStatsLoading] = useState(true);
+  const [clientInvoices, setClientInvoices] = useState<ClientInvoice[]>([]);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
         setStatsLoading(true);
-        const data = await BillingService.getDashboardStats();
+        const [data, invoiceDocuments] = await Promise.all([
+          BillingService.getDashboardStats(),
+          BillingService.getClientInvoices(),
+        ]);
         setStats(data || {
           pendingClientInvoices: 0,
           pendingClientAmount: 0,
           pendingInterpreterInvoices: 0,
           pendingTimesheets: 0,
         });
+        setClientInvoices(invoiceDocuments);
       } catch (error) {
         console.error('Failed to fetch dashboard stats', error);
       } finally {
@@ -95,9 +101,11 @@ export const AdminBillingDashboard = () => {
   const financeMetrics = useMemo(() => {
     const timesheetNeeded = bookings.filter(job => job.status === BookingStatus.SESSION_COMPLETED);
     const timesheetReview = bookings.filter(job => job.status === BookingStatus.TIMESHEET_SUBMITTED);
-    const readyForClientInvoice = bookings.filter(job => [BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING].includes(job.status));
-    const awaitingPayment = bookings.filter(job => job.status === BookingStatus.INVOICED);
-    const paid = bookings.filter(job => job.status === BookingStatus.PAID);
+    const readyForClientInvoice = bookings.filter(job => getReceivableStatus(job) === 'READY');
+    const awaitingPayment = clientInvoices.filter(invoice => ['ISSUED', 'OVERDUE', 'PARTIALLY_PAID'].includes(getInvoiceReceivableStatus(invoice)));
+    const paid = clientInvoices.filter(invoice => getInvoiceReceivableStatus(invoice) === 'PAID');
+    const interpretingPayables = bookings.filter(job => job.serviceCategory !== ServiceCategory.TRANSLATION && getPayableStatus(job) !== 'NOT_ELIGIBLE');
+    const translationPayables = bookings.filter(job => job.serviceCategory === ServiceCategory.TRANSLATION && getPayableStatus(job) !== 'NOT_ELIGIBLE');
     const missingBillingData = bookings.filter(job => (
       [BookingStatus.SESSION_COMPLETED, BookingStatus.TIMESHEET_SUBMITTED, BookingStatus.TIMESHEET_VERIFIED, BookingStatus.READY_FOR_INVOICE, BookingStatus.INVOICING].includes(job.status)
       && (!job.costCode || !job.totalAmount)
@@ -113,13 +121,15 @@ export const AdminBillingDashboard = () => {
       readyForClientInvoice,
       awaitingPayment,
       paid,
+      interpretingPayables,
+      translationPayables,
       missingBillingData,
       translationBilling,
       readyAmount: sumTotal(readyForClientInvoice),
       awaitingAmount: sumTotal(awaitingPayment),
       paidAmount: sumTotal(paid),
     };
-  }, [bookings]);
+  }, [bookings, clientInvoices]);
 
   const loading = jobsLoading || statsLoading;
 
@@ -127,17 +137,17 @@ export const AdminBillingDashboard = () => {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Finance CRM Overview</p>
-          <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Accounts control room</h1>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Finance / Overview</p>
+          <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Finance control room</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-            Executive view for Accounts: monitor billing queues here, then work the actual records inside Finance Board views.
+            A clear handoff from delivered work to client collections and monthly professional settlements.
           </p>
         </div>
         <Link
-          to="/admin/billing?view=fin-billing-queue&lane=clientBilling"
+          to="/admin/finance/receivables"
           className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-blue-700"
         >
-          <PoundSterling size={16} /> Open Finance Board
+          <PoundSterling size={16} /> Open Accounts Receivable
         </Link>
       </div>
 
@@ -146,16 +156,16 @@ export const AdminBillingDashboard = () => {
           label="Ready for client invoice"
           value={financeMetrics.readyForClientInvoice.length}
           meta={money(financeMetrics.readyAmount)}
-          to="/admin/billing?view=fin-ready-client-invoice&lane=clientBilling"
+          to="/admin/finance/receivables?queue=READY"
           icon={Receipt}
           tone="blue"
           loading={loading}
         />
         <FinanceTile
-          label="Awaiting payment"
+          label="Outstanding invoices"
           value={financeMetrics.awaitingPayment.length}
           meta={money(financeMetrics.awaitingAmount)}
-          to="/admin/billing?view=fin-awaiting-payment&lane=clientBilling"
+          to="/admin/finance/receivables?queue=ISSUED"
           icon={Clock}
           tone="amber"
           loading={loading}
@@ -164,7 +174,7 @@ export const AdminBillingDashboard = () => {
           label="Timesheet review"
           value={financeMetrics.timesheetReview.length || stats.pendingTimesheets}
           meta={`${financeMetrics.timesheetNeeded.length} need manual timesheet`}
-          to="/admin/billing?view=fin-timesheets&lane=interpreterPayables"
+          to="/admin/operations/timesheets"
           icon={FileText}
           tone="emerald"
           loading={loading}
@@ -173,7 +183,7 @@ export const AdminBillingDashboard = () => {
           label="Billing exceptions"
           value={financeMetrics.missingBillingData.length}
           meta="Missing PO, cost code or amount"
-          to="/admin/billing?view=fin-missing-billing-data&lane=clientBilling"
+          to="/admin/finance/receivables?queue=READY"
           icon={AlertCircle}
           tone="rose"
           loading={loading}
@@ -184,39 +194,39 @@ export const AdminBillingDashboard = () => {
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
             <div>
-              <h2 className="text-sm font-black text-slate-950 dark:text-white">Operational finance lanes</h2>
-              <p className="text-xs text-slate-500">Same jobs table, focused by Accounts workflow.</p>
+              <h2 className="text-sm font-black text-slate-950 dark:text-white">Finance workspaces</h2>
+              <p className="text-xs text-slate-500">Receivables and payables have independent states, owners and monthly controls.</p>
             </div>
             <BarChart3 size={18} className="text-slate-400" />
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {[
               {
-                label: 'Billing Queue',
-                description: 'Delivered jobs moving through timesheet, invoice and payment readiness.',
-                count: financeMetrics.timesheetNeeded.length + financeMetrics.timesheetReview.length + financeMetrics.readyForClientInvoice.length,
-                to: '/admin/billing?view=fin-billing-queue&lane=clientBilling',
+                label: 'Accounts Receivable',
+                description: 'Client invoice preparation, issuance, collections and overdue work.',
+                count: financeMetrics.readyForClientInvoice.length + financeMetrics.awaitingPayment.length,
+                to: '/admin/finance/receivables',
                 icon: Receipt,
               },
               {
-                label: 'Interpreter Payables',
-                description: 'Interpreter-side claims, submitted timesheets and payable preparation.',
-                count: stats.pendingInterpreterInvoices || financeMetrics.timesheetReview.length,
-                to: '/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables',
+                label: 'Accounts Payable - Interpreting',
+                description: 'Monthly interpreter settlement cycles and payable documents.',
+                count: financeMetrics.interpretingPayables.length,
+                to: '/admin/finance/payables/interpreting',
                 icon: Users,
               },
               {
-                label: 'Translation Invoices',
-                description: 'Translation jobs that converge into the same billing workflow.',
-                count: financeMetrics.translationBilling.length,
-                to: '/admin/billing?view=fin-translation-invoices&lane=clientBilling',
+                label: 'Accounts Payable - Translations',
+                description: 'Monthly translator settlement cycles kept separate from interpreting.',
+                count: financeMetrics.translationPayables.length,
+                to: '/admin/finance/payables/translations',
                 icon: FileText,
               },
               {
-                label: 'Profit Review',
-                description: 'Invoice-ready, invoiced and paid work for margin review.',
-                count: financeMetrics.readyForClientInvoice.length + financeMetrics.awaitingPayment.length + financeMetrics.paid.length,
-                to: '/admin/billing?view=fin-profit-review&lane=clientBilling',
+                label: 'Finance Reports',
+                description: 'Revenue, cost, margin and operational-finance reporting.',
+                count: `${clientInvoices.length} docs`,
+                to: '/admin/reports?report=FINANCE_OVERVIEW',
                 icon: BarChart3,
               },
             ].map(item => (
@@ -242,11 +252,11 @@ export const AdminBillingDashboard = () => {
           </div>
           <div className="space-y-3 p-4">
             <div className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 dark:border-slate-800">
-              <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Pending invoice amount</span>
+              <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Draft and issued amount</span>
               {loading ? <Skeleton className="h-5 w-20" /> : <span className="text-sm font-black text-slate-950 dark:text-white">{money(stats.pendingClientAmount || financeMetrics.readyAmount)}</span>}
             </div>
             <div className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 dark:border-slate-800">
-              <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Paid jobs value</span>
+              <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Collected invoice value</span>
               {loading ? <Skeleton className="h-5 w-20" /> : <span className="text-sm font-black text-slate-950 dark:text-white">{money(financeMetrics.paidAmount)}</span>}
             </div>
             <div className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 dark:border-slate-800">

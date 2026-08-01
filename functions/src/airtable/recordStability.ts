@@ -5,6 +5,53 @@ type AirtableLikeRecord = {
   fields: Record<string, unknown>;
 };
 
+type AirtableAttachmentLike = {
+  id?: unknown;
+  filename?: unknown;
+  name?: unknown;
+  type?: unknown;
+  size?: unknown;
+  url?: unknown;
+};
+
+const text = (value: unknown): string => String(value || '').trim();
+
+const stableUrl = (value: unknown): string => {
+  const raw = text(value);
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return raw.split(/[?#]/)[0];
+  }
+};
+
+export const stabilizeAirtableAttachments = (attachments: unknown[]): unknown[] => attachments
+  .map(attachment => {
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+      const url = stableUrl(attachment);
+      return url ? { url } : null;
+    }
+
+    const value = attachment as AirtableAttachmentLike;
+    const id = text(value.id);
+    const name = text(value.filename) || text(value.name);
+    const type = text(value.type);
+    const size = Number(value.size);
+    const url = id || name ? '' : stableUrl(value.url);
+    if (!id && !name && !url) return null;
+    return {
+      ...(id ? { id } : {}),
+      ...(name ? { name } : {}),
+      ...(type ? { type } : {}),
+      ...(Number.isFinite(size) && size > 0 ? { size } : {}),
+      ...(url ? { url } : {}),
+    };
+  })
+  .filter(Boolean)
+  .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+
 const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {

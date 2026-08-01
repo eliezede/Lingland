@@ -32,7 +32,43 @@ const collectFieldValues = (fields, names) => {
     });
     return unique(collected);
 };
+const collectExactFieldValues = (fields, names) => {
+    const requested = new Set(names.map(normalizeFieldName));
+    const collected = [];
+    Object.entries(fields).forEach(([fieldName, value]) => {
+        if (requested.has(normalizeFieldName(fieldName))) {
+            collected.push(...values(value));
+        }
+    });
+    return unique(collected);
+};
 const unique = (input) => Array.from(new Set(input.map(value => value.trim()).filter(Boolean)));
+const addAccountRefSupport = (index, key, accountRefs) => {
+    if (!key)
+        return;
+    const support = index.get(key) || new Map();
+    accountRefs.forEach(accountRef => {
+        support.set(accountRef, (support.get(accountRef) || 0) + 1);
+    });
+    index.set(key, support);
+};
+const collectAccountRefSupport = (index, keys) => {
+    const combined = new Map();
+    unique(keys).forEach(key => {
+        index.get(key)?.forEach((count, accountRef) => {
+            combined.set(accountRef, (combined.get(accountRef) || 0) + count);
+        });
+    });
+    return combined;
+};
+const dominantAccountRef = (support) => {
+    const ranked = Array.from(support.entries()).sort((a, b) => (b[1] - a[1] || a[0].localeCompare(b[0])));
+    if (ranked.length < 2)
+        return '';
+    const [topRef, topCount] = ranked[0];
+    const runnerUpCount = ranked[1][1];
+    return topCount >= 5 && topCount >= runnerUpCount * 3 ? topRef : '';
+};
 const normalizeTranslationClientName = (value) => value
     .toLowerCase()
     .replace(/&/g, ' and ')
@@ -41,6 +77,14 @@ const normalizeTranslationClientName = (value) => value
     .trim()
     .replace(/\s+/g, ' ');
 exports.normalizeTranslationClientName = normalizeTranslationClientName;
+const translationAgencyEvidenceKey = (value) => {
+    const normalized = (0, exports.normalizeTranslationClientName)(value)
+        .replace(/\bethnic minority traveller achievement\b/g, ' emtas ')
+        .replace(/\bhampshire county council\b/g, ' hcc ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return Array.from(new Set(normalized.split(' ').filter(Boolean))).sort().join(' ');
+};
 const accountRefFromTranslationInvoice = (invoiceNumber) => {
     const normalized = invoiceNumber.trim().toUpperCase();
     if (!normalized || /^REC[A-Z0-9]+$/.test(normalized))
@@ -49,15 +93,21 @@ const accountRefFromTranslationInvoice = (invoiceNumber) => {
     if (!match)
         return '';
     const candidate = match[1];
-    return ['AIRTABLE', 'INVOICE', 'TRANSLATION'].includes(candidate) ? '' : candidate;
+    return ['AIRTABLE', 'INVOICE', 'TRANSLATION', 'LOSS'].includes(candidate) ? '' : candidate;
 };
 exports.accountRefFromTranslationInvoice = accountRefFromTranslationInvoice;
 const buildTranslationClientEvidence = (records) => {
     const evidence = new Map();
+    const refsByEmail = new Map();
+    const refsByAgency = new Map();
     records.forEach(record => {
-        const linkedTranslationIds = collectFieldValues(record.fields, [
+        // Only the actual linked-record field may establish invoice ownership.
+        // Lookup fields such as "Assign to (from Translations)" can also contain
+        // Airtable record IDs and must never be interpreted as translation IDs.
+        const linkedTranslationIds = collectExactFieldValues(record.fields, [
             'Translations',
             'TR ID',
+            'TR ID (from Translations)',
         ]).filter(value => /^rec[a-z0-9]+$/i.test(value));
         if (linkedTranslationIds.length === 0)
             return;
@@ -73,6 +123,12 @@ const buildTranslationClientEvidence = (records) => {
         const agencyNames = collectFieldValues(record.fields, ['TR Agency']);
         const requestedByNames = collectFieldValues(record.fields, ['TR Requested By']);
         const emails = collectFieldValues(record.fields, ['TR client email']).map(value => value.toLowerCase());
+        if (accountRefs.length === 1) {
+            agencyNames.forEach(agency => {
+                addAccountRefSupport(refsByAgency, translationAgencyEvidenceKey(agency), accountRefs);
+            });
+            emails.forEach(email => addAccountRefSupport(refsByEmail, email.toLowerCase(), accountRefs));
+        }
         linkedTranslationIds.forEach(translationRecordId => {
             const current = evidence.get(translationRecordId) || {
                 translationRecordId,
@@ -80,6 +136,8 @@ const buildTranslationClientEvidence = (records) => {
                 invoiceNumbers: [],
                 accountRefs: [],
                 candidateAccountRefs: [],
+                agencyCandidateAccountRefs: [],
+                emailCandidateAccountRefs: [],
                 agencyNames: [],
                 requestedByNames: [],
                 emails: [],
@@ -93,6 +151,8 @@ const buildTranslationClientEvidence = (records) => {
                 invoiceNumbers: unique([...current.invoiceNumbers, ...invoiceNumbers]),
                 accountRefs: mergedAccountRefs,
                 candidateAccountRefs: mergedAccountRefs,
+                agencyCandidateAccountRefs: current.agencyCandidateAccountRefs,
+                emailCandidateAccountRefs: current.emailCandidateAccountRefs,
                 agencyNames: unique([...current.agencyNames, ...agencyNames]),
                 requestedByNames: unique([...current.requestedByNames, ...requestedByNames]),
                 emails: unique([...current.emails, ...emails]),
@@ -101,38 +161,38 @@ const buildTranslationClientEvidence = (records) => {
             });
         });
     });
-    const refsByEmail = new Map();
-    const refsByAgency = new Map();
-    const addRefs = (index, key, refs) => {
-        if (!key)
-            return;
-        const current = index.get(key) || new Set();
-        refs.forEach(ref => current.add(ref));
-        index.set(key, current);
-    };
-    evidence.forEach(item => {
-        if (item.accountRefs.length !== 1 || item.accountRefAmbiguous)
-            return;
-        item.emails.forEach(email => addRefs(refsByEmail, email.toLowerCase(), item.accountRefs));
-        item.agencyNames.forEach(agency => addRefs(refsByAgency, (0, exports.normalizeTranslationClientName)(agency), item.accountRefs));
-    });
     evidence.forEach((item, translationRecordId) => {
         if (item.accountRefs.length > 0)
             return;
-        const emailRefs = unique(item.emails.flatMap(email => Array.from(refsByEmail.get(email.toLowerCase()) || [])));
-        const agencyRefs = unique(item.agencyNames.flatMap(agency => (Array.from(refsByAgency.get((0, exports.normalizeTranslationClientName)(agency)) || []))));
-        const inferredRefs = emailRefs.length === 1 ? emailRefs : agencyRefs.length === 1 ? agencyRefs : [];
+        const emailSupport = collectAccountRefSupport(refsByEmail, item.emails.map(email => email.toLowerCase()));
+        const agencySupport = collectAccountRefSupport(refsByAgency, item.agencyNames.map(translationAgencyEvidenceKey));
+        const emailRefs = Array.from(emailSupport.keys());
+        const agencyRefs = Array.from(agencySupport.keys());
+        const dominantAgency = dominantAccountRef(agencySupport);
         const competingRefs = unique([...emailRefs, ...agencyRefs]);
+        // An exact organisation/department label is stronger than a shared requester email.
+        // The same agent may place work for more than one department under a parent client.
+        const inferredRefs = agencyRefs.length === 1
+            ? agencyRefs
+            : dominantAgency
+                ? [dominantAgency]
+                : emailRefs.length === 1 && (agencyRefs.length === 0 || agencyRefs.includes(emailRefs[0]))
+                    ? emailRefs
+                    : [];
         evidence.set(translationRecordId, {
             ...item,
             accountRefs: inferredRefs,
             candidateAccountRefs: competingRefs,
+            agencyCandidateAccountRefs: agencyRefs,
+            emailCandidateAccountRefs: emailRefs,
             accountRefAmbiguous: competingRefs.length > 1 && inferredRefs.length === 0,
-            accountRefSource: emailRefs.length === 1
-                ? 'SHARED_EMAIL'
-                : agencyRefs.length === 1
-                    ? 'EXACT_AGENCY'
-                    : '',
+            accountRefSource: agencyRefs.length === 1
+                ? 'EXACT_AGENCY'
+                : dominantAgency
+                    ? 'DOMINANT_AGENCY'
+                    : inferredRefs.length === 1
+                        ? 'SHARED_EMAIL'
+                        : '',
         });
     });
     return evidence;

@@ -56,6 +56,7 @@ const auditWriter_1 = require("../audit/auditWriter");
 const financialLinkIntegrity_1 = require("./financialLinkIntegrity");
 const clientInvoiceAggregation_1 = require("./clientInvoiceAggregation");
 const linkedRecordExtraction_1 = require("./linkedRecordExtraction");
+const airtableSourcePolicy_1 = require("./airtableSourcePolicy");
 const db = admin.firestore();
 const DEFAULT_BASE_ID = 'appnglRJzSscwJJph'; // Lingland MASTER 24 NEW
 const DEFAULT_TABLE_NAME = 'REDBOOK';
@@ -700,6 +701,9 @@ const resolveClient = async (source, dryRun, allowCreate = true, allowNormalized
         sageAccountRef: source.sageAccountRef || '',
         invoiceContact: source.invoiceContact || '',
         invoiceEmail: source.invoiceEmail || '',
+        crmCohort: 'INCOMING',
+        crmReviewStatus: 'UNREVIEWED',
+        crmCohortAssignedAt: new Date().toISOString(),
         sourceSystem: 'AIRTABLE',
         sourceKey,
         airtableClientKey: source.uniqueClientKey || source.clientName,
@@ -1997,9 +2001,11 @@ const mapTranslationRecordToBooking = async (record, tableName, invoiceEvidence)
     const finalQuote = safeNumber(pickRaw(fields, ['FINAL QUOTE', 'FQ+VAT', 'OUR FEE']));
     const format = pick(fields, ['Format for client', 'Web Format', 'Other formats']);
     const notes = pick(fields, ['TR Notes', 'Notes', 'RTR INV COMMENTS']);
-    const sourceFiles = asArray(pickRaw(fields, ['Document to Translate', 'Documents']))
+    const rawSourceFiles = asArray(pickRaw(fields, ['Document to Translate', 'Documents']));
+    const sourceFiles = rawSourceFiles
         .map(mapAirtableAttachment)
         .filter(Boolean);
+    const sourceFileSnapshot = (0, recordStability_1.stabilizeAirtableAttachments)(rawSourceFiles);
     const sourceSnapshot = {
         tableName,
         legacyRef,
@@ -2013,6 +2019,8 @@ const mapTranslationRecordToBooking = async (record, tableName, invoiceEvidence)
                 invoiceNumbers: invoiceEvidence.invoiceNumbers,
                 accountRefs: invoiceEvidence.accountRefs,
                 candidateAccountRefs: invoiceEvidence.candidateAccountRefs,
+                agencyCandidateAccountRefs: invoiceEvidence.agencyCandidateAccountRefs,
+                emailCandidateAccountRefs: invoiceEvidence.emailCandidateAccountRefs,
                 agencyNames: invoiceEvidence.agencyNames,
                 requestedByNames: invoiceEvidence.requestedByNames,
                 emails: invoiceEvidence.emails,
@@ -2037,7 +2045,7 @@ const mapTranslationRecordToBooking = async (record, tableName, invoiceEvidence)
         deliveredAt,
         sourceLanguage,
         notes,
-        sourceFiles,
+        sourceFiles: sourceFileSnapshot,
         status: statusMapping.status,
         statusRaw: statusMapping.rawStatus,
         statusMappingState: statusMapping.state
@@ -2110,6 +2118,9 @@ const mapTranslationRecordToBooking = async (record, tableName, invoiceEvidence)
 const cleanData = (data) => {
     return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
 };
+const hashSnapshotComponents = (snapshot) => Object.fromEntries(Object.entries(snapshot)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, stableHash(value)]));
 const cleanReportData = (data) => JSON.parse(JSON.stringify(data, (_key, value) => {
     if (value && typeof value === 'object' && typeof value._seconds === 'number') {
         return new Date(value._seconds * 1000 + Math.floor((value._nanoseconds || 0) / 1000000)).toISOString();
@@ -2261,6 +2272,11 @@ const syncClients = async (records, tableName, mode, runId) => {
                     ...mapped.client,
                     id: clientRef.id,
                     lastSyncRunId: runId,
+                    ...(!existing.exists ? {
+                        crmCohort: 'INCOMING',
+                        crmReviewStatus: 'UNREVIEWED',
+                        crmCohortAssignedAt: new Date().toISOString(),
+                    } : {}),
                     createdAt: existing.exists ? existingData?.createdAt : admin.firestore.FieldValue.serverTimestamp()
                 }, { merge: true });
             }
@@ -2579,6 +2595,9 @@ const syncClientBookHierarchy = async (records, departmentRecords, clientIdBySou
                 defaultCostCodeType: clientSnapshot.exists ? undefined : 'Client Name',
                 billingAddress: clientSnapshot.exists ? undefined : 'Address Pending Update',
                 sourceSystem: clientSnapshot.exists ? undefined : 'AIRTABLE',
+                crmCohort: clientSnapshot.exists ? undefined : 'INCOMING',
+                crmReviewStatus: clientSnapshot.exists ? undefined : 'UNREVIEWED',
+                crmCohortAssignedAt: clientSnapshot.exists ? undefined : new Date().toISOString(),
                 sourceBaseId: clientSnapshot.exists ? undefined : DEFAULT_BASE_ID,
                 sourceTable: clientSnapshot.exists ? undefined : CLIENTS_BOOK_TABLE,
                 sourceRecordId: clientSnapshot.exists ? undefined : projection.sourceRecordIds[0],
@@ -2788,6 +2807,21 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
     };
     for (const record of records) {
         try {
+            const sourceExclusion = (0, airtableSourcePolicy_1.getAirtableSourceExclusion)(tableName, record.id);
+            if (sourceExclusion) {
+                stats.skipped += 1;
+                if (details.length < MODULE_DETAIL_LIMIT) {
+                    details.push({
+                        action: 'skipped',
+                        sourceRecordId: record.id,
+                        sourceTable: tableName,
+                        skipReason: 'SOURCE_RECORD_EXCLUDED',
+                        exclusionReason: sourceExclusion.reason,
+                    });
+                }
+                markConflictScopeProcessed(conflictContext, tableName, record.id);
+                continue;
+            }
             const mapped = await mapTranslationRecordToBooking(record, tableName, clientEvidenceByTranslationId.get(record.id));
             if (!mode.dryRun && runId)
                 mapped.booking.lastSyncRunId = runId;
@@ -2850,6 +2884,7 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                 existing = existingSnap.exists ? existingSnap.data() || null : null;
             }
             mapped.booking.status = (0, statusMapping_1.preserveStatusIfLocalAhead)(existing?.status, mapped.booking.status, sourceOfTruth);
+            const conflictReasons = [];
             const unresolvedClient = clientResolution.action.startsWith('unresolved');
             if (unresolvedClient) {
                 const currentClientId = normalize(existing?.clientId);
@@ -2863,6 +2898,7 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                 mapped.booking.syncStatus = 'CONFLICT';
                 if (!clientEvidenceAmbiguous) {
                     stats.conflict += 1;
+                    conflictReasons.push('CLIENT_NOT_RESOLVED');
                     countDiagnostic(diagnostics.conflictReasons, 'CLIENT_NOT_RESOLVED');
                     await writeSyncConflict({
                         runId,
@@ -2887,6 +2923,9 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                 || mapped.sourceSnapshot.translatorAirtableRecordId);
             const unresolvedTranslator = hasTranslatorSignal && !mapped.booking.interpreterId;
             if (unresolvedTranslator) {
+                const professionalConflictReason = mapped.sourceSnapshot.translatorAmbiguousCandidates?.length
+                    ? 'PROFESSIONAL_MATCH_AMBIGUOUS'
+                    : 'PROFESSIONAL_NOT_RESOLVED';
                 const professionalKey = mapped.sourceSnapshot.translatorAirtableRecordId
                     || mapped.sourceSnapshot.translatorEmail
                     || (0, identityMatching_1.normalizeIdentityName)(mapped.sourceSnapshot.translatorName)
@@ -2906,9 +2945,8 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                 });
                 mapped.booking.syncStatus = 'CONFLICT';
                 stats.conflict += 1;
-                countDiagnostic(diagnostics.conflictReasons, mapped.sourceSnapshot.translatorAmbiguousCandidates?.length
-                    ? 'PROFESSIONAL_MATCH_AMBIGUOUS'
-                    : 'PROFESSIONAL_NOT_RESOLVED');
+                conflictReasons.push(professionalConflictReason);
+                countDiagnostic(diagnostics.conflictReasons, professionalConflictReason);
                 await writeSyncConflict({
                     runId,
                     entityType: 'booking',
@@ -2918,7 +2956,7 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                     sourceBaseId: mapped.booking.sourceBaseId,
                     legacyRef: mapped.booking.legacyAirtableRef,
                     severity: mapped.sourceSnapshot.translatorAmbiguousCandidates?.length ? 'HIGH' : 'MEDIUM',
-                    reason: mapped.sourceSnapshot.translatorAmbiguousCandidates?.length ? 'PROFESSIONAL_MATCH_AMBIGUOUS' : 'PROFESSIONAL_NOT_RESOLVED',
+                    reason: professionalConflictReason,
                     currentValue: mapped.sourceSnapshot.translatorAmbiguousCandidates || [],
                     incomingValue: {
                         name: mapped.sourceSnapshot.translatorName,
@@ -2933,6 +2971,7 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
             if (clientEvidenceAmbiguous) {
                 mapped.booking.syncStatus = 'CONFLICT';
                 stats.conflict += 1;
+                conflictReasons.push('CLIENT_ACCOUNT_REF_AMBIGUOUS');
                 countDiagnostic(diagnostics.conflictReasons, 'CLIENT_ACCOUNT_REF_AMBIGUOUS');
                 await writeSyncConflict({
                     runId,
@@ -2963,6 +3002,7 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
             if (existing?.status && existing.status !== mapped.booking.status && sourceOfTruth !== 'AIRTABLE') {
                 mapped.booking.syncStatus = 'CONFLICT';
                 stats.conflict += 1;
+                conflictReasons.push('STATUS_SOURCE_OF_TRUTH_MISMATCH');
                 countDiagnostic(diagnostics.conflictReasons, 'STATUS_SOURCE_OF_TRUTH_MISMATCH');
                 await writeSyncConflict({
                     runId,
@@ -3037,17 +3077,29 @@ const syncTranslationBookings = async (records, tableName, mode, sourceOfTruth, 
                     sourceBaseId: mapped.booking.sourceBaseId,
                     sourceTable: tableName,
                     snapshotHash: mapped.booking.snapshotHash,
+                    existingBookingId: existingSnap?.id || '',
+                    existingAirtableSnapshotHash: normalize(existing?.airtableSnapshotHash),
+                    incomingAirtableSnapshotHash: normalize(mapped.booking.airtableSnapshotHash),
+                    snapshotComponentHashes: hashSnapshotComponents(mapped.sourceSnapshot),
+                    sourceBackfillNeeded,
                     jobNumber: mapped.booking.jobNumber,
                     displayRef: mapped.booking.displayRef,
                     clientName: mapped.booking.clientName,
                     clientId: mapped.booking.clientId,
                     clientAction: clientResolution.action,
+                    clientAccountRefSource: mapped.sourceSnapshot.clientIdentityEvidence?.accountRefSource,
+                    clientAccountRefs: mapped.sourceSnapshot.clientIdentityEvidence?.accountRefs,
+                    clientCandidateAccountRefs: mapped.sourceSnapshot.clientIdentityEvidence?.candidateAccountRefs,
+                    clientAgencyCandidateAccountRefs: mapped.sourceSnapshot.clientIdentityEvidence?.agencyCandidateAccountRefs,
+                    clientEmailCandidateAccountRefs: mapped.sourceSnapshot.clientIdentityEvidence?.emailCandidateAccountRefs,
+                    clientAgencyNames: mapped.sourceSnapshot.clientIdentityEvidence?.agencyNames,
                     interpreterName: mapped.booking.interpreterName,
                     interpreterId: mapped.booking.interpreterId,
                     interpreterResolved: Boolean(mapped.booking.interpreterId),
                     interpreterMatchMethod: mapped.sourceSnapshot.translatorMatchMethod,
                     interpreterMatchConfidence: mapped.sourceSnapshot.translatorMatchConfidence,
                     ambiguousCandidates: mapped.sourceSnapshot.translatorAmbiguousCandidates,
+                    conflictReasons,
                     status: mapped.booking.status,
                     skipReason: action === 'skipped' && isTerminalStableStatus(mapped.booking.status)
                         ? 'TERMINAL_STABLE_ALREADY_MIRRORED'

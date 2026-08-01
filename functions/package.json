@@ -8,6 +8,7 @@
         "shell": "npm run build && firebase functions:shell",
         "start": "npm run shell",
         "deploy": "firebase deploy --only functions",
+        "deploy:airtable-sync": "npm run build && firebase deploy --only functions:syncAirtableData,functions:scheduledRedbookSync,functions:syncAirtableMaintenance,functions:syncRedbookJobs,functions:repairMissingRedbookRecords",
         "logs": "firebase functions:log"
     },
     "engines": {
