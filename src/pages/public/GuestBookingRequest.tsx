@@ -14,25 +14,47 @@ import { Modal } from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
 import { PublicSessionService } from '../../services/publicSessionService';
 
-const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => (
-  <div className="mb-5">
-    <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center">
-      {Icon && <Icon size={16} className="mr-2 text-slate-400" />}
-      {label} {required && <span className="text-red-500 ml-1">*</span>}
-    </label>
-    {children}
-    {hint && <p className="mt-1.5 text-[10px] text-slate-400 uppercase font-black tracking-widest">{hint}</p>}
-  </div>
-);
+const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => {
+  const generatedId = React.useId();
+  const isDirectControl = React.isValidElement(children)
+    && typeof children.type === 'string'
+    && ['input', 'select', 'textarea'].includes(children.type);
+  const childProps = isDirectControl
+    ? (children as React.ReactElement<Record<string, any>>).props
+    : null;
+  const controlId = childProps?.id || generatedId;
+  const hintId = `${controlId}-hint`;
+  const control = isDirectControl
+    ? React.cloneElement(children as React.ReactElement<Record<string, any>>, {
+      id: controlId,
+      'aria-label': childProps?.['aria-label'] || label,
+      'aria-describedby': hint
+        ? [childProps?.['aria-describedby'], hintId].filter(Boolean).join(' ')
+        : childProps?.['aria-describedby'],
+    })
+    : children;
+
+  return (
+    <div className="mb-5 min-w-0">
+      <label htmlFor={isDirectControl ? controlId : undefined} className="mb-2 flex items-center text-sm font-bold text-slate-700">
+        {Icon && <Icon size={16} className="mr-2 text-slate-400" />}
+        {label} {required && <span className="ml-1 text-red-500">*</span>}
+      </label>
+      {control}
+      {hint && <p id={hintId} className="mt-1.5 text-[10px] font-black uppercase text-slate-400">{hint}</p>}
+    </div>
+  );
+};
 
 const inputClasses = "w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-900 text-sm focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-all placeholder:text-slate-400 hover:border-blue-200";
-const isValidRequesterEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim().toLowerCase());
+const isValidRequesterEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/.test(value.trim().toLowerCase());
 
 export const GuestBookingRequest = () => {
   const [helpModal, setHelpModal] = useState<{ isOpen: boolean; title: string; content: React.ReactNode } | null>(null);
   const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const [step, setStep] = useState<'FORM' | 'SUCCESS'>('FORM');
+  const [currentFormStep, setCurrentFormStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
   const [requesterLookupState, setRequesterLookupState] = useState<'IDLE' | 'CHECKING' | 'MATCHED' | 'NO_MATCH' | 'AMBIGUOUS' | 'ERROR'>('IDLE');
@@ -116,10 +138,55 @@ export const GuestBookingRequest = () => {
     gdprConsent: false
   });
 
+  const updateFormField = <Key extends keyof typeof formData>(
+    field: Key,
+    value: (typeof formData)[Key],
+  ) => {
+    setFormData(previous => ({ ...previous, [field]: value }));
+  };
+
   const isTranslation = formData.serviceType === ServiceType.TRANSLATION;
+  const formSteps = isTranslation
+    ? ['Requester', 'Translation details', 'Review & send']
+    : ['Requester', 'Requirement', 'Session', 'Review & send'];
+  const compactFormStepLabel = (label: string) => {
+    if (label === 'Translation details' || label === 'Requirement') return 'Details';
+    if (label === 'Review & send') return 'Review';
+    return label;
+  };
+  const totalFormSteps = formSteps.length;
+  const currentFormStepLabel = formSteps[currentFormStep - 1];
+  const formProgress = Math.round((currentFormStep / totalFormSteps) * 100);
+  const requestDateLabel = formData.date
+    ? new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      .format(new Date(`${formData.date}T12:00:00`))
+    : 'Not selected';
+  const requesterDepartmentLabel = requesterDepartmentMode === 'NEW'
+    ? proposedRequesterDepartmentName.trim()
+    : requesterDepartmentMode === 'ORGANISATION_WIDE'
+      ? 'Organisation-wide'
+      : formData.department || 'Not selected';
+  const languageLabel = isTranslation
+    ? `${formData.languageFrom || 'Source language'} to ${formData.languageTo || 'target language'}`
+    : formData.languageTo ? `English to ${formData.languageTo}` : 'Language not selected';
+  const deliveryLabel = isTranslation
+    ? `${requestDateLabel} | ${formData.translationFormat}`
+    : `${requestDateLabel}${formData.startTime ? ` at ${formData.startTime}` : ''} | ${formData.durationMinutes} min`;
+  const locationLabel = isTranslation
+    ? `${uploadedFiles.length} document${uploadedFiles.length === 1 ? '' : 's'} attached`
+    : formData.onlineLink === 'PHONE'
+      ? 'Phone'
+      : formData.locationType === 'ONLINE' ? 'Virtual' : formData.postcode || 'Face-to-face';
   const selectedRequesterOrganization = requesterContext?.organizations.find(
     organization => organization.id === selectedRequesterClientId,
   ) || null;
+
+  const goToFormStep = (nextStep: number) => {
+    setCurrentFormStep(Math.min(Math.max(nextStep, 1), totalFormSteps));
+    window.requestAnimationFrame(() => {
+      document.getElementById('booking-request-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   const resetRequesterSelection = () => {
     setRequesterContext(null);
@@ -208,65 +275,113 @@ export const GuestBookingRequest = () => {
     let cancelled = false;
     setRequesterLookupState('CHECKING');
     const timer = window.setTimeout(async () => {
-      try {
-        const result = await BookingService.lookupGuestRequesterContext(email);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
         if (cancelled) return;
-        setRequesterContext(result.status === 'MATCHED' ? result : null);
-        setRequesterLookupState(result.status);
-        if (result.status === 'MATCHED') {
-          const onlyOrganization = result.organizations.length === 1 ? result.organizations[0] : null;
-          setFormData(previous => ({
-            ...previous,
-            organisation: onlyOrganization?.name || '',
-            department: '',
-          }));
-          if (onlyOrganization) selectRequesterOrganization(onlyOrganization.id, result);
+        try {
+          const result = await BookingService.lookupGuestRequesterContext(email);
+          if (cancelled) return;
+          setRequesterContext(result.status === 'MATCHED' ? result : null);
+          setRequesterLookupState(result.status);
+          if (result.status === 'MATCHED') {
+            const onlyOrganization = result.organizations.length === 1 ? result.organizations[0] : null;
+            const onlyDepartment = onlyOrganization?.departments.length === 1
+              ? onlyOrganization.departments[0]
+              : null;
+            setSelectedRequesterClientId(onlyOrganization?.id || '');
+            setRequesterDepartmentMode(onlyDepartment ? 'EXISTING' : '');
+            setSelectedRequesterDepartmentId(onlyDepartment?.id || '');
+            setProposedRequesterDepartmentName('');
+            setFormData(previous => ({
+              ...previous,
+              organisation: onlyOrganization?.name || '',
+              department: onlyDepartment?.name || '',
+            }));
+          }
+          return;
+        } catch (lookupError) {
+          if (cancelled) return;
+          if (attempt === 0) {
+            await new Promise(resolve => window.setTimeout(resolve, 1_000));
+            continue;
+          }
+          console.error('Failed to identify guest requester', lookupError);
+          setRequesterContext(null);
+          setRequesterLookupState('ERROR');
         }
-      } catch (lookupError) {
-        if (cancelled) return;
-        console.error('Failed to identify guest requester', lookupError);
-        setRequesterContext(null);
-        setRequesterLookupState('ERROR');
       }
-    }, 650);
+    }, 800);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
   }, [formData.email]);
 
+  const rejectStep = (message: string) => {
+    showToast(message, 'error');
+    return false;
+  };
+
+  const validateFormStep = (stepNumber: number) => {
+    if (stepNumber === 1) {
+      if (!isValidRequesterEmail(formData.email)) return rejectStep('Enter a valid contact email.');
+      if (['IDLE', 'CHECKING'].includes(requesterLookupState)) return rejectStep('Wait for the requester check to finish.');
+      if (!formData.name.trim()) return rejectStep('Enter the name of the person making the booking.');
+      if (!formData.phone.trim()) return rejectStep('Enter a contact phone number.');
+      if (requesterLookupState === 'MATCHED') {
+        if (!requesterContext?.contextToken || !selectedRequesterClientId) return rejectStep('Select the organisation making this request.');
+        if (!requesterDepartmentMode) return rejectStep('Select a department option for this request.');
+        if (requesterDepartmentMode === 'EXISTING' && !selectedRequesterDepartmentId) return rejectStep('Select the department making this request.');
+        if (requesterDepartmentMode === 'NEW' && proposedRequesterDepartmentName.trim().length < 2) return rejectStep('Enter the new department name.');
+      } else if (!formData.organisation.trim()) {
+        return rejectStep('Enter the organisation making this request.');
+      }
+    }
+
+    if (stepNumber === 2 && isTranslation) {
+      if (!formData.languageFrom || !formData.languageTo) return rejectStep('Select the source and target languages.');
+      if (!formData.date) return rejectStep('Select the requested delivery date.');
+      if (formData.translationFormat === 'Other' && !formData.translationFormatOther.trim()) return rejectStep('Specify the required document format.');
+      if (uploading) return rejectStep('Wait for the document upload to finish.');
+      if (uploadedFiles.length === 0) return rejectStep('Upload at least one document for translation.');
+    }
+
+    if (stepNumber === 2 && !isTranslation && !formData.patientName.trim()) {
+      return rejectStep('Enter the client name, initials or patient number.');
+    }
+
+    if (stepNumber === 3 && !isTranslation) {
+      if (!formData.languageTo) return rejectStep('Select the requested language.');
+      if (!formData.date) return rejectStep('Select the booking date.');
+      if (!formData.startTime) return rejectStep('Select the session start time.');
+      if (formData.locationType === 'ONSITE' && (!formData.address.trim() || !formData.postcode.trim())) {
+        return rejectStep('Enter the full location and postcode.');
+      }
+      if (formData.locationType === 'ONLINE' && formData.onlineLink !== 'PHONE' && !formData.onlineLink.trim()) {
+        return rejectStep('Enter the connection details or use TBC.');
+      }
+    }
+
+    if (stepNumber === totalFormSteps && formData.requiresCostCode === 'YES' && !formData.costCode.trim()) {
+      return rejectStep('Enter the billing or purchase order code.');
+    }
+
+    return true;
+  };
+
+  const handleContinue = () => {
+    if (!validateFormStep(currentFormStep)) return;
+    goToFormStep(currentFormStep + 1);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.languageTo) {
-      showToast('Please select a target language', 'error');
-      return;
-    }
-    if (isValidRequesterEmail(formData.email) && ['IDLE', 'CHECKING'].includes(requesterLookupState)) {
-      showToast('Wait for the requester details check to finish.', 'error');
-      return;
-    }
-    if (requesterLookupState === 'MATCHED') {
-      if (!requesterContext?.contextToken || !selectedRequesterClientId) {
-        showToast('Select the organisation making this request.', 'error');
-        return;
-      }
-      if (!requesterDepartmentMode) {
-        showToast('Select a department option for this request.', 'error');
-        return;
-      }
-      if (requesterDepartmentMode === 'EXISTING' && !selectedRequesterDepartmentId) {
-        showToast('Select the department making this request.', 'error');
-        return;
-      }
-      if (requesterDepartmentMode === 'NEW' && proposedRequesterDepartmentName.trim().length < 2) {
-        showToast('Enter the new department name.', 'error');
+    for (let stepNumber = 1; stepNumber <= totalFormSteps; stepNumber += 1) {
+      if (!validateFormStep(stepNumber)) {
+        goToFormStep(stepNumber);
         return;
       }
     }
-    if (requesterLookupState !== 'MATCHED' && !formData.organisation.trim()) {
-      showToast('Enter the organisation making this request.', 'error');
-      return;
-    }
+    if (!formData.agreedToTerms || !formData.gdprConsent) return rejectStep('Accept the service terms and privacy consent before sending.');
     setLoading(true);
     try {
       const baseBookingData = {
@@ -356,7 +471,7 @@ export const GuestBookingRequest = () => {
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
               <CheckCircle2 size={32} className="text-green-600" />
             </div>
-            <h2 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">Booking Received!</h2>
+            <h2 className="mb-2 text-2xl font-black text-slate-900">Booking Received!</h2>
             <p className="text-slate-600">
               Reference: <span className="font-mono font-bold text-slate-900 bg-white px-2 py-1 rounded border border-slate-200 ml-1">{createdBooking.bookingRef}</span>
             </p>
@@ -395,7 +510,7 @@ export const GuestBookingRequest = () => {
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
               <Globe2 size={24} />
             </div>
-            <span className="text-xl font-black text-slate-900 tracking-tight">Lingland</span>
+            <span className="text-xl font-black text-slate-900">Lingland</span>
           </Link>
           <div className="text-sm font-medium text-slate-500 hidden sm:block">
             Need help? <a href="tel:01489576657" className="text-blue-600 font-bold hover:underline">01489 576657</a>
@@ -403,16 +518,46 @@ export const GuestBookingRequest = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 lg:px-8 py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 items-start">
-          <div className="lg:col-span-2 space-y-8">
+      <main className="mx-auto max-w-7xl px-4 py-8 md:py-12 lg:px-8">
+        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3 lg:gap-12">
+          <div className="min-w-0 space-y-8 lg:col-span-2">
             <div className="space-y-2">
-              <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight">{isTranslation ? 'Request a Translation' : 'Book an Interpreter'}</h1>
+              <h1 className="text-2xl font-black text-slate-900 sm:text-3xl md:text-4xl">{isTranslation ? 'Request a Translation' : 'Book an Interpreter'}</h1>
               <p className="text-lg text-slate-500">{isTranslation ? 'Professional document translation by verified experts.' : 'Secure, professional language support in minutes.'}</p>
             </div>
 
-            <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-8 border-b border-slate-100">
+            <form id="booking-request-form" onSubmit={handleSubmit} className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="border-b border-slate-200 bg-white px-6 py-5 md:px-8">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-blue-600">Step {currentFormStep} of {totalFormSteps}</p>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{currentFormStepLabel}</p>
+                  </div>
+                  <span className="text-sm font-bold text-slate-500">{formProgress}%</span>
+                </div>
+                <div
+                  className="h-2 overflow-hidden rounded-full bg-slate-100"
+                  role="progressbar"
+                  aria-label="Booking request progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={formProgress}
+                >
+                  <div className="h-full rounded-full bg-blue-600 transition-[width] duration-300" style={{ width: `${formProgress}%` }} />
+                </div>
+                <ol className={`mt-4 grid gap-2 text-xs font-medium text-slate-500 ${isTranslation ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                  {formSteps.map((label, index) => (
+                    <li key={label} className={`min-w-0 text-center sm:text-left ${index + 1 === currentFormStep ? 'font-bold text-blue-700' : index + 1 < currentFormStep ? 'text-emerald-700' : ''}`}>
+                      <span className="sm:hidden">{compactFormStepLabel(label)}</span>
+                      <span className="hidden sm:inline">{index + 1 < currentFormStep ? 'Done: ' : ''}{label}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              {currentFormStep === 1 && (
+                <>
+              <div className="border-b border-slate-100 p-5 sm:p-8">
                 <div className="flex items-center mb-6">
                   <div className="w-10 h-10 rounded-full bg-slate-50 text-slate-600 flex items-center justify-center mr-4">
                     <Globe2 size={20} />
@@ -425,38 +570,38 @@ export const GuestBookingRequest = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <button 
                     type="button" 
-                    onClick={() => setFormData({ 
-                      ...formData, 
+                    onClick={() => setFormData(previous => ({
+                      ...previous,
                       serviceType: ServiceType.FACE_TO_FACE,
                       languageFrom: 'English',
                       languageTo: ''
-                    })}
+                    }))}
                     className={`p-4 rounded-xl border-2 transition-all text-center ${
                       !isTranslation ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-100 text-slate-500 hover:border-slate-300'
                     }`}
                   >
                     <User size={20} className="mx-auto mb-2" />
-                    <span className="font-bold text-sm uppercase tracking-wider">Interpreting</span>
+                    <span className="text-sm font-bold uppercase">Interpreting</span>
                   </button>
                   <button 
                     type="button" 
-                    onClick={() => setFormData({ 
-                      ...formData, 
+                    onClick={() => setFormData(previous => ({
+                      ...previous,
                       serviceType: ServiceType.TRANSLATION,
                       languageFrom: '',
                       languageTo: 'English'
-                    })}
+                    }))}
                     className={`p-4 rounded-xl border-2 transition-all text-center ${
                       isTranslation ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-100 text-slate-500 hover:border-slate-300'
                     }`}
                   >
                     <FileText size={20} className="mx-auto mb-2" />
-                    <span className="font-bold text-sm uppercase tracking-wider">Translation</span>
+                    <span className="text-sm font-bold uppercase">Translation</span>
                   </button>
                 </div>
               </div>
 
-              <div className="p-8 border-b border-slate-100 bg-slate-50/30">
+              <div className="border-b border-slate-100 bg-slate-50/30 p-5 sm:p-8">
                 <div className="flex items-center mb-6">
                   <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
                     <Building2 size={20} />
@@ -475,6 +620,7 @@ export const GuestBookingRequest = () => {
                           type="email"
                           required
                           autoComplete="email"
+                          aria-label="Contact email"
                           className={`${inputClasses} pr-11`}
                           placeholder="name@organisation.com"
                           value={formData.email}
@@ -484,6 +630,9 @@ export const GuestBookingRequest = () => {
                         {requesterLookupState === 'MATCHED' && <CheckCircle2 size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-600" />}
                       </div>
                     </InputGroup>
+                    {requesterLookupState === 'CHECKING' && (
+                      <p className="-mt-3 mb-5 text-xs text-slate-500" aria-live="polite">Checking saved requester details...</p>
+                    )}
                     {requesterLookupState === 'MATCHED' && (
                       <div className="mb-5 flex items-start gap-3 border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
                         <BadgeCheck size={18} className="mt-0.5 shrink-0 text-emerald-600" />
@@ -493,22 +642,13 @@ export const GuestBookingRequest = () => {
                         </div>
                       </div>
                     )}
-                    {requesterLookupState === 'NO_MATCH' && (
-                      <div className="mb-5 border border-slate-200 bg-white p-3 text-xs text-slate-600">No existing requester profile was found. The details entered below will be reviewed by Lingland staff.</div>
-                    )}
-                    {requesterLookupState === 'AMBIGUOUS' && (
-                      <div className="mb-5 flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><AlertTriangle size={16} className="mt-0.5 shrink-0" />The email matches more than one internal requester record. Continue with manual details for staff review.</div>
-                    )}
-                    {requesterLookupState === 'ERROR' && (
-                      <div className="mb-5 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Requester details could not be checked. You can continue and staff will verify them.</div>
-                    )}
                   </div>
 
                   <InputGroup label="Booking By" icon={User} required hint="Your full name">
-                    <input type="text" required autoComplete="name" className={inputClasses} value={formData.name} onChange={event => setFormData({ ...formData, name: event.target.value })} />
+                    <input type="text" required autoComplete="name" className={inputClasses} value={formData.name} onChange={event => updateFormField('name', event.currentTarget.value)} />
                   </InputGroup>
                   <InputGroup label="Contact Phone Number" icon={Phone} required>
-                    <input type="tel" required autoComplete="tel" className={inputClasses} value={formData.phone} onChange={event => setFormData({ ...formData, phone: event.target.value })} />
+                    <input type="tel" required autoComplete="tel" className={inputClasses} value={formData.phone} onChange={event => updateFormField('phone', event.currentTarget.value)} />
                   </InputGroup>
 
                   {requesterLookupState === 'MATCHED' && requesterContext ? (
@@ -559,17 +699,47 @@ export const GuestBookingRequest = () => {
                   ) : (
                     <>
                       <InputGroup label="Organisation" icon={Building2} required hint="Company, NHS trust, council, school or other client">
-                        <input type="text" required className={inputClasses} value={formData.organisation} onChange={event => setFormData({ ...formData, organisation: event.target.value })} />
+                        <input type="text" required className={inputClasses} value={formData.organisation} onChange={event => updateFormField('organisation', event.currentTarget.value)} />
                       </InputGroup>
                       <InputGroup label="Department" icon={Building2} hint="Leave blank only when the request is organisation-wide">
-                        <input type="text" className={inputClasses} value={formData.department} onChange={event => setFormData({ ...formData, department: event.target.value })} />
+                        <input type="text" className={inputClasses} value={formData.department} onChange={event => updateFormField('department', event.currentTarget.value)} />
                       </InputGroup>
                     </>
                   )}
                 </div>
               </div>
+                </>
+              )}
 
-              <div className="p-8 border-b border-slate-100">
+              {currentFormStep === totalFormSteps && (
+                <div className="border-b border-slate-200 bg-slate-50 px-6 py-7 md:px-8">
+                  <div className="mb-5 flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">Review your request</h3>
+                      <p className="mt-1 text-sm text-slate-500">Check the details below, add the billing reference and send it to Lingland.</p>
+                    </div>
+                    <BadgeCheck size={22} className="shrink-0 text-emerald-600" />
+                  </div>
+                  <dl className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 sm:grid-cols-2">
+                    {[
+                      ['Service', isTranslation ? 'Translation' : 'Interpreting'],
+                      ['Languages', languageLabel],
+                      ['Date & delivery', deliveryLabel],
+                      ['Location / files', locationLabel],
+                      ['Organisation', formData.organisation || 'Not selected'],
+                      ['Department', requesterDepartmentLabel],
+                    ].map(([label, value]) => (
+                      <div key={label} className="min-w-0 bg-white px-4 py-3">
+                        <dt className="text-xs font-medium text-slate-500">{label}</dt>
+                        <dd className="mt-1 truncate text-sm font-bold text-slate-900" title={value}>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
+
+              {currentFormStep === totalFormSteps && (
+              <div className="border-b border-slate-100 p-5 sm:p-8">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center">
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4">
@@ -603,7 +773,7 @@ export const GuestBookingRequest = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
                   <InputGroup label="Invoicing Email (if different)" icon={Mail}>
-                    <input type="email" placeholder={formData.email.split(',')[0].trim() || 'finance@organisation.com'} className={inputClasses} value={formData.billingEmail} onChange={e => setFormData({ ...formData, billingEmail: e.target.value })} />
+                    <input type="email" placeholder={formData.email.split(',')[0].trim() || 'finance@organisation.com'} className={inputClasses} value={formData.billingEmail} onChange={event => updateFormField('billingEmail', event.currentTarget.value)} />
                   </InputGroup>
 
                   <div className="space-y-3">
@@ -614,7 +784,7 @@ export const GuestBookingRequest = () => {
                            type="radio" 
                            className="w-4 h-4 text-blue-600 border-slate-300 focus:ring-blue-500" 
                            checked={formData.requiresCostCode === 'YES'} 
-                           onChange={() => setFormData({...formData, requiresCostCode: 'YES'})} 
+                           onChange={() => updateFormField('requiresCostCode', 'YES')}
                          />
                          <span className="ml-2 text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">Yes, I require a code</span>
                        </label>
@@ -623,7 +793,7 @@ export const GuestBookingRequest = () => {
                            type="radio" 
                            className="w-4 h-4 text-blue-600 border-slate-300 focus:ring-blue-500" 
                            checked={formData.requiresCostCode === 'NO'} 
-                           onChange={() => setFormData({...formData, requiresCostCode: 'NO'})} 
+                           onChange={() => updateFormField('requiresCostCode', 'NO')}
                          />
                          <span className="ml-2 text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">No, not applicable</span>
                        </label>
@@ -640,15 +810,16 @@ export const GuestBookingRequest = () => {
                         placeholder="e.g. PO-2024-001, CC-HR-99, Mosaic..."
                         className={`${inputClasses} font-mono bg-slate-50 border-slate-300 focus:bg-white`}
                         value={formData.costCode}
-                        onChange={e => setFormData({ ...formData, costCode: e.target.value })}
+                        onChange={event => updateFormField('costCode', event.currentTarget.value)}
                       />
                     </InputGroup>
                   </div>
                 )}
               </div>
+              )}
 
-              {!isTranslation && (
-                <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+              {currentFormStep === 2 && !isTranslation && (
+                <div className="border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
                   <div className="flex items-center mb-6">
                     <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
                       <User size={20} />
@@ -661,22 +832,22 @@ export const GuestBookingRequest = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                     <InputGroup label="Client Name / Initials / Patient Number" icon={BadgeCheck} required hint="Essential for tracking service delivery">
-                      <input type="text" required className={inputClasses} value={formData.patientName} onChange={e => setFormData({ ...formData, patientName: e.target.value })} />
+                      <input type="text" required className={inputClasses} value={formData.patientName} onChange={event => updateFormField('patientName', event.currentTarget.value)} />
                     </InputGroup>
                     <InputGroup label="Professional's Name" icon={Stethoscope} hint="Doctor / Solicitor / Caseworker required the interpreter">
-                      <input type="text" className={inputClasses} value={formData.professionalName} onChange={e => setFormData({ ...formData, professionalName: e.target.value })} />
+                      <input type="text" className={inputClasses} value={formData.professionalName} onChange={event => updateFormField('professionalName', event.currentTarget.value)} />
                     </InputGroup>
                   </div>
                 </div>
               )}
 
-              {isTranslation ? (
-                <div className="p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4">
+              {currentFormStep === 2 && isTranslation && (
+                <div className="min-w-0 space-y-8 p-5 animate-in fade-in slide-in-from-bottom-4 sm:p-8">
                   <div className="flex items-center mb-6">
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4">
                       <FileText size={20} />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h3 className="text-lg font-bold text-slate-900">Translation Requirements</h3>
                       <p className="text-xs text-slate-500">Document details and delivery preferences.</p>
                     </div>
@@ -744,7 +915,7 @@ export const GuestBookingRequest = () => {
                       <button
                         type="button"
                         onClick={swapLanguages}
-                        className="flex items-center space-x-2 text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100"
+                        className="flex items-center space-x-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase text-blue-600"
                       >
                         <ArrowLeftRight size={12} />
                         <span>Swap Languages</span>
@@ -758,7 +929,7 @@ export const GuestBookingRequest = () => {
                         className={inputClasses} 
                         required
                         value={formData.translationFormat}
-                        onChange={e => setFormData({ ...formData, translationFormat: e.target.value })}
+                        onChange={event => updateFormField('translationFormat', event.currentTarget.value)}
                       >
                         <option value="Email (PDF)">Email (PDF)</option>
                         <option value="Word Document">Word Document</option>
@@ -767,26 +938,27 @@ export const GuestBookingRequest = () => {
                       </select>
                     </InputGroup>
                     <InputGroup label="Delivery Date" icon={Calendar} required hint="Desired completion date">
-                      <input type="date" required className={inputClasses} value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+                      <input type="date" required className={inputClasses} value={formData.date} onInput={event => updateFormField('date', event.currentTarget.value)} />
                     </InputGroup>
                   </div>
 
                   {formData.translationFormat === 'Other' && (
                     <InputGroup label="Please specify format" required>
-                      <input type="text" required className={inputClasses} value={formData.translationFormatOther} onChange={e => setFormData({ ...formData, translationFormatOther: e.target.value })} />
+                      <input type="text" required className={inputClasses} value={formData.translationFormatOther} onChange={event => updateFormField('translationFormatOther', event.currentTarget.value)} />
                     </InputGroup>
                   )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <InputGroup label="Delivery Email (if different)" icon={Mail}>
-                      <input type="email" placeholder={formData.email.split(',')[0].trim() || 'e.g. results@org.com'} className={inputClasses} value={formData.deliveryEmail} onChange={e => setFormData({ ...formData, deliveryEmail: e.target.value })} />
+                      <input type="email" placeholder={formData.email.split(',')[0].trim() || 'e.g. results@org.com'} className={inputClasses} value={formData.deliveryEmail} onChange={event => updateFormField('deliveryEmail', event.currentTarget.value)} />
                     </InputGroup>
-                    <InputGroup label="Rates Choice">
+                    <InputGroup label="Pricing">
                       <div className="flex flex-col gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] font-black text-blue-600 tracking-tighter uppercase">Rates Choice</span>
+                        <div className="mb-1 flex justify-end">
                           <button 
                             type="button"
+                            aria-label="About translation pricing"
+                            title="About translation pricing"
                             onClick={() => setHelpModal({
                               isOpen: true,
                               title: "Standard Rates vs Quotes",
@@ -807,12 +979,12 @@ export const GuestBookingRequest = () => {
                           </button>
                         </div>
                         <label className="flex items-center cursor-pointer">
-                          <input type="radio" name="quote" className="mr-2 text-blue-600" checked={!formData.quoteRequested} onChange={() => setFormData({ ...formData, quoteRequested: false })} />
-                          <span className="text-sm text-slate-700 font-medium tracking-tight">Standard Rates</span>
+                          <input type="radio" name="quote" className="mr-2 text-blue-600" checked={!formData.quoteRequested} onChange={() => updateFormField('quoteRequested', false)} />
+                          <span className="text-sm font-medium text-slate-700">Standard Rates</span>
                         </label>
                         <label className="flex items-center cursor-pointer">
-                          <input type="radio" name="quote" className="mr-2 text-blue-600" checked={formData.quoteRequested} onChange={() => setFormData({ ...formData, quoteRequested: true })} />
-                          <span className="text-sm text-slate-700 font-medium tracking-tight">Quote First</span>
+                          <input type="radio" name="quote" className="mr-2 text-blue-600" checked={formData.quoteRequested} onChange={() => updateFormField('quoteRequested', true)} />
+                          <span className="text-sm font-medium text-slate-700">Quote First</span>
                         </label>
                       </div>
                     </InputGroup>
@@ -829,11 +1001,11 @@ export const GuestBookingRequest = () => {
                     />
                     <FileText className="mx-auto text-blue-400 mb-3" size={32} />
                     <p className="text-sm font-bold text-blue-900 mb-1">Upload Source Documents</p>
-                    <p className="text-[10px] text-blue-600 uppercase tracking-widest font-black mb-4">Drag & Drop or click to select</p>
+                    <p className="mb-4 text-[10px] font-black uppercase text-blue-600">Drag & Drop or click to select</p>
 
                     <label
                       htmlFor="file-upload"
-                      className={`inline-flex items-center px-6 py-2 bg-white text-blue-600 border border-blue-200 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-blue-100 transition-colors shadow-sm cursor-pointer ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`inline-flex cursor-pointer items-center rounded-lg border border-blue-200 bg-white px-6 py-2 text-xs font-black uppercase text-blue-600 shadow-sm transition-colors hover:bg-blue-100 ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       {uploading ? (
                         <><Loader2 className="animate-spin mr-2" size={14} /> Uploading...</>
@@ -864,13 +1036,15 @@ export const GuestBookingRequest = () => {
                       className={inputClasses + " h-32 resize-none"} 
                       placeholder="e.g. Please preserve the original layout or include a certified stamp..." 
                       value={formData.notes} 
-                      onChange={e => setFormData({ ...formData, notes: e.target.value })} 
+                      onChange={event => updateFormField('notes', event.currentTarget.value)}
                     />
                   </InputGroup>
                 </div>
-              ) : (
+              )}
+
+              {currentFormStep === 3 && !isTranslation && (
                 <div className="space-y-0">
-                  <div className="p-8 border-b border-slate-100">
+                  <div className="border-b border-slate-100 p-5 sm:p-8">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center">
                         <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mr-4">
@@ -905,7 +1079,7 @@ export const GuestBookingRequest = () => {
                           disabled={loadingLangs}
                           className={inputClasses}
                           value={formData.languageTo}
-                          onChange={e => setFormData({ ...formData, languageTo: e.target.value })}
+                          onChange={event => updateFormField('languageTo', event.currentTarget.value)}
                         >
                           <option value="">{loadingLangs ? 'Loading languages...' : 'Select Language...'}</option>
                           {availableLanguages.map(lang => (
@@ -914,20 +1088,20 @@ export const GuestBookingRequest = () => {
                         </select>
                       </InputGroup>
                       <InputGroup label="Booking Date" icon={Calendar} required>
-                        <input type="date" required className={inputClasses} value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+                        <input type="date" required className={inputClasses} value={formData.date} onInput={event => updateFormField('date', event.currentTarget.value)} />
                       </InputGroup>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
                       <InputGroup label="Start Time" icon={Clock} required>
-                         <input type="time" required className={inputClasses} value={formData.startTime} onChange={e => setFormData({ ...formData, startTime: e.target.value })} />
+                         <input type="time" required className={inputClasses} value={formData.startTime} onInput={event => updateFormField('startTime', event.currentTarget.value)} />
                       </InputGroup>
                       <InputGroup label="Expected Session Duration" required hint="Minimum 1 hour booking charge applies">
                         <select 
                           required 
                           className={inputClasses} 
                           value={formData.durationMinutes} 
-                          onChange={e => setFormData({ ...formData, durationMinutes: Number(e.target.value) })}
+                          onChange={event => updateFormField('durationMinutes', Number(event.currentTarget.value))}
                         >
                           <option value="60">1 Hour</option>
                           <option value="90">1.5 Hours</option>
@@ -943,17 +1117,17 @@ export const GuestBookingRequest = () => {
                       <label className="block text-sm font-bold text-slate-700 mb-3">Session Type</label>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <label className={`flex items-center justify-center p-4 rounded-xl border-2 cursor-pointer transition-all ${formData.locationType === 'ONSITE' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-100 hover:border-slate-300 text-slate-600'}`}>
-                          <input type="radio" value="ONSITE" checked={formData.locationType === 'ONSITE'} onChange={() => setFormData({ ...formData, locationType: 'ONSITE' })} className="hidden" />
+                          <input type="radio" value="ONSITE" checked={formData.locationType === 'ONSITE'} onChange={() => updateFormField('locationType', 'ONSITE')} className="hidden" />
                           <MapPin size={18} className="mr-2" />
                           <span className="font-bold text-xs">Face-to-Face</span>
                         </label>
                         <label className={`flex items-center justify-center p-4 rounded-xl border-2 cursor-pointer transition-all ${formData.locationType === 'ONLINE' && formData.onlineLink !== 'PHONE' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-100 hover:border-slate-300 text-slate-600'}`}>
-                          <input type="radio" value="ONLINE" checked={formData.locationType === 'ONLINE' && formData.onlineLink !== 'PHONE'} onChange={() => setFormData({ ...formData, locationType: 'ONLINE', onlineLink: formData.onlineLink === 'PHONE' ? '' : formData.onlineLink })} className="hidden" />
+                          <input type="radio" value="ONLINE" checked={formData.locationType === 'ONLINE' && formData.onlineLink !== 'PHONE'} onChange={() => setFormData(previous => ({ ...previous, locationType: 'ONLINE', onlineLink: previous.onlineLink === 'PHONE' ? '' : previous.onlineLink }))} className="hidden" />
                           <Video size={18} className="mr-2" />
                           <span className="font-bold text-xs">Virtual (Teams/Zoom)</span>
                         </label>
                         <label className={`flex items-center justify-center p-4 rounded-xl border-2 cursor-pointer transition-all ${formData.onlineLink === 'PHONE' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-100 hover:border-slate-300 text-slate-600'}`}>
-                          <input type="radio" checked={formData.onlineLink === 'PHONE'} onChange={() => setFormData({ ...formData, locationType: 'ONLINE', onlineLink: 'PHONE' })} className="hidden" />
+                          <input type="radio" checked={formData.onlineLink === 'PHONE'} onChange={() => setFormData(previous => ({ ...previous, locationType: 'ONLINE', onlineLink: 'PHONE' }))} className="hidden" />
                           <Phone size={18} className="mr-2" />
                           <span className="font-bold text-xs">Phone</span>
                         </label>
@@ -964,23 +1138,23 @@ export const GuestBookingRequest = () => {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6 animate-in fade-in slide-in-from-top-4">
                         <div className="md:col-span-2">
                           <InputGroup label="Location Address" required>
-                            <textarea required rows={2} className={inputClasses + " resize-none"} value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                            <textarea required rows={2} className={inputClasses + " resize-none"} value={formData.address} onChange={event => updateFormField('address', event.currentTarget.value)} />
                           </InputGroup>
                         </div>
                         <InputGroup label="Postcode" required>
-                          <input type="text" required className={inputClasses} value={formData.postcode} onChange={e => setFormData({ ...formData, postcode: e.target.value })} />
+                          <input type="text" required className={inputClasses} value={formData.postcode} onChange={event => updateFormField('postcode', event.currentTarget.value)} />
                         </InputGroup>
                       </div>
                     ) : formData.onlineLink !== 'PHONE' && (
                       <div className="mt-6 animate-in fade-in slide-in-from-top-4">
                         <InputGroup label="Connection Link / Details" required hint="MS Teams Link, Zoom ID, or 'TBC'">
-                          <input type="text" required className={inputClasses} value={formData.onlineLink} onChange={e => setFormData({ ...formData, onlineLink: e.target.value })} />
+                          <input type="text" required className={inputClasses} value={formData.onlineLink} onChange={event => updateFormField('onlineLink', event.currentTarget.value)} />
                         </InputGroup>
                       </div>
                     )}
                   </div>
 
-                  <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+                  <div className="border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center">
                         <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
@@ -994,25 +1168,48 @@ export const GuestBookingRequest = () => {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                        <InputGroup label="Gender Preference" icon={User}>
-                         <select className={inputClasses} value={formData.genderPreference} onChange={e => setFormData({...formData, genderPreference: e.target.value})}>
+                         <select className={inputClasses} value={formData.genderPreference} onChange={event => updateFormField('genderPreference', event.currentTarget.value)}>
                            <option value="None">None</option>
                            <option value="Male">Male Only</option>
                            <option value="Female">Female Only</option>
                          </select>
                        </InputGroup>
                        <InputGroup label="Special Instructions">
-                         <textarea className={inputClasses + " h-32 resize-none"} value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="e.g. Arrive 15 mins before..." />
+                         <textarea className={inputClasses + " h-32 resize-none"} value={formData.notes} onChange={event => updateFormField('notes', event.currentTarget.value)} placeholder="e.g. Arrive 15 mins before..." />
                        </InputGroup>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="p-8 bg-slate-50 border-t border-slate-100">
+              {currentFormStep < totalFormSteps && (
+                <div className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-white px-6 py-5 sm:flex-row sm:items-center sm:justify-between md:px-8">
+                  {currentFormStep > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => goToFormStep(currentFormStep - 1)}
+                      className="inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      <ChevronRight size={18} className="mr-2 rotate-180" /> Back
+                    </button>
+                  ) : <span />}
+                  <button
+                    type="button"
+                    onClick={handleContinue}
+                    disabled={requesterLookupState === 'CHECKING' || uploading}
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg bg-blue-600 px-6 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Continue to {formSteps[currentFormStep]} <ArrowRight size={18} className="ml-2" />
+                  </button>
+                </div>
+              )}
+
+              {currentFormStep === totalFormSteps && (
+              <div className="border-t border-slate-100 bg-slate-50 p-5 sm:p-8">
                 <label className="flex items-start mb-4 cursor-pointer group">
-                  <input type="checkbox" required className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 group-hover:border-blue-500 transition-colors" checked={formData.agreedToTerms} onChange={e => setFormData({ ...formData, agreedToTerms: e.target.checked })} />
+                  <input type="checkbox" required className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 group-hover:border-blue-500 transition-colors" checked={formData.agreedToTerms} onChange={event => updateFormField('agreedToTerms', event.currentTarget.checked)} />
                   <div className="ml-3">
-                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Service Policies</p>
+                    <p className="mb-1 text-[10px] font-black uppercase text-blue-600">Service Policies</p>
                     <p className="text-sm text-slate-600 leading-snug">
                       I have read, understood, and agree to the <a href="/#/terms" target="_blank" className="font-bold text-blue-600 hover:underline">Terms and Conditions of Service</a>.
                     </p>
@@ -1020,27 +1217,37 @@ export const GuestBookingRequest = () => {
                 </label>
 
                 <label className="flex items-start mb-8 cursor-pointer p-4 bg-white border border-slate-200 rounded-xl shadow-sm hover:border-blue-200 hover:bg-slate-50 transition-all group">
-                  <input type="checkbox" required className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 group-hover:border-blue-500 transition-colors" checked={formData.gdprConsent} onChange={e => setFormData({ ...formData, gdprConsent: e.target.checked })} />
+                  <input type="checkbox" required className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 group-hover:border-blue-500 transition-colors" checked={formData.gdprConsent} onChange={event => updateFormField('gdprConsent', event.currentTarget.checked)} />
                   <div className="ml-3">
-                    <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1">Privacy & Data Consent</p>
+                    <p className="mb-1 text-[10px] font-black uppercase text-slate-700">Privacy & Data Consent</p>
                     <p className="text-xs text-slate-500 leading-relaxed">
                       I consent to my data being collected and stored for order processing, in accordance with the <a href="https://gdpr-info.eu/" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-600 hover:underline">GDPR guidelines</a>.
                     </p>
                   </div>
                 </label>
 
-                <button
-                  type="submit"
-                  disabled={loading || requesterLookupState === 'CHECKING' || availableLanguages.length === 0}
-                  className="w-full bg-slate-900 text-white font-bold text-lg py-4 rounded-xl shadow-xl shadow-slate-900/10 hover:bg-black hover:shadow-slate-900/20 hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center disabled:opacity-70 disabled:hover:scale-100 disabled:active:scale-100"
-                >
-                  {loading ? (
-                    <><Loader2 className="animate-spin mr-2" size={20} /> Processing...</>
-                  ) : (
-                    <><ArrowRight size={20} className="mr-2" /> Submit Booking Request</>
-                  )}
-                </button>
+                <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => goToFormStep(currentFormStep - 1)}
+                    className="inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-300 bg-white px-6 text-sm font-bold text-slate-700 hover:bg-slate-50 sm:w-auto"
+                  >
+                    <ChevronRight size={18} className="mr-2 rotate-180" /> Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading || requesterLookupState === 'CHECKING' || availableLanguages.length === 0}
+                    className="inline-flex min-h-12 flex-1 items-center justify-center rounded-lg bg-slate-900 px-6 text-base font-bold text-white shadow-lg shadow-slate-900/10 hover:bg-black disabled:opacity-70"
+                  >
+                    {loading ? (
+                      <><Loader2 className="animate-spin mr-2" size={20} /> Sending request...</>
+                    ) : (
+                      <><ArrowRight size={20} className="mr-2" /> Send {isTranslation ? 'translation' : 'interpreting'} request</>
+                    )}
+                  </button>
+                </div>
               </div>
+              )}
             </form>
           </div>
 
@@ -1058,24 +1265,30 @@ export const GuestBookingRequest = () => {
               <p className="mt-3 text-[11px] leading-relaxed font-medium text-slate-500">Our team is ready to help you complete this request quickly and accurately.</p>
             </InfoCard>
 
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 relative overflow-hidden group hover:shadow-lg transition-all">
-              <div className="absolute top-0 right-0 p-3 text-slate-100 group-hover:text-blue-50 transition-colors pointer-events-none">
-                <Globe2 size={48} />
-              </div>
-              <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-4">Trusted Partner</p>
-              <blockquote className="text-slate-600 text-sm italic mb-4 relative z-10">
-                "The interface is so much cleaner now. Making a translation request takes less than a minute."
-              </blockquote>
-              <div className="flex items-center relative z-10">
-                <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-black text-xs mr-3">LT</div>
+            <div className="rounded-xl border border-slate-200 bg-white p-6">
+              <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold text-slate-900">Linda Thompson</p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold">HR Director</p>
+                  <p className="text-xs font-bold text-blue-600">Your request</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{isTranslation ? 'Translation' : 'Interpreting'}</p>
                 </div>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{formProgress}%</span>
               </div>
+              <dl className="divide-y divide-slate-100 text-sm">
+                {[
+                  ['Languages', languageLabel],
+                  ['Date', requestDateLabel],
+                  [isTranslation ? 'Documents' : 'Delivery', locationLabel],
+                  ['Organisation', formData.organisation || 'Not selected'],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 py-3">
+                    <dt className="text-slate-500">{label}</dt>
+                    <dd className="truncate text-right font-bold text-slate-900" title={value}>{value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             
-            <div className="bg-slate-900 rounded-2x p-1 shadow-2xl">
+            <div className="bg-slate-900 rounded-xl p-1 shadow-2xl">
               <div className="bg-slate-800 rounded-xl p-4 text-white">
                 <p className="text-xs font-bold mb-1 flex items-center">
                   <ShieldCheck size={14} className="mr-2 text-emerald-400" /> Secure Processing

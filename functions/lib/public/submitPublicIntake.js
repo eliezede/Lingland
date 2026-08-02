@@ -201,20 +201,22 @@ const enforceRequesterLookupRateLimit = async (context, email) => {
         const data = snapshot.data() || {};
         const windowStartedAt = Number(data.windowStartedAt || 0);
         const lastSubmittedAt = Number(data.lastSubmittedAt || 0);
+        const emailHash = (0, crypto_1.createHash)('sha256').update(email).digest('hex');
         const insideWindow = windowStartedAt > 0 && now - windowStartedAt < 15 * 60 * 1000;
         const lookupCount = insideWindow ? Number(data.lookupCount || 0) : 0;
-        if (lastSubmittedAt && now - lastSubmittedAt < 1000) {
-            throw new functions.https.HttpsError('resource-exhausted', 'Wait a moment before checking another email.');
-        }
-        if (lookupCount >= 20) {
+        const repeatedEmail = insideWindow
+            && data.emailHash === emailHash
+            && lastSubmittedAt > 0
+            && now - lastSubmittedAt < 60000;
+        if (!repeatedEmail && lookupCount >= 20) {
             throw new functions.https.HttpsError('resource-exhausted', 'Too many requester checks. Try again later.');
         }
         transaction.set(ref, {
             kind: 'REQUESTER_LOOKUP',
             authUid: uid,
-            emailHash: (0, crypto_1.createHash)('sha256').update(email).digest('hex'),
+            emailHash,
             windowStartedAt: insideWindow ? windowStartedAt : now,
-            lookupCount: lookupCount + 1,
+            lookupCount: repeatedEmail ? lookupCount : lookupCount + 1,
             lastSubmittedAt: now,
             expiresAt: admin.firestore.Timestamp.fromMillis(now + 24 * 60 * 60 * 1000),
         }, { merge: true });
