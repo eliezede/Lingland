@@ -1,8 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.canReadClientInvoice = exports.canReadClientFinance = exports.canManageClientBooking = exports.buildClientPortalPolicy = void 0;
+exports.canReadClientInvoice = exports.canReadClientFinance = exports.canManageClientBooking = exports.buildClientPortalPolicy = exports.isOrganizationWideClientMembership = void 0;
 const text = (value) => String(value ?? '').trim();
 const unique = (values) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+const isOrganizationWideClientMembership = (membership) => {
+    const accessLevel = text(membership.accessLevel || 'AGENT').toUpperCase();
+    const departmentIds = unique((Array.isArray(membership.departmentIds) ? membership.departmentIds : []).map(text));
+    return accessLevel === 'CLIENT_MASTER' || departmentIds.length === 0;
+};
+exports.isOrganizationWideClientMembership = isOrganizationWideClientMembership;
 const buildClientPortalPolicy = (membership, activeDepartmentIds) => {
     const departments = unique(activeDepartmentIds.map(text));
     if (!membership) {
@@ -18,8 +24,9 @@ const buildClientPortalPolicy = (membership, activeDepartmentIds) => {
     const accessLevel = text(membership.accessLevel || 'AGENT').toUpperCase();
     const roles = unique((Array.isArray(membership.roles) ? membership.roles : []).map(role => text(role).toUpperCase()));
     const membershipDepartments = new Set((Array.isArray(membership.departmentIds) ? membership.departmentIds : []).map(text));
-    const unrestricted = accessLevel === 'CLIENT_MASTER'
-        || (accessLevel === 'CLIENT_FINANCE' && membershipDepartments.size === 0);
+    // Imported organisation-level contacts have no explicit department IDs.
+    // Once IDs are present, they become an intentional department restriction.
+    const unrestricted = (0, exports.isOrganizationWideClientMembership)(membership);
     const canRequest = status === 'ACTIVE' && (roles.includes('REQUESTER') || accessLevel === 'CLIENT_MASTER');
     return {
         accessLevel,

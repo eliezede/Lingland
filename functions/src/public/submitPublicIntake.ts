@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { queueBookingStatusEmails } from '../mail/bookingEmail';
 import { createHash } from 'crypto';
 import { resolveClientPortalAccess } from '../clients/clientPortalAccess';
+import { isOrganizationWideClientMembership } from '../clients/clientPortalPolicy';
 import {
   normalizePublicDepartmentName,
   PublicRequesterContextTokenData,
@@ -268,13 +269,14 @@ export const lookupPublicRequesterContext = functions.runWith({
         client,
         membershipId: membershipDocument.id,
         membershipStatus,
-        unrestricted: accessLevel === 'CLIENT_MASTER',
+        unrestricted: isOrganizationWideClientMembership({ accessLevel, departmentIds }),
         requestedDepartmentIds: new Set(departmentIds),
       });
       continue;
     }
     departmentIds.forEach(departmentId => current.requestedDepartmentIds.add(departmentId));
-    current.unrestricted = current.unrestricted || accessLevel === 'CLIENT_MASTER';
+    current.unrestricted = current.unrestricted
+      || isOrganizationWideClientMembership({ accessLevel, departmentIds });
     if (current.membershipStatus !== 'ACTIVE' && membershipStatus === 'ACTIVE') {
       current.membershipId = membershipDocument.id;
       current.membershipStatus = membershipStatus;

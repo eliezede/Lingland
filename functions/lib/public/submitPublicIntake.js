@@ -39,6 +39,7 @@ const admin = __importStar(require("firebase-admin"));
 const bookingEmail_1 = require("../mail/bookingEmail");
 const crypto_1 = require("crypto");
 const clientPortalAccess_1 = require("../clients/clientPortalAccess");
+const clientPortalPolicy_1 = require("../clients/clientPortalPolicy");
 const publicRequesterContextCore_1 = require("./publicRequesterContextCore");
 const db = admin.firestore();
 const cleanString = (value, max = 5000) => String(value ?? '').trim().slice(0, max);
@@ -275,13 +276,14 @@ exports.lookupPublicRequesterContext = functions.runWith({
                 client,
                 membershipId: membershipDocument.id,
                 membershipStatus,
-                unrestricted: accessLevel === 'CLIENT_MASTER',
+                unrestricted: (0, clientPortalPolicy_1.isOrganizationWideClientMembership)({ accessLevel, departmentIds }),
                 requestedDepartmentIds: new Set(departmentIds),
             });
             continue;
         }
         departmentIds.forEach(departmentId => current.requestedDepartmentIds.add(departmentId));
-        current.unrestricted = current.unrestricted || accessLevel === 'CLIENT_MASTER';
+        current.unrestricted = current.unrestricted
+            || (0, clientPortalPolicy_1.isOrganizationWideClientMembership)({ accessLevel, departmentIds });
         if (current.membershipStatus !== 'ACTIVE' && membershipStatus === 'ACTIVE') {
             current.membershipId = membershipDocument.id;
             current.membershipStatus = membershipStatus;

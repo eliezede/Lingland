@@ -29,6 +29,18 @@ describe('client portal membership policy', () => {
     });
   });
 
+  it('treats an imported requester without explicit department IDs as organisation-wide', () => {
+    expect(buildClientPortalPolicy({
+      status: 'ACTIVE',
+      accessLevel: 'AGENT',
+      roles: ['REQUESTER'],
+      departmentIds: [],
+    }, ['dept-a', 'dept-b'])).toMatchObject({
+      allowedDepartmentIds: ['dept-a', 'dept-b'],
+      canRequest: true,
+    });
+  });
+
   it('allows a client master to choose any active department', () => {
     expect(buildClientPortalPolicy({
       status: 'ACTIVE',

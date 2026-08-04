@@ -32,6 +32,16 @@ export interface ClientInvoiceScopeInput {
 const text = (value: unknown) => String(value ?? '').trim();
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
+export const isOrganizationWideClientMembership = (
+  membership: Pick<ClientPortalMembershipPolicyInput, 'accessLevel' | 'departmentIds'>,
+) => {
+  const accessLevel = text(membership.accessLevel || 'AGENT').toUpperCase();
+  const departmentIds = unique(
+    (Array.isArray(membership.departmentIds) ? membership.departmentIds : []).map(text),
+  );
+  return accessLevel === 'CLIENT_MASTER' || departmentIds.length === 0;
+};
+
 export const buildClientPortalPolicy = (
   membership: ClientPortalMembershipPolicyInput | null,
   activeDepartmentIds: string[],
@@ -53,8 +63,9 @@ export const buildClientPortalPolicy = (
   const membershipDepartments = new Set(
     (Array.isArray(membership.departmentIds) ? membership.departmentIds : []).map(text),
   );
-  const unrestricted = accessLevel === 'CLIENT_MASTER'
-    || (accessLevel === 'CLIENT_FINANCE' && membershipDepartments.size === 0);
+  // Imported organisation-level contacts have no explicit department IDs.
+  // Once IDs are present, they become an intentional department restriction.
+  const unrestricted = isOrganizationWideClientMembership(membership);
   const canRequest = status === 'ACTIVE' && (roles.includes('REQUESTER') || accessLevel === 'CLIENT_MASTER');
 
   return {
