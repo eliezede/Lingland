@@ -4,8 +4,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCode } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../../services/firebaseConfig';
-import { Globe2, Lock, Eye, EyeOff, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
+import { Lock, Eye, EyeOff, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
+import { BrandLogo } from '../../components/ui/BrandLogo';
 
 export const ActivateAccount = () => {
   const [searchParams] = useSearchParams();
@@ -174,9 +175,8 @@ export const ActivateAccount = () => {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white mx-auto mb-4 shadow-lg">
-            <Globe2 size={24} />
-          </div>
+          <BrandLogo variant="wordmark" size="lg" className="mx-auto mb-6 max-w-[280px] dark:hidden" />
+          <BrandLogo variant="wordmark" tone="light" size="lg" className="mx-auto mb-6 hidden max-w-[280px] dark:flex" />
           <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white">Activate Your Account</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-2">Set your password to join the new platform</p>
         </div>

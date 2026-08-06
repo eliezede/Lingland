@@ -13,6 +13,7 @@ import { InfoCard } from '../../components/ui/InfoCard';
 import { Modal } from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
 import { PublicSessionService } from '../../services/publicSessionService';
+import { BrandLogo } from '../../components/ui/BrandLogo';
 
 const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => {
   const generatedId = React.useId();
@@ -506,11 +507,8 @@ export const GuestBookingRequest = () => {
     <div className="min-h-screen bg-slate-50 font-sans">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 lg:px-8 h-20 flex items-center justify-between">
-          <Link to="/" className="flex items-center space-x-3 group">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-              <Globe2 size={24} />
-            </div>
-            <span className="text-xl font-black text-slate-900">Lingland</span>
+          <Link to="/" className="group flex items-center">
+            <BrandLogo variant="wordmark" size="sm" className="max-w-[190px] transition-transform group-hover:scale-[1.02] sm:max-w-[220px]" />
           </Link>
           <div className="text-sm font-medium text-slate-500 hidden sm:block">
             Need help? <a href="tel:01489576657" className="text-blue-600 font-bold hover:underline">01489 576657</a>

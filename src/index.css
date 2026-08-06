@@ -8,6 +8,10 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+.brand-wordmark {
+  font-family: 'Quicksand', 'Inter', sans-serif;
+}
+
 .dark body {
   background-color: #020617;
   color: #f8fafc;

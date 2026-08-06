@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, CalendarDays, PlusCircle, User,
-  LogOut, Globe2, Menu, CreditCard, X, ChevronRight, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
+  LogOut, Menu, CreditCard, X, ChevronRight, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
   MessageSquare,
   HelpCircle, Bell, User as UserIcon, Settings, ChevronDown
 } from 'lucide-react';
@@ -12,6 +12,7 @@ import { NotificationCenter } from '../components/notifications/NotificationCent
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { ChatService } from '../services/chatService';
 import { ChatSystem } from '../components/chat/ChatSystem';
+import { BrandLogo } from '../components/ui/BrandLogo';
 import { ClientPortalProvider, useClientPortal } from '../context/ClientPortalContext';
 
 interface NavItemProps {
@@ -165,11 +166,13 @@ const ClientLayoutShell: React.FC<{ children: React.ReactNode }> = ({ children }
 
       <aside className={`fixed lg:static inset-y-0 left-0 z-50 flex transform transition-all duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 lg:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
-          <div className={`flex items-center ${isPrimaryExpanded ? 'px-4 space-x-3 justify-start' : 'justify-center'} w-full mb-8`}>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
-              <Globe2 size={24} />
-            </div>
-            {isPrimaryExpanded && <span className="text-white font-black tracking-tighter text-xl capitalize">Lingland</span>}
+          <div className={`flex w-full items-center ${isPrimaryExpanded ? 'justify-start px-4' : 'justify-center'} mb-8`}>
+            <BrandLogo
+              variant={isPrimaryExpanded ? 'wordmark' : 'mark'}
+              tone="light"
+              size={isPrimaryExpanded ? 'sm' : 'md'}
+              className={isPrimaryExpanded ? 'max-w-[190px]' : ''}
+            />
           </div>
 
           <div className="flex-1 w-full flex flex-col space-y-1.5 px-2">

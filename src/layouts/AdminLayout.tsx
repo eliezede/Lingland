@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
 import {
   LayoutDashboard, CalendarDays, Users, Briefcase,
-  LogOut, Globe2, Menu, FileText, PoundSterling,
+  LogOut, Menu, FileText, PoundSterling,
   UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon, Receipt,
   Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert, Cable
@@ -17,6 +17,7 @@ import { StaffService } from '../services/staffService';
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { SystemModule } from '../types';
 import { AIStatusIndicator } from '../components/ai/AIStatusIndicator';
+import { BrandLogo } from '../components/ui/BrandLogo';
 
 interface NavItemProps {
   to: string;
@@ -261,11 +262,13 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
         }`}
       >
         <div className={`${isPrimaryExpanded ? 'w-56' : 'w-16 xl:w-20'} flex shrink-0 flex-col items-center border-r border-slate-800 bg-slate-950 py-5 transition-all duration-300`}>
-          <div className={`flex items-center ${isPrimaryExpanded ? 'px-4 space-x-3 justify-start' : 'justify-center'} w-full mb-8`}>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
-              <Globe2 size={24} />
-            </div>
-            {isPrimaryExpanded && <span className="text-white font-black tracking-tighter text-xl capitalize">Lingland</span>}
+          <div className={`flex w-full items-center ${isPrimaryExpanded ? 'justify-start px-4' : 'justify-center'} mb-8`}>
+            <BrandLogo
+              variant={isPrimaryExpanded ? 'wordmark' : 'mark'}
+              tone="light"
+              size={isPrimaryExpanded ? 'sm' : 'md'}
+              className={isPrimaryExpanded ? 'max-w-[190px]' : ''}
+            />
           </div>
 
           <div className="flex-1 w-full flex flex-col space-y-1.5 px-2 overflow-y-auto scrollbar-hide">

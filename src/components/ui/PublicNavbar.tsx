@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Globe2, Menu, X, LogIn } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 interface PublicNavbarProps {
     transparent?: boolean;
@@ -67,10 +68,12 @@ export const PublicNavbar: React.FC<PublicNavbarProps> = ({
                 <div className="flex justify-between items-center">
                     {/* Logo */}
                     <Link to="/" className="flex items-center cursor-pointer group">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center text-white mr-3 shadow-lg shadow-blue-500/30 group-hover:scale-105 transition-transform duration-300">
-                            <Globe2 size={22} />
-                        </div>
-                        <span className={`text-xl font-bold tracking-tight transition-colors ${textColor}`}>Lingland</span>
+                        <BrandLogo
+                            variant="wordmark"
+                            tone="inherit"
+                            size="sm"
+                            className={`transition-all duration-300 group-hover:scale-[1.02] ${textColor}`}
+                        />
                     </Link>
 
                     {/* Desktop Links */}

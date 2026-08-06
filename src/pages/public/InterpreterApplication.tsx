@@ -12,6 +12,7 @@ import {
   Phone, Home, Car, MessageSquare, Plus, Trash2, Mail, ShieldCheck, Info, Camera
 } from 'lucide-react';
 import { InterpreterApplication, LanguageProficiency } from '../../types';
+import { BrandLogo } from '../../components/ui/BrandLogo';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -174,11 +175,9 @@ export const InterpreterApplicationPage = () => {
         {/* Brand Header (Simplified for Multi-Column) */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-16">
           <Link to="/" className="inline-flex items-center group">
-            <div className="w-12 h-12 bg-blue-600 rounded-[1rem] flex items-center justify-center text-white shadow-xl shadow-blue-500/40 group-hover:scale-110 transition-transform">
-              <Globe2 size={24} />
-            </div>
-            <div className="ml-4 text-left">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tighter leading-none">Lingland</h2>
+            <BrandLogo variant="mark" size="lg" decorative className="transition-transform group-hover:scale-105" />
+            <div className="ml-3 text-left">
+              <h2 className="text-2xl font-black leading-none tracking-tight text-slate-900">Lingland</h2>
               <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Careers & Network</span>
             </div>
           </Link>

@@ -4,10 +4,11 @@ import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCo
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../../services/firebaseConfig';
 import {
-  Globe2, Lock, ShieldCheck, ArrowRight,
+  Lock, ShieldCheck, ArrowRight,
   Loader2, CheckCircle2, AlertCircle, Eye, EyeOff
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
+import { BrandLogo } from '../../components/ui/BrandLogo';
 
 export const StaffSetup = () => {
   const [searchParams] = useSearchParams();
@@ -209,6 +210,7 @@ export const StaffSetup = () => {
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px] opacity-20"></div>
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-indigo-600/10"></div>
         <div className="relative z-10 max-w-lg">
+          <BrandLogo variant="wordmark" tone="light" size="xl" className="mb-10 max-w-full" />
           <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center mb-8 shadow-2xl">
             <ShieldCheck size={32} />
           </div>
@@ -236,7 +238,7 @@ export const StaffSetup = () => {
       {/* Right Panel — Form */}
       <div className="w-full lg:w-1/2 flex flex-col justify-center px-6 lg:px-20 xl:px-32 py-12">
         <div className="max-w-md w-full mx-auto">
-          <div className="lg:hidden mb-8 text-blue-600"><Globe2 size={40} /></div>
+          <BrandLogo variant="wordmark" size="lg" className="mb-8 max-w-[280px] lg:hidden" />
           
           {/* Welcome Header */}
           <div className="mb-10">

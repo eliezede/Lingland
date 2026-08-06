@@ -4,9 +4,10 @@ import { auth } from '../services/firebaseConfig';
 import { SystemService } from '../services/systemService';
 import { useNavigate, Link } from 'react-router-dom';
 import {
-  Lock, Globe2, Activity, CheckCircle, AlertTriangle,
+  Lock, Activity, CheckCircle, AlertTriangle,
   ArrowRight, Mail, ShieldCheck, Eye, EyeOff
 } from 'lucide-react';
+import { BrandLogo } from '../components/ui/BrandLogo';
 
 export const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -59,9 +60,7 @@ export const LoginPage = () => {
         </div>
 
         <div className="relative z-10 max-w-lg text-white">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/30">
-            <Globe2 size={32} className="text-white" />
-          </div>
+          <BrandLogo variant="wordmark" tone="light" size="xl" className="mb-10 max-w-full" />
           <h1 className="text-5xl font-extrabold tracking-tight leading-tight mb-6">
             Connect with the world's voice.
           </h1>
@@ -81,9 +80,7 @@ export const LoginPage = () => {
       {/* Right Side: Login Form */}
       <div className="w-full lg:w-1/2 flex flex-col justify-center py-12 px-6 lg:px-20 xl:px-32 bg-white">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="lg:hidden flex justify-center mb-6 text-blue-600">
-            <Globe2 size={40} />
-          </div>
+          <BrandLogo variant="wordmark" size="lg" className="mx-auto mb-8 max-w-[280px] lg:hidden" />
           <h2 className="mt-2 text-4xl font-black text-slate-900 tracking-tight">
             Welcome back
           </h2>
