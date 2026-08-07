@@ -20,6 +20,14 @@ export const InterpreterService = {
     return data.map(normalizeInterpreter);
   },
 
+  getPublicLanguages: async (): Promise<string[]> => {
+    const getOptions = httpsCallable<unknown, { languages?: unknown }>(functions, 'getPublicLanguageOptions');
+    const result = await getOptions({});
+    return Array.isArray(result.data.languages)
+      ? result.data.languages.filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      : [];
+  },
+
   getById: async (id: string) => {
     const snap = await getDoc(doc(db, 'interpreters', id));
     const interpreter = snap.exists() ? convertDoc<Interpreter>(snap) : undefined;

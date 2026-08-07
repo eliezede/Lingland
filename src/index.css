@@ -12,6 +12,18 @@ body {
   font-family: 'Quicksand', 'Inter', sans-serif;
 }
 
+.request-form-compact .request-form-step-header,
+.request-form-compact .request-form-section {
+  padding: 1rem;
+}
+
+@media (min-width: 640px) {
+  .request-form-compact .request-form-step-header,
+  .request-form-compact .request-form-section {
+    padding: 1.25rem;
+  }
+}
+
 .dark body {
   background-color: #020617;
   color: #f8fafc;

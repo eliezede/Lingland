@@ -2,6 +2,7 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { ServiceType, SystemSettings } from '../types';
+import { normalizeRequestFormEmbedSettings, REQUEST_FORM_EMBED_DEFAULTS } from '../features/requestEmbed/requestEmbedConfig';
 
 const DEFAULT_PLATFORM_MODE: NonNullable<SystemSettings['platformMode']> = {
   operatingMode: 'AIRTABLE_MIRROR',
@@ -45,6 +46,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
     priorityLanguages: [],
   },
   platformMode: DEFAULT_PLATFORM_MODE,
+  requestFormEmbed: REQUEST_FORM_EMBED_DEFAULTS,
 };
 
 const withSettingsDefaults = (settings: SystemSettings): SystemSettings => ({
@@ -56,7 +58,8 @@ const withSettingsDefaults = (settings: SystemSettings): SystemSettings => ({
       ...DEFAULT_PLATFORM_MODE.jobNumbering,
       ...(settings.platformMode?.jobNumbering || {})
     }
-  }
+  },
+  requestFormEmbed: normalizeRequestFormEmbedSettings(settings.requestFormEmbed),
 });
 
 export const SystemService = {

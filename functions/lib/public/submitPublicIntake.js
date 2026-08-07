@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitClientBookingRequest = exports.adminResolveClientDepartmentRequest = exports.submitPublicBookingRequest = exports.submitPublicInterpreterApplication = exports.lookupPublicRequesterContext = void 0;
+exports.submitClientBookingRequest = exports.adminResolveClientDepartmentRequest = exports.submitPublicBookingRequest = exports.submitPublicInterpreterApplication = exports.lookupPublicRequesterContext = exports.getPublicLanguageOptions = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
 const bookingEmail_1 = require("../mail/bookingEmail");
@@ -57,8 +57,10 @@ const stableId = (prefix, value) => `${prefix}_${(0, crypto_1.createHash)('sha1'
 const placeholderOrganizations = new Set(['client', 'airtable client', 'unknown client', 'guest org', 'home', 'n a']);
 const sharedMailboxPrefixes = /^(accounts?|admin|appointments?|bookings?|enquiries?|finance|info|invoices?|office|payments?|reception|referrals?|team)([._+-]|$)/i;
 const publicRequesterContextTtlMs = 20 * 60 * 1000;
+const publicLanguageCacheTtlMs = 15 * 60 * 1000;
 const blockedMembershipStatuses = new Set(['ARCHIVED', 'BLOCKED', 'REVOKED']);
 const blockedClientStatuses = new Set(['ARCHIVED', 'BLOCKED', 'INACTIVE', 'SUSPENDED']);
+let publicLanguageCache = null;
 const canonicalClientDocument = async (document) => {
     let current = document;
     for (let depth = 0; depth < 4; depth += 1) {
@@ -173,6 +175,37 @@ const requireAnonymousOrUser = (context) => {
         throw new functions.https.HttpsError('unauthenticated', 'A secure submission session is required.');
     }
 };
+exports.getPublicLanguageOptions = functions.runWith({
+    timeoutSeconds: 30,
+    memory: '256MB',
+}).https.onCall(async (_data, context) => {
+    requireAnonymousOrUser(context);
+    const now = Date.now();
+    if (publicLanguageCache && publicLanguageCache.expiresAt > now) {
+        return { languages: publicLanguageCache.languages };
+    }
+    const snapshot = await db.collection('interpreters').get();
+    const languages = new Set(['English']);
+    snapshot.docs.forEach(document => {
+        const data = document.data();
+        const status = cleanString(data.status, 40).toUpperCase();
+        if (['ARCHIVED', 'BLOCKED', 'REJECTED', 'SUSPENDED'].includes(status))
+            return;
+        const values = Array.isArray(data.languages)
+            ? data.languages
+            : Array.isArray(data.languageProficiencies)
+                ? data.languageProficiencies.map((item) => item?.language)
+                : [];
+        values.forEach((value) => {
+            const language = cleanString(value, 80);
+            if (language)
+                languages.add(language);
+        });
+    });
+    const result = Array.from(languages).sort((left, right) => left.localeCompare(right)).slice(0, 250);
+    publicLanguageCache = { expiresAt: now + publicLanguageCacheTtlMs, languages: result };
+    return { languages: result };
+});
 const enforceRateLimit = async (kind, context, email) => {
     const identity = `${kind}:${context.auth?.uid || ''}:${email}`;
     const id = (0, crypto_1.createHash)('sha256').update(identity).digest('hex');
@@ -480,6 +513,13 @@ const sanitizeBookingPayload = (raw) => {
         name: cleanString(file?.name, 250),
         url: cleanString(file?.url, 2000),
     })).filter((file) => file.url);
+    const rawIntakeContext = raw.publicIntakeContext && typeof raw.publicIntakeContext === 'object'
+        ? raw.publicIntakeContext
+        : {};
+    const sourceTag = cleanString(rawIntakeContext.sourceTag, 40)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'direct';
     return {
         serviceType,
         languageFrom: cleanString(raw.languageFrom || 'English', 120),
@@ -506,6 +546,11 @@ const sanitizeBookingPayload = (raw) => {
         deliveryEmail: cleanEmail(raw.deliveryEmail),
         gdprConsent: raw.gdprConsent === true,
         agreedToTerms: raw.agreedToTerms === true,
+        publicIntakeContext: {
+            channel: cleanString(rawIntakeContext.channel, 20).toUpperCase() === 'EMBED' ? 'EMBED' : 'DIRECT',
+            sourceTag,
+            referrerHost: cleanString(rawIntakeContext.referrerHost, 180).toLowerCase(),
+        },
     };
 };
 exports.submitPublicInterpreterApplication = functions.runWith({
@@ -806,6 +851,9 @@ exports.submitPublicBookingRequest = functions.runWith({
             requesterContextStatus: requesterContext ? 'MATCHED_GUEST' : 'SELF_ASSERTED',
             billingContactAgentId: financeAgentId || (billingEmail === email ? agentId || null : null),
             financeIdentityStatus,
+            publicIntakeChannel: bookingInput.publicIntakeContext.channel,
+            publicIntakeSourceTag: bookingInput.publicIntakeContext.sourceTag,
+            publicIntakeReferrerHost: bookingInput.publicIntakeContext.referrerHost || null,
         },
         createdAt: new Date().toISOString()
     });

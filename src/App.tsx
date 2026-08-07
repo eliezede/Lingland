@@ -46,6 +46,7 @@ const GoLiveControl = lazyNamed(() => import('./pages/admin/administration/GoLiv
 const AdminStaff = lazyNamed(() => import('./pages/admin/administration/AdminStaff'), 'AdminStaff');
 const AdminOrgChart = lazyNamed(() => import('./pages/admin/administration/AdminOrgChart'), 'AdminOrgChart');
 const AdminIntegrations = lazyNamed(() => import('./pages/admin/administration/AdminIntegrations'), 'AdminIntegrations');
+const RequestFormEmbed = lazyNamed(() => import('./pages/admin/administration/RequestFormEmbed'), 'RequestFormEmbed');
 const AdminProfile = lazyNamed(() => import('./pages/admin/AdminProfile'), 'AdminProfile');
 const AuditLog = lazyNamed(() => import('./pages/admin/system/AuditLog'), 'AuditLog');
 const AdminBillingDashboard = lazyNamed(() => import('./pages/admin/billing/AdminBillingDashboard'), 'AdminBillingDashboard');
@@ -233,6 +234,7 @@ const App = () => {
                                <Route path="administration/staff" element={<AdminStaff />} />
                                <Route path="administration/org-chart" element={<AdminOrgChart />} />
                                <Route path="administration/integrations" element={<AdminIntegrations />} />
+                               <Route path="administration/request-form" element={<RequestFormEmbed />} />
                                <Route path="profile" element={<AdminProfile />} />
                               <Route path="billing" element={<JobsBoard workspace="finance" />} />
                               <Route path="billing/overview" element={<Navigate to="/admin/finance/overview" replace />} />

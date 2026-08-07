@@ -6,7 +6,7 @@ import {
   LogOut, Menu, FileText, PoundSterling,
   UserCog, Settings, UserPlus, X, ChevronRight, MessageSquare, Mail,
   UserCheck, BarChart3, ClipboardList, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon, Receipt,
-  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert, Cable
+  Search, ShieldCheck, Database, History, HelpCircle, Bell, User as UserIcon, ChevronDown, Building2, BrainCircuit, Sparkles, Activity, Bot, ShieldAlert, Cable, Code2
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -383,6 +383,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   {!isSecondarySlim && <div className="sidebar-group-label">System</div>}
                   <NavItem to="/admin/users" icon={UserCog} label="Users & Roles" active={isActive('/admin/users')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/settings" icon={Settings} label="System Config" active={location.pathname === '/admin/settings'} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/administration/request-form" icon={Code2} label="Request Form Embed" active={isActive('/admin/administration/request-form')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/integrations" icon={Cable} label="Integrations" active={isActive('/admin/administration/integrations')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/ai" icon={BrainCircuit} label="AI Governance" active={isActive('/admin/administration/ai')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/migration" icon={Database} label="Airtable Migration" active={isActive('/admin/administration/migration')} isCollapsed={isSecondarySlim} />

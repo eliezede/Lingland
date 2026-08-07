@@ -27,8 +27,10 @@ const stableId = (prefix: string, value: string) => `${prefix}_${createHash('sha
 const placeholderOrganizations = new Set(['client', 'airtable client', 'unknown client', 'guest org', 'home', 'n a']);
 const sharedMailboxPrefixes = /^(accounts?|admin|appointments?|bookings?|enquiries?|finance|info|invoices?|office|payments?|reception|referrals?|team)([._+-]|$)/i;
 const publicRequesterContextTtlMs = 20 * 60 * 1000;
+const publicLanguageCacheTtlMs = 15 * 60 * 1000;
 const blockedMembershipStatuses = new Set(['ARCHIVED', 'BLOCKED', 'REVOKED']);
 const blockedClientStatuses = new Set(['ARCHIVED', 'BLOCKED', 'INACTIVE', 'SUSPENDED']);
+let publicLanguageCache: { expiresAt: number; languages: string[] } | null = null;
 
 const canonicalClientDocument = async (document: FirebaseFirestore.DocumentSnapshot) => {
   let current = document;
@@ -146,6 +148,38 @@ const requireAnonymousOrUser = (context: functions.https.CallableContext) => {
     throw new functions.https.HttpsError('unauthenticated', 'A secure submission session is required.');
   }
 };
+
+export const getPublicLanguageOptions = functions.runWith({
+  timeoutSeconds: 30,
+  memory: '256MB',
+}).https.onCall(async (_data, context) => {
+  requireAnonymousOrUser(context);
+  const now = Date.now();
+  if (publicLanguageCache && publicLanguageCache.expiresAt > now) {
+    return { languages: publicLanguageCache.languages };
+  }
+
+  const snapshot = await db.collection('interpreters').get();
+  const languages = new Set<string>(['English']);
+  snapshot.docs.forEach(document => {
+    const data = document.data();
+    const status = cleanString(data.status, 40).toUpperCase();
+    if (['ARCHIVED', 'BLOCKED', 'REJECTED', 'SUSPENDED'].includes(status)) return;
+    const values = Array.isArray(data.languages)
+      ? data.languages
+      : Array.isArray(data.languageProficiencies)
+        ? data.languageProficiencies.map((item: any) => item?.language)
+        : [];
+    values.forEach((value: unknown) => {
+      const language = cleanString(value, 80);
+      if (language) languages.add(language);
+    });
+  });
+
+  const result = Array.from(languages).sort((left, right) => left.localeCompare(right)).slice(0, 250);
+  publicLanguageCache = { expiresAt: now + publicLanguageCacheTtlMs, languages: result };
+  return { languages: result };
+});
 
 const enforceRateLimit = async (
   kind: string,
@@ -489,6 +523,13 @@ const sanitizeBookingPayload = (raw: Record<string, any>) => {
     name: cleanString(file?.name, 250),
     url: cleanString(file?.url, 2000),
   })).filter((file: any) => file.url);
+  const rawIntakeContext = raw.publicIntakeContext && typeof raw.publicIntakeContext === 'object'
+    ? raw.publicIntakeContext as Record<string, any>
+    : {};
+  const sourceTag = cleanString(rawIntakeContext.sourceTag, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'direct';
   return {
     serviceType,
     languageFrom: cleanString(raw.languageFrom || 'English', 120),
@@ -515,6 +556,11 @@ const sanitizeBookingPayload = (raw: Record<string, any>) => {
     deliveryEmail: cleanEmail(raw.deliveryEmail),
     gdprConsent: raw.gdprConsent === true,
     agreedToTerms: raw.agreedToTerms === true,
+    publicIntakeContext: {
+      channel: cleanString(rawIntakeContext.channel, 20).toUpperCase() === 'EMBED' ? 'EMBED' : 'DIRECT',
+      sourceTag,
+      referrerHost: cleanString(rawIntakeContext.referrerHost, 180).toLowerCase(),
+    },
   };
 };
 
@@ -823,6 +869,9 @@ export const submitPublicBookingRequest = functions.runWith({
       requesterContextStatus: requesterContext ? 'MATCHED_GUEST' : 'SELF_ASSERTED',
       billingContactAgentId: financeAgentId || (billingEmail === email ? agentId || null : null),
       financeIdentityStatus,
+      publicIntakeChannel: bookingInput.publicIntakeContext.channel,
+      publicIntakeSourceTag: bookingInput.publicIntakeContext.sourceTag,
+      publicIntakeReferrerHost: bookingInput.publicIntakeContext.referrerHost || null,
     },
     createdAt: new Date().toISOString()
   });

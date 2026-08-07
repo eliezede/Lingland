@@ -176,6 +176,23 @@ export interface PlatformModeSettings {
   };
 }
 
+export type RequestFormEmbedServiceScope = 'ALL' | 'INTERPRETING' | 'TRANSLATION';
+
+export interface RequestFormEmbedSettings {
+  formBaseUrl: string;
+  serviceScope: RequestFormEmbedServiceScope;
+  lockService: boolean;
+  showBranding: boolean;
+  showIntro: boolean;
+  showHelpPanel: boolean;
+  compactLayout: boolean;
+  transparentBackground: boolean;
+  desktopHeight: number;
+  mobileHeight: number;
+  frameTitle: string;
+  sourceTag: string;
+}
+
 
 export interface Booking extends SourceTrackingFields {
   id: string;
@@ -202,6 +219,11 @@ export interface Booking extends SourceTrackingFields {
     departmentName?: string;
     requesterName?: string;
     requesterEmail?: string;
+  };
+  publicIntakeContext?: {
+    channel: 'DIRECT' | 'EMBED';
+    sourceTag: string;
+    referrerHost?: string;
   };
   clientName: string;
   requestedByUserId: string;
@@ -867,6 +889,7 @@ export interface SystemSettings {
     priorityLanguages: string[];
   };
   platformMode?: PlatformModeSettings;
+  requestFormEmbed?: RequestFormEmbedSettings;
 }
 
 

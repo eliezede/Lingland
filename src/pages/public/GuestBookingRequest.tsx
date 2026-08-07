@@ -14,6 +14,7 @@ import { Modal } from '../../components/ui/Modal';
 import { useToast } from '../../context/ToastContext';
 import { PublicSessionService } from '../../services/publicSessionService';
 import { BrandLogo } from '../../components/ui/BrandLogo';
+import { LANGUAGES } from '../../constants/languages';
 
 const InputGroup = ({ label, icon: Icon, required = false, hint, children }: any) => {
   const generatedId = React.useId();
@@ -53,6 +54,26 @@ const isValidRequesterEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$
 export const GuestBookingRequest = () => {
   const [helpModal, setHelpModal] = useState<{ isOpen: boolean; title: string; content: React.ReactNode } | null>(null);
   const [searchParams] = useSearchParams();
+  const isEmbedded = searchParams.get('embed') === '1';
+  const embedOption = (name: string, fallback: boolean) => {
+    const value = searchParams.get(name);
+    if (value === null) return fallback;
+    return value === '1' || value.toLowerCase() === 'true';
+  };
+  const showEmbedBranding = embedOption('brand', false);
+  const showEmbedIntro = embedOption('intro', true);
+  const showEmbedHelp = embedOption('help', false);
+  const compactEmbedLayout = embedOption('compact', true);
+  const transparentEmbedBackground = embedOption('transparent', true);
+  const requestedService = searchParams.get('service')?.toLowerCase() || '';
+  const lockEmbeddedService = isEmbedded
+    && embedOption('lockService', false)
+    && ['interpreting', 'translation'].includes(requestedService);
+  const embedSourceTag = (searchParams.get('source') || (isEmbedded ? 'embed' : 'direct'))
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || (isEmbedded ? 'embed' : 'direct');
   const { showToast } = useToast();
   const [step, setStep] = useState<'FORM' | 'SUCCESS'>('FORM');
   const [currentFormStep, setCurrentFormStep] = useState(1);
@@ -65,7 +86,7 @@ export const GuestBookingRequest = () => {
   const [selectedRequesterDepartmentId, setSelectedRequesterDepartmentId] = useState('');
   const [proposedRequesterDepartmentName, setProposedRequesterDepartmentName] = useState('');
 
-  const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>(LANGUAGES);
   const [loadingLangs, setLoadingLangs] = useState(true);
 
   const [uploading, setUploading] = useState(false);
@@ -248,27 +269,61 @@ export const GuestBookingRequest = () => {
   useEffect(() => {
     const fetchLangs = async () => {
       try {
-        const interpreters = await InterpreterService.getAll();
-        const langs = interpreters
-          .filter(i => i.status === 'ACTIVE')
-          .flatMap(i => i.languages);
-        const uniqueLangs = Array.from(new Set(['English', ...langs])).sort();
+        await PublicSessionService.ensure();
+        const publicLanguages = await InterpreterService.getPublicLanguages();
+        const uniqueLangs = Array.from(new Set([...LANGUAGES, ...publicLanguages])).sort();
         setAvailableLanguages(uniqueLangs);
-      } catch (e) {
-        console.error("Failed to load languages");
+      } catch {
+        setAvailableLanguages(LANGUAGES);
       } finally {
         setLoadingLangs(false);
       }
     };
     fetchLangs();
 
-    const serviceParam = searchParams.get('service');
+    const serviceParam = searchParams.get('service')?.toLowerCase();
     if (serviceParam === 'translation') {
       setFormData(prev => ({ ...prev, serviceType: ServiceType.TRANSLATION }));
+    } else if (serviceParam === 'interpreting') {
+      setFormData(prev => ({ ...prev, serviceType: ServiceType.FACE_TO_FACE, languageFrom: 'English' }));
     }
 
     window.scrollTo(0, 0);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!isEmbedded || window.parent === window) return;
+
+    const publishHeight = () => {
+      window.parent.postMessage({
+        type: 'LINGLAND_REQUEST_FORM_RESIZE',
+        height: Math.ceil(document.documentElement.scrollHeight),
+        formStep: currentFormStep,
+        state: step,
+      }, '*');
+    };
+
+    publishHeight();
+    const observer = new ResizeObserver(publishHeight);
+    observer.observe(document.documentElement);
+    window.addEventListener('load', publishHeight);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('load', publishHeight);
+    };
+  }, [currentFormStep, isEmbedded, step]);
+
+  useEffect(() => {
+    if (!isEmbedded || !transparentEmbedBackground) return;
+    const htmlBackground = document.documentElement.style.backgroundColor;
+    const bodyBackground = document.body.style.backgroundColor;
+    document.documentElement.style.backgroundColor = 'transparent';
+    document.body.style.backgroundColor = 'transparent';
+    return () => {
+      document.documentElement.style.backgroundColor = htmlBackground;
+      document.body.style.backgroundColor = bodyBackground;
+    };
+  }, [isEmbedded, transparentEmbedBackground]);
 
   useEffect(() => {
     const email = formData.email.trim().toLowerCase();
@@ -417,6 +472,17 @@ export const GuestBookingRequest = () => {
             proposedDepartmentName: requesterDepartmentMode === 'NEW' ? proposedRequesterDepartmentName.trim() : '',
           }
           : undefined,
+        publicIntakeContext: {
+          channel: isEmbedded ? 'EMBED' : 'DIRECT',
+          sourceTag: embedSourceTag,
+          referrerHost: (() => {
+            try {
+              return document.referrer ? new URL(document.referrer).hostname : '';
+            } catch {
+              return '';
+            }
+          })(),
+        },
       };
 
       let finalBookingData = {};
@@ -466,7 +532,7 @@ export const GuestBookingRequest = () => {
 
   if (step === 'SUCCESS' && createdBooking) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className={`min-h-screen flex items-center justify-center p-4 ${isEmbedded && transparentEmbedBackground ? 'bg-transparent' : 'bg-slate-50'}`}>
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-100">
           <div className="bg-green-50 p-8 text-center border-b border-green-100">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
@@ -492,11 +558,11 @@ export const GuestBookingRequest = () => {
               </p>
             </div>
 
-            <div className="mt-8 text-center">
+            {!isEmbedded && <div className="mt-8 text-center">
               <Link to="/" className="text-slate-400 hover:text-slate-600 text-sm font-bold flex items-center justify-center transition-colors">
                 <ChevronRight size={14} className="rotate-180 mr-1" /> Back to Homepage
               </Link>
-            </div>
+            </div>}
           </div>
         </div>
       </div>
@@ -504,8 +570,8 @@ export const GuestBookingRequest = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+    <div className={`min-h-screen font-sans ${isEmbedded && transparentEmbedBackground ? 'bg-transparent' : 'bg-slate-50'} ${isEmbedded && compactEmbedLayout ? 'request-form-compact' : ''}`}>
+      {!isEmbedded && <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 lg:px-8 h-20 flex items-center justify-between">
           <Link to="/" className="group flex items-center">
             <BrandLogo variant="wordmark" size="sm" className="max-w-[190px] transition-transform group-hover:scale-[1.02] sm:max-w-[220px]" />
@@ -514,18 +580,24 @@ export const GuestBookingRequest = () => {
             Need help? <a href="tel:01489576657" className="text-blue-600 font-bold hover:underline">01489 576657</a>
           </div>
         </div>
-      </header>
+      </header>}
 
-      <main className="mx-auto max-w-7xl px-4 py-8 md:py-12 lg:px-8">
-        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-3 lg:gap-12">
-          <div className="min-w-0 space-y-8 lg:col-span-2">
-            <div className="space-y-2">
+      {isEmbedded && showEmbedBranding && (
+        <div className="mx-auto flex max-w-5xl items-center border-b border-slate-200 bg-white px-4 py-3">
+          <BrandLogo variant="wordmark" size="sm" className="max-w-[210px]" />
+        </div>
+      )}
+
+      <main className={`mx-auto px-4 lg:px-8 ${isEmbedded ? 'max-w-5xl py-3 sm:py-5' : 'max-w-7xl py-8 md:py-12'}`}>
+        <div className={`grid grid-cols-1 items-start ${!isEmbedded || showEmbedHelp ? 'gap-8 lg:grid-cols-3 lg:gap-12' : ''}`}>
+          <div className={`min-w-0 ${isEmbedded && compactEmbedLayout ? 'space-y-4' : 'space-y-8'} ${!isEmbedded || showEmbedHelp ? 'lg:col-span-2' : ''}`}>
+            {(!isEmbedded || showEmbedIntro) && <div className="space-y-2">
               <h1 className="text-2xl font-black text-slate-900 sm:text-3xl md:text-4xl">{isTranslation ? 'Request a Translation' : 'Book an Interpreter'}</h1>
               <p className="text-lg text-slate-500">{isTranslation ? 'Professional document translation by verified experts.' : 'Secure, professional language support in minutes.'}</p>
-            </div>
+            </div>}
 
             <form id="booking-request-form" onSubmit={handleSubmit} className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="border-b border-slate-200 bg-white px-6 py-5 md:px-8">
+              <div className="request-form-step-header border-b border-slate-200 bg-white px-6 py-5 md:px-8">
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <div>
                     <p className="text-xs font-bold text-blue-600">Step {currentFormStep} of {totalFormSteps}</p>
@@ -555,7 +627,18 @@ export const GuestBookingRequest = () => {
 
               {currentFormStep === 1 && (
                 <>
-              <div className="border-b border-slate-100 p-5 sm:p-8">
+              <div className="request-form-section border-b border-slate-100 p-5 sm:p-8">
+                {lockEmbeddedService ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-blue-950">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white text-blue-600">
+                      {isTranslation ? <FileText size={18} /> : <User size={18} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold">{isTranslation ? 'Translation request' : 'Interpreting request'}</p>
+                      <p className="text-xs text-blue-700">This form is configured for {isTranslation ? 'translation' : 'interpreting'} services.</p>
+                    </div>
+                  </div>
+                ) : <>
                 <div className="flex items-center mb-6">
                   <div className="w-10 h-10 rounded-full bg-slate-50 text-slate-600 flex items-center justify-center mr-4">
                     <Globe2 size={20} />
@@ -597,9 +680,10 @@ export const GuestBookingRequest = () => {
                     <span className="text-sm font-bold uppercase">Translation</span>
                   </button>
                 </div>
+                </>}
               </div>
 
-              <div className="border-b border-slate-100 bg-slate-50/30 p-5 sm:p-8">
+              <div className="request-form-section border-b border-slate-100 bg-slate-50/30 p-5 sm:p-8">
                 <div className="flex items-center mb-6">
                   <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
                     <Building2 size={20} />
@@ -737,7 +821,7 @@ export const GuestBookingRequest = () => {
               )}
 
               {currentFormStep === totalFormSteps && (
-              <div className="border-b border-slate-100 p-5 sm:p-8">
+              <div className="request-form-section border-b border-slate-100 p-5 sm:p-8">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center">
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4">
@@ -817,7 +901,7 @@ export const GuestBookingRequest = () => {
               )}
 
               {currentFormStep === 2 && !isTranslation && (
-                <div className="border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
+                <div className="request-form-section border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
                   <div className="flex items-center mb-6">
                     <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
                       <User size={20} />
@@ -840,7 +924,7 @@ export const GuestBookingRequest = () => {
               )}
 
               {currentFormStep === 2 && isTranslation && (
-                <div className="min-w-0 space-y-8 p-5 animate-in fade-in slide-in-from-bottom-4 sm:p-8">
+                <div className="request-form-section min-w-0 space-y-8 p-5 animate-in fade-in slide-in-from-bottom-4 sm:p-8">
                   <div className="flex items-center mb-6">
                     <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-4">
                       <FileText size={20} />
@@ -1042,7 +1126,7 @@ export const GuestBookingRequest = () => {
 
               {currentFormStep === 3 && !isTranslation && (
                 <div className="space-y-0">
-                  <div className="border-b border-slate-100 p-5 sm:p-8">
+                  <div className="request-form-section border-b border-slate-100 p-5 sm:p-8">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center">
                         <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mr-4">
@@ -1152,7 +1236,7 @@ export const GuestBookingRequest = () => {
                     )}
                   </div>
 
-                  <div className="border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
+                  <div className="request-form-section border-b border-slate-100 bg-slate-50/50 p-5 sm:p-8">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center">
                         <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mr-4">
@@ -1203,7 +1287,7 @@ export const GuestBookingRequest = () => {
               )}
 
               {currentFormStep === totalFormSteps && (
-              <div className="border-t border-slate-100 bg-slate-50 p-5 sm:p-8">
+              <div className="request-form-section border-t border-slate-100 bg-slate-50 p-5 sm:p-8">
                 <label className="flex items-start mb-4 cursor-pointer group">
                   <input type="checkbox" required className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 group-hover:border-blue-500 transition-colors" checked={formData.agreedToTerms} onChange={event => updateFormField('agreedToTerms', event.currentTarget.checked)} />
                   <div className="ml-3">
@@ -1249,7 +1333,7 @@ export const GuestBookingRequest = () => {
             </form>
           </div>
 
-          <div className="space-y-6 hidden lg:block sticky top-28">
+          {(!isEmbedded || showEmbedHelp) && <div className={`space-y-6 hidden lg:block sticky ${isEmbedded ? 'top-4' : 'top-28'}`}>
             <InfoCard title="Need Help?" icon={HelpCircle} variant="slate">
               <p className="font-bold text-slate-900">Expert support available.</p>
               <div className="space-y-2 mt-2">
@@ -1294,7 +1378,7 @@ export const GuestBookingRequest = () => {
                 <p className="text-[10px] text-slate-400">All data encrypted and GDPR compliant.</p>
               </div>
             </div>
-          </div>
+          </div>}
         </div>
       </main>
 

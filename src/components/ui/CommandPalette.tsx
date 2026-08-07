@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Search, Command, Zap, Users, Briefcase, FileText, Settings, ArrowRight,
-    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database, BrainCircuit, Bot
+    CalendarDays, UserCheck, Clock, UserPlus, PoundSterling, BarChart3, Shield, ShieldCheck, Globe, Database, BrainCircuit, Bot, Code2
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -52,6 +52,7 @@ export const CommandPalette = () => {
         { id: 'finance-overview', title: 'Finance Overview', subtitle: 'Accounts control room', icon: BarChart3, category: 'Finance', keywords: ['reports', 'analytics', 'revenue', 'finance'], onSelect: () => navigate('/admin/finance/overview') },
         // Admin
         { id: 'settings', title: 'System Config', subtitle: 'Platform settings and configuration', icon: Settings, category: 'Admin', keywords: ['settings', 'config', 'system'], onSelect: () => navigate('/admin/settings') },
+        { id: 'request-form-embed', title: 'Request Form Embed', subtitle: 'Configure and generate the Wix request form embed', icon: Code2, category: 'Admin', keywords: ['request', 'form', 'embed', 'wix', 'iframe'], onSelect: () => navigate('/admin/administration/request-form') },
         { id: 'users', title: 'Users & Roles', subtitle: 'Manage user accounts and permissions', icon: Shield, category: 'Admin', keywords: ['users', 'roles', 'permissions', 'accounts'], onSelect: () => navigate('/admin/users') },
         { id: 'data-center', title: 'Data Center', subtitle: 'Sync readiness, exports and platform data guardrails', icon: Database, category: 'Admin', keywords: ['data', 'database', 'import', 'export', 'system', 'sync', 'readiness'], onSelect: () => navigate('/admin/administration/data') },
         { id: 'audit-log', title: 'Audit & Event Control', subtitle: 'Immutable operations, finance, sync and communication events', icon: FileText, category: 'Admin', keywords: ['audit', 'logs', 'history', 'trail', 'events'], onSelect: () => navigate('/admin/system/audit-log') },
