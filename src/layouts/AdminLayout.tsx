@@ -387,6 +387,7 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
                   <NavItem to="/admin/administration/integrations" icon={Cable} label="Integrations" active={isActive('/admin/administration/integrations')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/ai" icon={BrainCircuit} label="AI Governance" active={isActive('/admin/administration/ai')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/migration" icon={Database} label="Airtable Migration" active={isActive('/admin/administration/migration')} isCollapsed={isSecondarySlim} />
+                  <NavItem to="/admin/administration/accounting-migration" icon={Receipt} label="Accounting Migration" active={isActive('/admin/administration/accounting-migration')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/data" icon={Database} label="Data Center" active={isActive('/admin/administration/data')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/administration/go-live" icon={ShieldCheck} label="Go-Live Control" active={isActive('/admin/administration/go-live')} isCollapsed={isSecondarySlim} />
                   <NavItem to="/admin/system/audit-log" icon={History} label="Audit Logs" active={isActive('/admin/system/audit-log')} isCollapsed={isSecondarySlim} />

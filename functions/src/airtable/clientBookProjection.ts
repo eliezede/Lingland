@@ -6,7 +6,7 @@ import {
 } from '../clients/clientHierarchyCore';
 import { normalizeOrganizationName } from '../clients/clientIdentityAuditCore';
 
-export const CLIENT_BOOK_PROJECTION_VERSION = 1;
+export const CLIENT_BOOK_PROJECTION_VERSION = 3;
 
 export interface ClientBookSourceRecord {
   sourceRecordId: string;
@@ -33,6 +33,7 @@ export interface ClientBookCanonicalProjection {
   canonicalClientId: string;
   canonicalCompanyName: string;
   aliases: string[];
+  identityEmails: string[];
   sourceRecordIds: string[];
   sourceRecords: Array<{ sourceTable: string; sourceRecordId: string }>;
   snapshotHash: string;
@@ -117,6 +118,7 @@ export const buildClientBookProjection = (
     const documents = [canonicalDocument, ...orderedSources.map(sourceDocument)];
     const hierarchy = buildClientHierarchySeedPreview(documents, canonicalClientId);
     const aliases = unique(orderedSources.flatMap(source => [source.companyName, source.stableKey]));
+    const identityEmails = unique(hierarchy.agents.map(agent => agent.normalizedEmail));
     const sourceRecordIds = orderedSources.map(source => source.sourceRecordId);
     const sourceRecords = orderedSources.map(source => ({
       sourceTable: source.sourceTable || 'Clients Book',
@@ -146,6 +148,7 @@ export const buildClientBookProjection = (
       canonicalClientId,
       canonicalCompanyName,
       aliases,
+      identityEmails,
       sourceRecordIds,
       sourceRecords,
       snapshotHash,

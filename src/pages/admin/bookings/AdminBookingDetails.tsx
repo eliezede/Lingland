@@ -7,7 +7,6 @@ import {
   CalendarDays,
   ChevronLeft,
   CheckCircle2,
-  Clock,
   CreditCard,
   Download,
   Edit2,
@@ -15,7 +14,6 @@ import {
   Globe2,
   History,
   Mail,
-  MapPin,
   MessageSquare,
   MoreVertical,
   Phone,
@@ -23,9 +21,7 @@ import {
   ShieldCheck,
   Trash2,
   User,
-  UserCheck,
   UserPlus,
-  Video,
   XCircle,
 } from 'lucide-react';
 import { BookingService } from '../../../services/bookingService';
@@ -35,6 +31,7 @@ import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../../../typ
 import { UserAvatar } from '../../../components/ui/UserAvatar';
 import { PdfService } from '../../../services/pdfService';
 import { Button } from '../../../components/ui/Button';
+import { Modal } from '../../../components/ui/Modal';
 import { Spinner } from '../../../components/ui/Spinner';
 import { StatusBadge } from '../../../components/StatusBadge';
 import { useToast } from '../../../context/ToastContext';
@@ -47,9 +44,18 @@ import { InterpreterAllocationDrawer } from '../../../components/operations/Inte
 import { InterpreterPreviewDrawer } from '../../../components/operations/InterpreterPreviewDrawer';
 import { LocationMap } from '../../../components/ui/LocationMap';
 import { formatLanguagePair } from '../../../utils/languageDisplay';
+import { getServiceCategoryLabel, getServiceTypeLabel } from '../../../utils/serviceTypeDisplay';
 import {
-  BookingMetricCell as MetricCell,
-  BookingMetricsBand,
+  BookingWorkflowFocus,
+  BookingWorkflowStepper,
+} from '../../../components/bookings/BookingWorkflowTracker';
+import {
+  BookingWorkflowStepId,
+  buildBookingWorkflowSteps,
+  getCurrentBookingWorkflowStep,
+} from '../../../utils/bookingWorkflow';
+import {
+  BookingEssentialsStrip,
   BookingNavigationState,
   BookingRecordHeader,
   BookingSection as Section,
@@ -107,18 +113,20 @@ const getSyncBadgeClass = (status?: string) => ({
   muted: 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
 }[getSyncTone(status)]);
 
-const getNextAction = (booking: Booking) => {
-  const professional = booking.serviceCategory === ServiceCategory.TRANSLATION ? 'translator' : 'interpreter';
-  if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) return `Assign ${professional}`;
-  if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) return `Assign ${professional}`;
-  if (booking.status === BookingStatus.ASSIGNMENT_PENDING) return `Await ${professional} response`;
-  if (booking.status === BookingStatus.BOOKED) return 'Monitor delivery';
-  if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) return 'Verify timesheet';
-  if (booking.status === BookingStatus.READY_FOR_INVOICE) return 'Send to invoicing';
-  if (booking.status === BookingStatus.INVOICED) return 'Await payment';
-  if (booking.status === BookingStatus.PAID) return 'Completed';
-  if (booking.status === BookingStatus.CANCELLED) return 'Cancelled';
-  return 'Review booking';
+const getBookingMoment = (booking: Booking): Date | null => {
+  const rawDate = booking.serviceCategory === ServiceCategory.TRANSLATION
+    ? (booking.translationDeadline || booking.date)
+    : booking.date;
+  if (!rawDate) return null;
+
+  const date = (rawDate as any)?.toDate ? (rawDate as any).toDate() : new Date(rawDate as any);
+  if (Number.isNaN(date.getTime())) return null;
+
+  if (booking.serviceCategory !== ServiceCategory.TRANSLATION && booking.startTime) {
+    const [hours, minutes] = booking.startTime.split(':').map(Number);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) date.setHours(hours, minutes, 0, 0);
+  }
+  return date;
 };
 
 const InfoItem = ({ label, value, icon: Icon }: { label: string; value: React.ReactNode; icon?: React.ElementType }) => (
@@ -130,6 +138,36 @@ const InfoItem = ({ label, value, icon: Icon }: { label: string; value: React.Re
     <div className="text-sm font-semibold leading-6 text-slate-950 dark:text-white">{value}</div>
   </div>
 );
+
+const EssentialField = ({
+  label,
+  value,
+  icon: Icon,
+  tone = 'default',
+}: {
+  label: string;
+  value: React.ReactNode;
+  icon: React.ElementType;
+  tone?: 'default' | 'warning' | 'success';
+}) => {
+  const valueClass = tone === 'warning'
+    ? 'text-amber-700 dark:text-amber-300'
+    : tone === 'success'
+      ? 'text-emerald-700 dark:text-emerald-300'
+      : 'text-slate-950 dark:text-white';
+
+  return (
+    <div className="min-w-0 py-1">
+      <div className="flex items-center gap-2 text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400">
+        <Icon size={13} className="shrink-0" />
+        <span>{label}</span>
+      </div>
+      <div className={`mt-1 min-w-0 text-sm font-semibold leading-6 ${valueClass}`}>{value}</div>
+    </div>
+  );
+};
+
+type RecordPanel = 'source' | 'activity' | 'finance' | 'location' | null;
 
 export const AdminBookingDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -149,6 +187,8 @@ export const AdminBookingDetails = () => {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<RecordPanel>(null);
+  const [selectedWorkflowStep, setSelectedWorkflowStep] = useState<BookingWorkflowStepId | null>(null);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [timesheet, setTimesheet] = useState<Timesheet | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -192,6 +232,7 @@ export const AdminBookingDetails = () => {
 
   useEffect(() => {
     if (id) {
+      setSelectedWorkflowStep(null);
       loadBooking();
       loadOperationalArtifacts();
     }
@@ -203,8 +244,15 @@ export const AdminBookingDetails = () => {
         setIsActionsOpen(false);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsActionsOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, []);
 
   const handleStatusChange = async (newStatus: BookingStatus) => {
@@ -351,10 +399,11 @@ export const AdminBookingDetails = () => {
 
   const handleRecordSessionCompleted = async () => {
     if (!booking || !id) return;
+    const deliveryNoun = booking.serviceCategory === ServiceCategory.TRANSLATION ? 'translation delivery' : 'session delivery';
     const ok = await confirm({
-      title: 'Record Session Completed',
-      message: 'Use this when staff confirmed the session was delivered outside the interpreter app.',
-      confirmLabel: 'Mark Completed',
+      title: `Confirm ${deliveryNoun}`,
+      message: `This records the ${deliveryNoun} as completed and moves the job to the claim and billing handoff. It does not close the full job lifecycle.`,
+      confirmLabel: 'Confirm delivery',
       variant: 'primary',
     });
     if (!ok) return;
@@ -362,11 +411,11 @@ export const AdminBookingDetails = () => {
     setIsActionLoading(true);
     try {
       await BookingService.recordSessionCompletedByStaff(id);
-      showToast('Session marked as completed', 'success');
+      showToast(`${deliveryNoun.charAt(0).toUpperCase()}${deliveryNoun.slice(1)} confirmed`, 'success');
       await loadBooking();
       await loadOperationalArtifacts();
     } catch (error: any) {
-      showToast(error?.message || 'Failed to mark session completed', 'error');
+      showToast(error?.message || `Failed to confirm ${deliveryNoun}`, 'error');
     } finally {
       setIsActionLoading(false);
     }
@@ -508,6 +557,8 @@ export const AdminBookingDetails = () => {
   const professionalRole = isTranslationJob ? 'Translator' : 'Interpreter';
   const professionalRoleLower = professionalRole.toLowerCase();
   const isOnline = booking.locationType === 'ONLINE';
+  const serviceCategoryLabel = getServiceCategoryLabel(booking);
+  const serviceTypeLabel = getServiceTypeLabel(booking);
   const addressLine = isTranslationJob
     ? 'Document delivery'
     : isOnline
@@ -521,28 +572,46 @@ export const AdminBookingDetails = () => {
     : 'No date';
   const languageLabel = formatLanguagePair(booking.languageFrom || 'English', booking.languageTo || 'N/A');
   const durationLabel = `${booking.durationMinutes || 'N/A'} min`;
-  const assignmentLabel = booking.interpreterName || (booking.interpreterId ? `${professionalRole} assigned` : `No ${professionalRoleLower}`);
+  const departmentName = booking.clientSnapshot?.departmentName || booking.proposedDepartmentName || 'Organisation-wide';
+  const scheduleSummaryLabel = sessionDate
+    ? `${formatDate(sessionDate, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}${!isTranslationJob ? ` at ${booking.startTime || 'TBC'}` : ''}`
+    : 'Not scheduled';
+  const scheduleSummaryDetail = isTranslationJob
+    ? (booking.wordCount ? `${booking.wordCount.toLocaleString()} words` : `${booking.numberOfDocs || 0} documents`)
+    : durationLabel;
+  const locationSummaryLabel = isTranslationJob
+    ? 'Document delivery'
+    : isOnline
+      ? 'Remote / online'
+      : (booking.location || booking.address || 'Location not provided');
+  const locationSummaryDetail = isTranslationJob
+    ? (booking.deliveryEmail || contactEmail || 'Delivery email not provided')
+    : isOnline
+      ? (booking.onlineLink ? 'Connection link available' : 'No connection link')
+      : (booking.postcode || undefined);
+  const assignmentSummaryDetail = booking.interpreterId
+    ? (booking.assignmentState || booking.statusMappingState?.assignmentState || professionalRole)
+    : `${professionalRole} required`;
   const sourceFileCount = Array.isArray(booking.sourceFiles) ? booking.sourceFiles.length : 0;
   const claimSourceLabel = timesheet ? formatSource(timesheet.source, timesheet.recordedByStaff) : 'No claim';
   const clientAmount = timesheet?.clientAmountCalculated || booking.clientInvoiceTotal || booking.finalQuote || booking.totalAmount || 0;
   const interpreterAmount = timesheet?.interpreterAmountCalculated || timesheet?.totalToPay || booking.interpreterInvoiceTotal || booking.professionalCost || 0;
-  const workflowSteps = [
-    {
-      label: isTranslationJob ? 'Translation complete' : 'Delivered',
-      done: Boolean(isTranslationJob && (booking.translationCompletedAt || booking.translationDeliveredAt)) || [
-        BookingStatus.SESSION_COMPLETED,
-        BookingStatus.TIMESHEET_SUBMITTED,
-        BookingStatus.READY_FOR_INVOICE,
-        BookingStatus.INVOICING,
-        BookingStatus.INVOICED,
-        BookingStatus.PAID,
-      ].includes(booking.status),
-    },
-    { label: 'Claim', done: Boolean(timesheet || booking.timesheetId) },
-    { label: 'Authorized', done: Boolean(timesheet?.adminApproved || booking.timesheetVerifiedAt || booking.status === BookingStatus.READY_FOR_INVOICE || booking.status === BookingStatus.INVOICED || booking.status === BookingStatus.PAID) },
-    { label: 'Invoiced', done: Boolean(booking.clientInvoiceId || booking.clientInvoiceNumber || booking.status === BookingStatus.INVOICED || booking.status === BookingStatus.PAID) },
-    { label: 'Paid', done: booking.status === BookingStatus.PAID || booking.paymentStatus === 'PAID' },
-  ];
+  const deliveryComplete = Boolean(isTranslationJob && (booking.translationCompletedAt || booking.translationDeliveredAt)) || [
+    BookingStatus.SESSION_COMPLETED,
+    BookingStatus.TIMESHEET_SUBMITTED,
+    BookingStatus.READY_FOR_INVOICE,
+    BookingStatus.INVOICING,
+    BookingStatus.INVOICED,
+    BookingStatus.PAID,
+  ].includes(booking.status);
+  const claimComplete = Boolean(timesheet || booking.timesheetId);
+  const invoiceComplete = Boolean(
+    booking.clientInvoiceId
+    || booking.clientInvoiceNumber
+    || booking.status === BookingStatus.INVOICED
+    || booking.status === BookingStatus.PAID,
+  );
+  const paidComplete = booking.status === BookingStatus.PAID || booking.paymentStatus === 'PAID';
   const operationalChecks = [
     {
       label: `${professionalRole} assigned`,
@@ -559,8 +628,8 @@ export const AdminBookingDetails = () => {
     },
     {
       label: 'Billing reference',
-      ok: Boolean(booking.costCode),
-      detail: booking.costCode || 'Missing PO / cost code',
+      ok: Boolean(booking.costCode || invoiceComplete),
+      detail: booking.costCode || (invoiceComplete ? 'Invoice already issued' : 'Missing PO / cost code'),
       action: () => navigate(`/admin/bookings/edit/${id}`, { state: bookingContextState }),
     },
     {
@@ -582,34 +651,191 @@ export const AdminBookingDetails = () => {
     },
   ];
   const blockedChecks = operationalChecks.filter(check => !check.ok);
-
-  const primaryAction = () => {
-    if ([BookingStatus.INCOMING, BookingStatus.NEEDS_ASSIGNMENT].includes(booking.status)) {
-      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign {professionalRoleLower}</Button>;
-    }
-    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && !booking.interpreterId) {
-      return <Button variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign {professionalRoleLower}</Button>;
-    }
-    if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && booking.interpreterId) {
-      return <Button variant="secondary" onClick={() => handleRecordInterpreterResponse(true)} isLoading={isActionLoading} icon={CheckCircle2}>Record accepted</Button>;
-    }
-    if (booking.status === BookingStatus.BOOKED) {
-      return <Button variant="secondary" onClick={handleRecordSessionCompleted} isLoading={isActionLoading} icon={CheckCircle2}>Mark completed</Button>;
-    }
-    if (booking.status === BookingStatus.SESSION_COMPLETED) {
-      return <Button variant="secondary" onClick={handleRecordManualTimesheet} isLoading={isActionLoading} icon={FileText}>Record timesheet</Button>;
-    }
-    if (booking.status === BookingStatus.TIMESHEET_SUBMITTED) {
-      return <Button variant="secondary" onClick={handleVerifyTimesheet} isLoading={isActionLoading} icon={FileText}>Verify timesheet</Button>;
-    }
-    if (booking.status === BookingStatus.READY_FOR_INVOICE) {
-      return <Button variant="secondary" onClick={handleRecordInvoiceIssued} isLoading={isActionLoading} icon={Receipt}>Mark invoiced</Button>;
-    }
-    if (booking.status === BookingStatus.INVOICED) {
-      return <Button variant="secondary" onClick={handleRecordPaymentReceived} isLoading={isActionLoading} icon={Receipt}>Mark paid</Button>;
-    }
-    return null;
+  const scheduledMoment = getBookingMoment(booking);
+  const isWaitingForScheduledDelivery = booking.status === BookingStatus.BOOKED
+    && Boolean(scheduledMoment && scheduledMoment.getTime() > Date.now());
+  const scheduledMomentLabel = scheduledMoment
+    ? isTranslationJob
+      ? formatDate(scheduledMoment, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      : `${formatDate(scheduledMoment, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} at ${scheduledMoment.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+    : sessionLabel;
+  const workflowProgress = {
+    requestNeedsAttention: Boolean((!booking.costCode && !invoiceComplete) || booking.departmentIdentityStatus === 'PENDING_APPROVAL' || booking.departmentIdentityStatus === 'PENDING_CLIENT_REVIEW'),
+    assignmentComplete: Boolean(booking.interpreterId),
+    serviceComplete: deliveryComplete,
+    claimComplete,
+    invoiceComplete,
+    paidComplete,
+    serviceLabel: (isTranslationJob ? 'Delivery' : 'Session') as 'Delivery' | 'Session',
+    serviceScheduled: isWaitingForScheduledDelivery,
   };
+  const workflowSteps = buildBookingWorkflowSteps(workflowProgress);
+  const currentWorkflowStep = getCurrentBookingWorkflowStep(workflowProgress);
+  const activeWorkflowStep = selectedWorkflowStep || currentWorkflowStep;
+  const activeWorkflowStage = workflowSteps.find(step => step.id === activeWorkflowStep) || workflowSteps[0];
+  const workflowActionClass = 'w-full sm:w-auto';
+  const workflowFocus = (() => {
+    switch (activeWorkflowStep) {
+      case 'request':
+        return {
+          title: workflowProgress.requestNeedsAttention ? 'Complete request details' : 'Request captured',
+          detail: `${companyName} · ${contactName}. ${serviceCategoryLabel}, ${languageLabel}.`,
+        };
+      case 'assignment':
+        return {
+          title: booking.interpreterId ? `${professionalRole} assigned` : `Assign ${professionalRoleLower}`,
+          detail: booking.interpreterId
+            ? `${booking.interpreterName || professionalRole} · ${booking.assignmentState || booking.statusMappingState?.assignmentState || 'Assignment recorded'}.`
+            : `No ${professionalRoleLower} is assigned to this job yet.`,
+        };
+      case 'service':
+        return {
+          title: deliveryComplete
+            ? `${isTranslationJob ? 'Translation' : 'Session'} delivered`
+            : isWaitingForScheduledDelivery
+              ? `${isTranslationJob ? 'Translation' : 'Session'} scheduled`
+              : `Record ${isTranslationJob ? 'delivery' : 'session'} outcome`,
+          detail: deliveryComplete
+            ? `${isTranslationJob ? 'Delivery' : 'Session'} outcome has been recorded. Review the service evidence or continue to the claim.`
+            : isWaitingForScheduledDelivery
+              ? `${isTranslationJob ? 'Delivery is due on' : 'The session is scheduled for'} ${scheduledMomentLabel}.`
+              : `Confirm whether the ${isTranslationJob ? 'translation was delivered' : 'session was delivered or not executed'}.`,
+        };
+      case 'claim':
+        return {
+          title: claimComplete ? (timesheet?.adminApproved ? 'Claim authorised' : 'Claim recorded') : deliveryComplete ? 'Record claim' : 'Claim not ready',
+          detail: claimComplete
+            ? `${claimSourceLabel} · client charge ${formatMoney(clientAmount)} · ${professionalRoleLower} payable ${formatMoney(interpreterAmount)}.`
+            : deliveryComplete
+              ? `Record the actual service outcome and amounts for finance review.`
+              : `The claim opens after the ${isTranslationJob ? 'delivery' : 'session'} outcome is recorded.`,
+        };
+      case 'invoice':
+        return {
+          title: invoiceComplete ? 'Client invoice issued' : booking.status === BookingStatus.INVOICING ? 'Complete client invoice' : 'Prepare client invoice',
+          detail: `${formatMoney(invoiceEstimate)} client charge · ${booking.costCode ? `reference ${booking.costCode}` : invoiceComplete ? 'invoice already issued' : 'billing reference missing'}.`,
+        };
+      case 'paid':
+        return {
+          title: paidComplete ? 'Payment received' : invoiceComplete ? 'Await client payment' : 'Payment not ready',
+          detail: paidComplete
+            ? `The client payment is recorded for this job.`
+            : invoiceComplete
+              ? `${booking.clientInvoiceNumber || 'Client invoice'} is issued and awaiting settlement.`
+              : `Issue the client invoice before recording payment.`,
+        };
+      default:
+        return { title: activeWorkflowStage.label, detail: 'Review this workflow stage.' };
+    }
+  })();
+
+  const openBookingCalendar = () => navigate(
+    `/admin/bookings?mode=calendar&calendar=month&service=${isTranslationJob ? 'translation' : 'interpreting'}`,
+    {
+      state: {
+        workspaceSnapshot: {
+          boardMode: 'calendar',
+          calendarViewMode: 'month',
+          calendarCursorDate: scheduledMoment?.toISOString(),
+        },
+      },
+    },
+  );
+
+  const workflowAction = () => {
+    switch (activeWorkflowStep) {
+      case 'request':
+        return (
+          <Button
+            className={workflowActionClass}
+            variant={workflowProgress.requestNeedsAttention ? 'primary' : 'secondary'}
+            icon={Edit2}
+            onClick={() => navigate(`/admin/bookings/edit/${id}`, { state: bookingContextState })}
+          >
+            {!booking.costCode && !invoiceComplete ? 'Add billing reference' : 'Edit request details'}
+          </Button>
+        );
+      case 'assignment':
+        if (!booking.interpreterId) {
+          return <Button className={workflowActionClass} onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Assign {professionalRoleLower}</Button>;
+        }
+        if ([BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status)) {
+          return (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <Button className={workflowActionClass} onClick={() => handleRecordInterpreterResponse(true)} isLoading={isActionLoading} icon={CheckCircle2}>Record accepted</Button>
+              <Button className={workflowActionClass} variant="secondary" onClick={() => handleRecordInterpreterResponse(false)} isLoading={isActionLoading} icon={XCircle}>Record declined</Button>
+            </div>
+          );
+        }
+        return <Button className={workflowActionClass} variant="secondary" onClick={() => setIsAllocationDrawerOpen(true)} icon={UserPlus}>Change assignment</Button>;
+      case 'service':
+        if (!booking.interpreterId) {
+          return <Button className={workflowActionClass} variant="secondary" onClick={() => setSelectedWorkflowStep('assignment')} icon={UserPlus}>Complete assignment first</Button>;
+        }
+        if (booking.status === BookingStatus.BOOKED && !isWaitingForScheduledDelivery) {
+          return (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <Button className={workflowActionClass} onClick={handleRecordSessionCompleted} isLoading={isActionLoading} icon={CheckCircle2}>
+                {isTranslationJob ? 'Confirm translation delivered' : 'Confirm session delivered'}
+              </Button>
+              <Button className={workflowActionClass} variant="secondary" onClick={handleMarkNotExecuted} isLoading={isActionLoading} icon={AlertCircle}>Mark not executed</Button>
+            </div>
+          );
+        }
+        if (isWaitingForScheduledDelivery) {
+          return <Button className={workflowActionClass} variant="secondary" icon={CalendarDays} onClick={openBookingCalendar}>View in calendar</Button>;
+        }
+        return <Button className={workflowActionClass} variant="secondary" icon={History} onClick={() => setActivePanel('activity')}>View service activity</Button>;
+      case 'claim':
+        if (!deliveryComplete) {
+          return <Button className={workflowActionClass} variant="secondary" onClick={() => setSelectedWorkflowStep('service')} icon={CalendarDays}>Open {isTranslationJob ? 'delivery' : 'session'} stage</Button>;
+        }
+        if (!claimComplete) {
+          return <Button className={workflowActionClass} onClick={handleRecordManualTimesheet} isLoading={isActionLoading} icon={FileText}>Record timesheet</Button>;
+        }
+        if (!timesheet?.adminApproved || booking.status === BookingStatus.TIMESHEET_SUBMITTED) {
+          return <Button className={workflowActionClass} onClick={handleVerifyTimesheet} isLoading={isActionLoading} icon={ShieldCheck}>Verify timesheet</Button>;
+        }
+        return <Button className={workflowActionClass} variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}>Open claims</Button>;
+      case 'invoice':
+        if (!booking.costCode && !invoiceComplete) {
+          return <Button className={workflowActionClass} icon={Edit2} onClick={() => navigate(`/admin/bookings/edit/${id}`, { state: bookingContextState })}>Add billing reference</Button>;
+        }
+        if (!claimComplete) {
+          return <Button className={workflowActionClass} variant="secondary" icon={FileText} onClick={() => setSelectedWorkflowStep('claim')}>Complete claim first</Button>;
+        }
+        if (booking.status === BookingStatus.READY_FOR_INVOICE) {
+          return <Button className={workflowActionClass} onClick={handleRecordInvoiceIssued} isLoading={isActionLoading} icon={Receipt}>Mark invoiced</Button>;
+        }
+        if (booking.clientInvoiceId) {
+          return <Button className={workflowActionClass} variant="secondary" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`, { state: bookingContextState })}>Open client invoice</Button>;
+        }
+        return <Button className={workflowActionClass} icon={Receipt} onClick={() => setActivePanel('finance')}>Open finance details</Button>;
+      case 'paid':
+        if (!invoiceComplete) {
+          return <Button className={workflowActionClass} variant="secondary" icon={Receipt} onClick={() => setSelectedWorkflowStep('invoice')}>Open invoice stage</Button>;
+        }
+        if (!paidComplete) {
+          return <Button className={workflowActionClass} onClick={handleRecordPaymentReceived} isLoading={isActionLoading} icon={CheckCircle2}>Record payment received</Button>;
+        }
+        return <Button className={workflowActionClass} variant="secondary" icon={Receipt} onClick={() => setActivePanel('finance')}>View finance details</Button>;
+      default:
+        return null;
+    }
+  };
+
+  const locationSummaryValue = !isTranslationJob && !isOnline && booking.lat && booking.lng
+    ? (
+        <button
+          type="button"
+          className="block w-full truncate text-left hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-blue-300"
+          onClick={() => setActivePanel('location')}
+          title="View location map"
+        >
+          {locationSummaryLabel}
+        </button>
+      )
+    : locationSummaryLabel;
 
   return (
     <div className="-m-3 min-h-full bg-slate-100 pb-10 dark:bg-slate-950 sm:-m-5 lg:-m-6">
@@ -620,9 +846,56 @@ export const AdminBookingDetails = () => {
         status={booking.status}
         backLabel={returnLabel}
         onBack={goBackToContext}
+        summary={(
+          <BookingEssentialsStrip
+            items={[
+              {
+                label: 'Client / requester',
+                value: companyName,
+                secondary: `${departmentName} / ${contactName}`,
+              },
+              {
+                label: 'Language',
+                value: languageLabel,
+                secondary: serviceCategoryLabel,
+              },
+              {
+                label: isTranslationJob ? 'Deadline' : 'Schedule',
+                value: scheduleSummaryLabel,
+                secondary: scheduleSummaryDetail,
+                tone: sessionDate ? 'default' : 'warning',
+              },
+              {
+                label: 'Service type',
+                value: serviceTypeLabel,
+                secondary: `${booking.priority || 'Normal'} / ${booking.isOOH ? 'Out of hours' : 'Standard hours'}`,
+              },
+              {
+                label: isTranslationJob ? 'Delivery' : 'Location',
+                value: locationSummaryValue,
+                secondary: locationSummaryDetail,
+                tone: locationSummaryLabel === 'Location not provided' ? 'warning' : 'default',
+              },
+              {
+                label: 'Assignment',
+                value: booking.interpreterName || 'Unassigned',
+                secondary: assignmentSummaryDetail,
+                tone: booking.interpreterId ? 'success' : 'warning',
+              },
+            ]}
+          />
+        )}
+        progress={(
+          <BookingWorkflowStepper
+            steps={workflowSteps}
+            selectedStepId={activeWorkflowStep}
+            onSelect={setSelectedWorkflowStep}
+          />
+        )}
         actions={
           <>
             <Button
+              variant="secondary"
               onClick={() => navigate(`/admin/bookings/edit/${id}`, {
                 state: bookingContextState,
               })}
@@ -630,69 +903,44 @@ export const AdminBookingDetails = () => {
             >
               Edit
             </Button>
-            {primaryAction()}
-            <Button variant="secondary" icon={Download} onClick={handleExportPdf} isLoading={isExporting}>Export</Button>
-            <Button variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Message</Button>
+            {booking.interpreterId && <Button variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Message</Button>}
             <div className="relative" ref={actionsRef}>
-              <Button variant="ghost" icon={MoreVertical} onClick={() => setIsActionsOpen(!isActionsOpen)} className="w-full sm:w-auto" />
+              <Button
+                variant="ghost"
+                icon={MoreVertical}
+                onClick={() => setIsActionsOpen(!isActionsOpen)}
+                className="w-full sm:w-auto"
+                aria-label="More booking actions"
+                title="More booking actions"
+              />
               {isActionsOpen && (
-                <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
-                  {[BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING].includes(booking.status) && booking.interpreterId && (
-                    <>
-                      <button
-                        onClick={() => { handleRecordInterpreterResponse(true); setIsActionsOpen(false); }}
-                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                      >
-                        <CheckCircle2 size={15} /> Record accepted
-                      </button>
-                      <button
-                        onClick={() => { handleRecordInterpreterResponse(false); setIsActionsOpen(false); }}
-                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/30"
-                      >
-                        <XCircle size={15} /> Record declined
-                      </button>
-                    </>
-                  )}
-                  {booking.status === BookingStatus.BOOKED && (
-                    <button
-                      onClick={() => { handleRecordSessionCompleted(); setIsActionsOpen(false); }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                    >
-                      <CheckCircle2 size={15} /> Mark completed
-                    </button>
-                  )}
-                  {booking.status === BookingStatus.SESSION_COMPLETED && (
-                    <button
-                      onClick={() => { handleRecordManualTimesheet(); setIsActionsOpen(false); }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                    >
-                      <FileText size={15} /> Record timesheet
-                    </button>
-                  )}
-                  {booking.status === BookingStatus.READY_FOR_INVOICE && (
-                    <button
-                      onClick={() => { handleRecordInvoiceIssued(); setIsActionsOpen(false); }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                    >
-                      <Receipt size={15} /> Mark invoiced
-                    </button>
-                  )}
-                  {booking.status === BookingStatus.INVOICED && (
-                    <button
-                      onClick={() => { handleRecordPaymentReceived(); setIsActionsOpen(false); }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                    >
-                      <Receipt size={15} /> Mark paid
-                    </button>
-                  )}
-                  {booking.status === BookingStatus.BOOKED && (
-                    <button
-                      onClick={() => { handleMarkNotExecuted(); setIsActionsOpen(false); }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/30"
-                    >
-                      <AlertCircle size={15} /> Mark not executed
-                    </button>
-                  )}
+                <div className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900" role="menu">
+                  <button
+                    onClick={() => { setActivePanel('activity'); setIsActionsOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <History size={15} /> Activity history
+                  </button>
+                  <button
+                    onClick={() => { setActivePanel('source'); setIsActionsOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <History size={15} /> Source and sync details
+                  </button>
+                  <button
+                    onClick={() => { setActivePanel('finance'); setIsActionsOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <Receipt size={15} /> Finance details
+                  </button>
+                  <button
+                    onClick={() => { handleExportPdf(); setIsActionsOpen(false); }}
+                    disabled={isExporting}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <Download size={15} /> Export PDF
+                  </button>
+                  <div className="border-t border-slate-100 dark:border-slate-800" />
                   <button
                     onClick={() => { handleStatusChange(BookingStatus.CANCELLED); setIsActionsOpen(false); }}
                     className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
@@ -714,68 +962,62 @@ export const AdminBookingDetails = () => {
       />
 
       <main className="mx-auto max-w-[1600px] space-y-4 p-3 sm:p-5 lg:p-6">
-        <BookingMetricsBand>
-          <MetricCell icon={Building2} label="Requester" value={companyName} />
-          <MetricCell icon={Globe2} label="Language" value={languageLabel} />
-          <MetricCell icon={CalendarDays} label={isTranslationJob ? 'Deadline' : 'Schedule'} value={sessionLabel} tone={(isTranslationJob ? Boolean(sessionDate) : Boolean(booking.date && booking.startTime)) ? 'default' : 'warning'} />
-          <MetricCell icon={MapPin} label="Location" value={addressLine} tone={addressLine ? 'default' : 'warning'} />
-          <MetricCell icon={UserCheck} label="Assignment" value={assignmentLabel} tone={booking.interpreterId ? 'success' : 'warning'} />
-        </BookingMetricsBand>
+        <BookingWorkflowFocus
+          steps={workflowSteps}
+          selectedStepId={activeWorkflowStep}
+          title={workflowFocus.title}
+          detail={workflowFocus.detail}
+          action={workflowAction()}
+        />
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <div className={`grid grid-cols-1 gap-4 ${blockedChecks.length > 0 ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
           <div className="space-y-4">
-            <Section title="Requester" icon={Building2}>
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-                  <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{companyName}</p>
-                  <p className="truncate text-xs text-slate-500">{contactName}</p>
+            {activeWorkflowStep === 'request' && (
+              <Section title="Client and requester" icon={Building2}>
+                <div className="grid gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
+                  <EssentialField icon={Building2} label="Organisation" value={companyName} />
+                  <EssentialField icon={Building2} label="Department" value={booking.clientSnapshot?.departmentName || booking.proposedDepartmentName || 'Organisation-wide'} />
+                  <EssentialField icon={User} label="Requester" value={contactName} />
+                  <EssentialField icon={Mail} label="Email" value={contactEmail || 'Not provided'} tone={contactEmail ? 'default' : 'warning'} />
+                  <EssentialField icon={Phone} label="Phone" value={contactPhone || 'Not provided'} />
                 </div>
-                <InfoItem icon={CreditCard} label="PO / cost code" value={booking.costCode || 'N/A'} />
-                <InfoItem icon={Building2} label="Department" value={booking.clientSnapshot?.departmentName || booking.proposedDepartmentName || 'Organisation-wide'} />
-                <InfoItem icon={Mail} label="Email" value={contactEmail || 'N/A'} />
-                <InfoItem icon={Phone} label="Phone" value={contactPhone || 'N/A'} />
-              </div>
-              {booking.departmentIdentityStatus === 'PENDING_APPROVAL' && booking.clientDepartmentRequestId && (
-                <div className="mt-3 flex flex-col gap-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">New department review</p>
-                    <p className="mt-1 truncate text-sm font-semibold">{booking.proposedDepartmentName || booking.clientSnapshot?.departmentName}</p>
-                    <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Submitted with this public request. Approving reuses an existing exact match or creates one canonical department.</p>
+                {booking.departmentIdentityStatus === 'PENDING_APPROVAL' && booking.clientDepartmentRequestId && (
+                  <div className="mt-3 flex flex-col gap-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">New department review</p>
+                      <p className="mt-1 truncate text-sm font-semibold">{booking.proposedDepartmentName || booking.clientSnapshot?.departmentName}</p>
+                      <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Submitted with this public request. Approving reuses an existing exact match or creates one canonical department.</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button size="sm" variant="secondary" icon={XCircle} disabled={isActionLoading} onClick={() => void handleDepartmentRequestDecision('REJECT')}>Reject</Button>
+                      <Button size="sm" icon={CheckCircle2} isLoading={isActionLoading} onClick={() => void handleDepartmentRequestDecision('APPROVE')}>Approve and link</Button>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button size="sm" variant="secondary" icon={XCircle} disabled={isActionLoading} onClick={() => void handleDepartmentRequestDecision('REJECT')}>Reject</Button>
-                    <Button size="sm" icon={CheckCircle2} isLoading={isActionLoading} onClick={() => void handleDepartmentRequestDecision('APPROVE')}>Approve and link</Button>
-                  </div>
-                </div>
-              )}
-              {booking.departmentIdentityStatus === 'PENDING_CLIENT_REVIEW' && booking.proposedDepartmentName && (
-                <div className="mt-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
-                  <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">Client identity review required</p>
-                  <p className="mt-1 text-sm font-semibold">{booking.proposedDepartmentName}</p>
-                  <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Resolve the client in Client CRM first. The department proposal can then be linked without creating an incomplete client record.</p>
-                </div>
-              )}
-              {booking.departmentIdentityStatus === 'REJECTED' && booking.proposedDepartmentName && (
-                <div className="mt-3 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-                  Department proposal <strong>{booking.proposedDepartmentName}</strong> was rejected; this job remains organisation-wide.
-                </div>
-              )}
-            </Section>
-
-            <Section title={isTranslationJob ? 'Service' : 'Service and schedule'} icon={Globe2}>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <InfoItem icon={Globe2} label="Service" value={booking.serviceType || booking.serviceCategory || 'N/A'} />
-                <InfoItem icon={Globe2} label="Languages" value={languageLabel} />
-                {!isTranslationJob && (
-                  <>
-                    <InfoItem icon={CalendarDays} label="Date" value={formatDate(booking.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} />
-                    <InfoItem icon={Clock} label="Time and duration" value={<>{booking.startTime || 'TBC'}{booking.expectedEndTime ? ` - ${booking.expectedEndTime}` : ''}<br /><span className="text-slate-500">{durationLabel}</span></>} />
-                  </>
                 )}
-              </div>
-            </Section>
+                {booking.departmentIdentityStatus === 'PENDING_CLIENT_REVIEW' && booking.proposedDepartmentName && (
+                  <div className="mt-3 border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">Client identity review required</p>
+                    <p className="mt-1 text-sm font-semibold">{booking.proposedDepartmentName}</p>
+                    <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">Resolve the client in Client CRM first. The department proposal can then be linked without creating an incomplete client record.</p>
+                  </div>
+                )}
+                {booking.departmentIdentityStatus === 'REJECTED' && booking.proposedDepartmentName && (
+                  <div className="mt-3 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                    Department proposal <strong>{booking.proposedDepartmentName}</strong> was rejected; this job remains organisation-wide.
+                  </div>
+                )}
+              </Section>
+            )}
 
-            {isTranslationJob && (
+            {(activeWorkflowStep === 'request' || activeWorkflowStep === 'service') && (booking.notes || booking.adminNotes) && (
+              <Section title={activeWorkflowStep === 'service' ? 'Job instructions' : 'Request notes'} icon={FileText}>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700 dark:text-slate-200">
+                  {booking.adminNotes || booking.notes}
+                </p>
+              </Section>
+            )}
+
+            {activeWorkflowStep === 'service' && isTranslationJob && (
               <Section title="Translation delivery" icon={FileText}>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <InfoItem icon={CalendarDays} label="Deadline" value={sessionDate ? formatDate(sessionDate, { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
@@ -819,236 +1061,20 @@ export const AdminBookingDetails = () => {
               </Section>
             )}
 
-            {!isTranslationJob && (
-              <Section title="Session and location" icon={isOnline ? Video : MapPin}>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <InfoItem icon={isOnline ? Video : MapPin} label={isOnline ? 'Connection' : 'Venue'} value={addressLine} />
-                  <InfoItem icon={ShieldCheck} label="Operational flags" value={<>{booking.priority || 'Normal'} priority<br /><span className="text-slate-500">{booking.isOOH ? 'Out of hours' : 'Standard hours'}</span></>} />
-                </div>
-
-                {!isOnline && booking.lat && booking.lng && (
-                  <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
-                    <LocationMap
-                      center={{ lat: booking.lat, lng: booking.lng }}
-                      zoom={12}
-                      height="260px"
-                      markers={[{ lat: booking.lat, lng: booking.lng, label: 'Job Location', color: '#ef4444' }]}
-                    />
-                  </div>
-                )}
-
-                {(booking.notes || booking.adminNotes) && (
-                  <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/30">
-                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Notes</p>
-                    <p className="text-sm leading-6 text-blue-950 dark:text-blue-100">{booking.adminNotes || booking.notes}</p>
-                  </div>
-                )}
-              </Section>
-            )}
-
-            {isTranslationJob && (booking.notes || booking.adminNotes) && (
-              <Section title="Translation notes" icon={MessageSquare}>
-                <p className="text-sm leading-6 text-slate-700 dark:text-slate-200">{booking.adminNotes || booking.notes}</p>
-              </Section>
-            )}
-
-            <Section
-              title="Delivery, claim and billing handoff"
-              icon={Receipt}
-              action={
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={ArrowUpRight}
-                  onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}
-                >
-                  Claims
-                </Button>
-              }
-            >
-              <div className="space-y-4">
-                <div className="grid gap-2 sm:grid-cols-5">
-                  {workflowSteps.map((step, index) => (
-                    <div
-                      key={step.label}
-                      className={`rounded-md border p-3 ${
-                        step.done
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100'
-                          : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${
-                          step.done ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-800'
-                        }`}>
-                          {step.done ? <CheckCircle2 size={13} /> : index + 1}
-                        </span>
-                        <span className="text-xs font-black uppercase tracking-wide">{step.label}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid gap-3 lg:grid-cols-4">
-                  <InfoItem
-                    icon={FileText}
-                    label="Claim source"
-                    value={
-                      <>
-                        {claimSourceLabel}
-                        {timesheet?.submittedAt && <><br /><span className="text-slate-500">{formatDateTime(timesheet.submittedAt)}</span></>}
-                      </>
-                    }
-                  />
-                  <InfoItem
-                    icon={ShieldCheck}
-                    label="Claim status"
-                    value={timesheet ? (timesheet.adminApproved ? 'Authorized for finance' : 'Awaiting review') : (booking.status === BookingStatus.SESSION_COMPLETED ? 'Missing claim' : 'Not ready')}
-                  />
-                  <InfoItem icon={Receipt} label="Client billing" value={formatMoney(clientAmount)} />
-                  <InfoItem icon={CreditCard} label="Interpreter payable" value={timesheet ? formatMoney(interpreterAmount) : 'Pending claim'} />
-                </div>
-
-                {timesheet?.nonExecutionReason && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
-                    <p className="text-[10px] font-black uppercase tracking-wide text-amber-700 dark:text-amber-200">Exception claim</p>
-                    <p className="mt-1 text-sm font-semibold text-amber-950 dark:text-amber-100">{timesheet.nonExecutionReason}</p>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap gap-2">
-                  {booking.status === BookingStatus.SESSION_COMPLETED && !timesheet && (
-                    <Button size="sm" icon={FileText} onClick={handleRecordManualTimesheet} isLoading={isActionLoading}>
-                      Record manual claim
-                    </Button>
-                  )}
-                  {timesheet && !timesheet.adminApproved && (
-                    <Button size="sm" icon={ShieldCheck} onClick={handleVerifyTimesheet} isLoading={isActionLoading}>
-                      Authorize claim
-                    </Button>
-                  )}
-                  {booking.status === BookingStatus.READY_FOR_INVOICE && (
-                    <Button size="sm" icon={Receipt} onClick={handleRecordInvoiceIssued} isLoading={isActionLoading}>
-                      Mark invoiced
-                    </Button>
-                  )}
-                  {booking.status === BookingStatus.INVOICED && (
-                    <Button size="sm" icon={CreditCard} onClick={handleRecordPaymentReceived} isLoading={isActionLoading}>
-                      Mark paid
-                    </Button>
-                  )}
-                  {timesheet?.supportingDocumentUrl && (
-                    <a
-                      href={timesheet.supportingDocumentUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 px-3 text-xs font-bold text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
-                    >
-                      Evidence <ArrowUpRight size={13} />
-                    </a>
-                  )}
-                </div>
-              </div>
-            </Section>
-          </div>
-
-          <aside className="space-y-4 xl:sticky xl:top-16 xl:self-start">
-            <Section
-              title="Operational checks"
-              icon={ShieldCheck}
-              action={
-                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
-                  blockedChecks.length === 0
-                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200'
-                    : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200'
-                }`}>
-                  {blockedChecks.length === 0 ? 'Ready' : `${blockedChecks.length} blocked`}
-                </span>
-              }
-            >
-              <div className="space-y-2">
-                {operationalChecks.map(check => (
-                  <div key={check.label} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
-                          check.ok ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
-                        }`}>
-                          {check.ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                        </span>
-                        <p className="truncate text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">{check.label}</p>
-                      </div>
-                      <p className="mt-1 truncate pl-7 text-xs font-semibold text-slate-500 dark:text-slate-400">{check.detail}</p>
-                    </div>
-                    {!check.ok && check.action && (
-                      <button
-                        onClick={check.action}
-                        className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
-                      >
-                        Fix
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Section>
-
-            <Section title="Mirror and source" icon={History}>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Source</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{formatBookingSource(booking.sourceSystem)}</p>
-                  </div>
-                  <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${getSyncBadgeClass(booking.syncStatus)}`}>
-                    {booking.syncStatus || 'LOCAL'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoItem label="Source record" value={booking.sourceRecordId || booking.legacyAirtableRef || 'N/A'} />
-                  <InfoItem label="Source table" value={booking.sourceTable || 'N/A'} />
-                  <InfoItem label="Legacy ref" value={booking.legacyRef || booking.legacyPlatformRef || booking.legacyAirtableRef || 'N/A'} />
-                  <InfoItem label="Source base" value={booking.sourceBaseId || 'N/A'} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoItem label="Last synced" value={booking.lastSyncedAt ? formatDateTime(booking.lastSyncedAt) : 'Not synced'} />
-                  <InfoItem label="Snapshot hash" value={booking.snapshotHash || 'N/A'} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoItem label="Airtable status" value={booking.sourceStatusRaw || booking.airtableOperationalStatus || 'N/A'} />
-                  <InfoItem label="Mapped at" value={booking.statusMappedAt ? formatDateTime(booking.statusMappedAt) : 'N/A'} />
-                  <InfoItem label="Assignment state" value={booking.assignmentState || booking.statusMappingState?.assignmentState || 'N/A'} />
-                  <InfoItem label="Billing state" value={booking.billingState || booking.statusMappingState?.billingState || 'N/A'} />
-                </div>
-                {booking.lastSyncRunId && <InfoItem label="Sync run" value={booking.lastSyncRunId} />}
-                {booking.sourceSystem === 'AIRTABLE' && (
-                  <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
-                    This job is mirrored from Airtable. Manual actions here update Lingland workflow state, but Airtable remains the source while Mirror Mode is active.
-                  </div>
-                )}
-              </div>
-            </Section>
-
-            <Section title={`${professionalRole} assignment`} icon={User}>
-              <div className="space-y-3">
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{professionalRole}</p>
-                    {!booking.interpreterId && (
-                      <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setIsAllocationDrawerOpen(true)}>Assign</Button>
-                    )}
-                  </div>
-                  {booking.interpreterId ? (
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
+            {activeWorkflowStep === 'assignment' && (
+              <Section title={`${professionalRole} assignment`} icon={User}>
+                {booking.interpreterId ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-3">
                         <UserAvatar name={booking.interpreterName || professionalRole} src={booking.interpreterPhotoUrl} size="md" />
-                        <div>
-                          <p className="font-semibold text-slate-950 dark:text-white">{booking.interpreterName || professionalRole}</p>
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-slate-950 dark:text-white">{booking.interpreterName || professionalRole}</p>
                           <p className="text-xs text-slate-500">INT-{booking.interpreterId.slice(0, 8)}</p>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Chat</Button>
+                      <div className="flex shrink-0 gap-2">
+                        <Button size="sm" variant="outline" icon={MessageSquare} onClick={handleOpenChat}>Message</Button>
                         <Button
                           size="sm"
                           variant="secondary"
@@ -1062,91 +1088,94 @@ export const AdminBookingDetails = () => {
                         </Button>
                       </div>
                     </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">No professional assigned. This is the main blocker before delivery.</p>
-                  )}
-                </div>
-              </div>
-            </Section>
-
-            <Section title="Billing readiness" icon={Receipt} action={<StatusBadge status={(booking as any).paymentStatus || 'UNPAID'} />}>
-              <div className="space-y-3">
-                <div className="rounded-md bg-slate-950 p-4 text-white dark:bg-slate-950">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Client charge</p>
-                  <p className="mt-2 text-2xl font-semibold">{formatMoney(invoiceEstimate)}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoItem label="VAT" value={formatMoney(vatEstimate)} />
-                  <InfoItem label="Cost code" value={booking.costCode || 'N/A'} />
-                </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Claim / timesheet</p>
-                      <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
-                        {timesheet ? (timesheet.adminApproved ? 'Authorized' : 'Needs review') : 'Not recorded'}
-                      </p>
+                    <div className="grid gap-x-8 gap-y-5 border-t border-slate-200 pt-4 dark:border-slate-800 sm:grid-cols-2">
+                      <EssentialField icon={CheckCircle2} label="Assignment state" value={booking.assignmentState || booking.statusMappingState?.assignmentState || 'Assigned'} />
+                      <EssentialField icon={ShieldCheck} label="Working basis" value={booking.isOOH ? 'Out of hours' : 'Standard hours'} />
                     </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon={ArrowUpRight}
-                      onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}
-                    >
-                      Open
-                    </Button>
                   </div>
-                </div>
-                {booking.clientInvoiceId && (
-                  <Button
-                    variant="secondary"
-                    icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`, { state: bookingContextState })}
-                    className="w-full"
-                  >
-                    Open client invoice
-                  </Button>
+                ) : (
+                  <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950 dark:text-white">No {professionalRoleLower} assigned</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Open allocation to search the active professional pool.</p>
+                    </div>
+                    <Button icon={UserPlus} onClick={() => setIsAllocationDrawerOpen(true)}>Assign {professionalRoleLower}</Button>
+                  </div>
                 )}
-                {booking.interpreterInvoiceId && (
-                  <Button
-                    variant="secondary"
-                    icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing/interpreter-invoices/${booking.interpreterInvoiceId}`, { state: bookingContextState })}
-                    className="w-full"
-                  >
-                    Open interpreter invoice
-                  </Button>
-                )}
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <Button
-                    variant="secondary"
-                    icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling${booking.clientId ? `&clientId=${encodeURIComponent(booking.clientId)}` : ''}`, { state: bookingContextState })}
-                    className="w-full"
-                  >
-                    Client billing
-                  </Button>
-                  <Button
-                    variant="outline"
-                    icon={ArrowUpRight}
-                    onClick={() => navigate(`/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables${booking.interpreterId ? `&interpreterId=${encodeURIComponent(booking.interpreterId)}` : ''}`, { state: bookingContextState })}
-                    className="w-full"
-                  >
-                    Payables
-                  </Button>
-                </div>
-              </div>
-            </Section>
+              </Section>
+            )}
 
-            <Section title="Audit trail" icon={History}>
-              <ActivityTimeline
-                events={auditEvents.length > 0 ? auditEvents : [
-                  { id: '1', type: 'BOOKING_CREATED', createdAt: booking.createdAt, description: 'Booking created in the system.' },
-                  ...(booking.interpreterId ? [{ id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: `${booking.interpreterName || 'Interpreter'} assigned.` }] : []),
-                ]}
-              />
-            </Section>
-          </aside>
+            {activeWorkflowStep === 'claim' && (
+              <Section
+                title="Claim and timesheet"
+                icon={FileText}
+                action={<span className="text-xs font-semibold text-slate-500">{timesheet ? (timesheet.adminApproved ? 'Authorised' : 'Review required') : 'Not recorded'}</span>}
+              >
+                <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+                  <EssentialField icon={FileText} label="Claim source" value={claimSourceLabel} />
+                  <EssentialField icon={ShieldCheck} label="Claim status" value={timesheet ? (timesheet.adminApproved ? 'Authorised' : 'Needs review') : deliveryComplete ? 'Ready to record' : 'Waiting for service outcome'} />
+                  <EssentialField icon={Receipt} label="Client charge" value={timesheet ? formatMoney(clientAmount) : 'Pending claim'} />
+                  <EssentialField icon={CreditCard} label={`${professionalRole} payable`} value={timesheet ? formatMoney(interpreterAmount) : 'Pending claim'} />
+                </div>
+                {timesheet?.nonExecutionReason && (
+                  <div className="mt-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">
+                    <span className="font-semibold">Exception claim:</span> {timesheet.nonExecutionReason}
+                  </div>
+                )}
+              </Section>
+            )}
+
+            {(activeWorkflowStep === 'invoice' || activeWorkflowStep === 'paid') && (
+              <Section
+                title={activeWorkflowStep === 'paid' ? 'Payment status' : 'Client invoice'}
+                icon={Receipt}
+                action={<StatusBadge status={(booking as any).paymentStatus || 'UNPAID'} />}
+              >
+                <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+                  <EssentialField icon={Receipt} label="Client charge" value={formatMoney(clientAmount || invoiceEstimate)} />
+                  <EssentialField icon={CreditCard} label="VAT" value={formatMoney(vatEstimate)} />
+                  <EssentialField icon={FileText} label="Client invoice" value={booking.clientInvoiceNumber || booking.clientInvoiceId || 'Not issued'} />
+                  <EssentialField icon={CheckCircle2} label="Payment" value={paidComplete ? 'Paid' : invoiceComplete ? 'Awaiting payment' : 'Not ready'} />
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+                  <Button variant="secondary" icon={ArrowUpRight} onClick={() => setActivePanel('finance')}>Finance details</Button>
+                  {booking.clientInvoiceId && (
+                    <Button variant="outline" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`, { state: bookingContextState })}>Client invoice</Button>
+                  )}
+                  <Button variant="outline" icon={ArrowUpRight} onClick={() => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling${booking.clientId ? `&clientId=${encodeURIComponent(booking.clientId)}` : ''}`, { state: bookingContextState })}>Receivables</Button>
+                </div>
+              </Section>
+            )}
+
+          </div>
+
+          {blockedChecks.length > 0 && (
+            <aside className="space-y-4 xl:self-start">
+              <Section
+                title="Action required"
+                icon={AlertCircle}
+                action={
+                  <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-200">
+                    {blockedChecks.length} blocked
+                  </span>
+                }
+              >
+                <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {blockedChecks.map(check => (
+                    <div key={check.label} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">{check.label}</p>
+                        <p className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{check.detail}</p>
+                      </div>
+                      {check.action && (
+                        <Button size="sm" variant="secondary" onClick={check.action}>Fix</Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            </aside>
+          )}
         </div>
       </main>
 
@@ -1168,6 +1197,157 @@ export const AdminBookingDetails = () => {
         onClose={() => setIsInterpreterPreviewOpen(false)}
         onSuccess={() => loadBooking()}
       />
+
+      <Modal
+        isOpen={activePanel === 'source'}
+        onClose={() => setActivePanel(null)}
+        title={`Source and sync details · ${reference}`}
+        maxWidth="3xl"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+            <div>
+              <p className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400">Source</p>
+              <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{formatBookingSource(booking.sourceSystem)}</p>
+            </div>
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${getSyncBadgeClass(booking.syncStatus)}`}>
+              {booking.syncStatus || 'LOCAL'}
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <InfoItem label="Source record" value={booking.sourceRecordId || booking.legacyAirtableRef || 'N/A'} />
+            <InfoItem label="Source table" value={booking.sourceTable || 'N/A'} />
+            <InfoItem label="Source base" value={booking.sourceBaseId || 'N/A'} />
+            <InfoItem label="Legacy reference" value={booking.legacyRef || booking.legacyPlatformRef || booking.legacyAirtableRef || 'N/A'} />
+            <InfoItem label="Last synced" value={booking.lastSyncedAt ? formatDateTime(booking.lastSyncedAt) : 'Not synced'} />
+            <InfoItem label="Snapshot hash" value={booking.snapshotHash || 'N/A'} />
+            <InfoItem label="Airtable status" value={booking.sourceStatusRaw || booking.airtableOperationalStatus || 'N/A'} />
+            <InfoItem label="Mapped at" value={booking.statusMappedAt ? formatDateTime(booking.statusMappedAt) : 'N/A'} />
+            <InfoItem label="Assignment state" value={booking.assignmentState || booking.statusMappingState?.assignmentState || 'N/A'} />
+            <InfoItem label="Billing state" value={booking.billingState || booking.statusMappingState?.billingState || 'N/A'} />
+            {booking.lastSyncRunId && <InfoItem label="Sync run" value={booking.lastSyncRunId} />}
+          </div>
+          {booking.sourceSystem === 'AIRTABLE' && (
+            <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+              Airtable remains the source while Mirror Mode is active. Staff actions in Lingland advance the platform workflow without hiding the original sync evidence.
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={activePanel === 'activity'}
+        onClose={() => setActivePanel(null)}
+        title={`Activity history · ${reference}`}
+        maxWidth="2xl"
+      >
+        <ActivityTimeline
+          events={auditEvents.length > 0 ? auditEvents : [
+            { id: '1', type: 'BOOKING_CREATED', createdAt: booking.createdAt, description: 'Booking created in the system.' },
+            ...(booking.interpreterId ? [{ id: '2', type: 'RESOURCE_MATCHED', createdAt: booking.updatedAt, description: `${booking.interpreterName || 'Interpreter'} assigned.` }] : []),
+          ]}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activePanel === 'finance'}
+        onClose={() => setActivePanel(null)}
+        title={`Finance handoff · ${reference}`}
+        maxWidth="3xl"
+      >
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <InfoItem icon={FileText} label="Claim source" value={claimSourceLabel} />
+            <InfoItem icon={ShieldCheck} label="Claim status" value={timesheet ? (timesheet.adminApproved ? 'Authorised' : 'Needs review') : 'Not recorded'} />
+            <InfoItem icon={Receipt} label="Client charge" value={formatMoney(clientAmount || invoiceEstimate)} />
+            <InfoItem icon={CreditCard} label={`${professionalRole} payable`} value={timesheet ? formatMoney(interpreterAmount) : 'Pending claim'} />
+            <InfoItem label="VAT" value={formatMoney(vatEstimate)} />
+            <InfoItem label="PO / cost code" value={booking.costCode || 'Not provided'} />
+            <InfoItem label="Client invoice" value={booking.clientInvoiceNumber || booking.clientInvoiceId || 'Not issued'} />
+            <InfoItem label="Payment" value={booking.paymentStatus || 'UNPAID'} />
+          </div>
+
+          {timesheet?.nonExecutionReason && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <p className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-200">Exception claim</p>
+              <p className="mt-1 text-sm font-semibold text-amber-950 dark:text-amber-100">{timesheet.nonExecutionReason}</p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+            <Button
+              variant="secondary"
+              icon={ArrowUpRight}
+              onClick={() => navigate(`/admin/operations/timesheets?jobId=${encodeURIComponent(booking.id)}`, { state: bookingContextState })}
+            >
+              Claims and timesheets
+            </Button>
+            {booking.clientInvoiceId && (
+              <Button
+                variant="secondary"
+                icon={ArrowUpRight}
+                onClick={() => navigate(`/admin/billing/client-invoices/${booking.clientInvoiceId}`, { state: bookingContextState })}
+              >
+                Client invoice
+              </Button>
+            )}
+            {booking.interpreterInvoiceId && (
+              <Button
+                variant="secondary"
+                icon={ArrowUpRight}
+                onClick={() => navigate(`/admin/billing/interpreter-invoices/${booking.interpreterInvoiceId}`, { state: bookingContextState })}
+              >
+                Professional invoice
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              icon={ArrowUpRight}
+              onClick={() => navigate(`/admin/billing?view=fin-ready-client-invoice&lane=clientBilling${booking.clientId ? `&clientId=${encodeURIComponent(booking.clientId)}` : ''}`, { state: bookingContextState })}
+            >
+              Receivables
+            </Button>
+            <Button
+              variant="outline"
+              icon={ArrowUpRight}
+              onClick={() => navigate(`/admin/billing?view=fin-interpreter-invoices&lane=interpreterPayables${booking.interpreterId ? `&interpreterId=${encodeURIComponent(booking.interpreterId)}` : ''}`, { state: bookingContextState })}
+            >
+              Payables
+            </Button>
+            {timesheet?.supportingDocumentUrl && (
+              <a
+                href={timesheet.supportingDocumentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 px-4 text-sm font-semibold text-blue-600 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+              >
+                Evidence <ArrowUpRight size={15} />
+              </a>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={activePanel === 'location'}
+        onClose={() => setActivePanel(null)}
+        title={`Job location · ${reference}`}
+        maxWidth="3xl"
+      >
+        <div className="space-y-4">
+          <p className="text-sm font-semibold leading-6 text-slate-950 dark:text-white">{addressLine}</p>
+          {!isOnline && booking.lat && booking.lng && (
+            <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-800">
+              <LocationMap
+                center={{ lat: booking.lat, lng: booking.lng }}
+                zoom={12}
+                height="420px"
+                markers={[{ lat: booking.lat, lng: booking.lng, label: 'Job location', color: '#ef4444' }]}
+              />
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };

@@ -18,8 +18,22 @@ export type AirtableSyncStrategy =
   | 'OPEN_WORKFLOW'
   | 'UPDATED_SINCE_LAST_SYNC'
   | 'RECENT_OPEN'
+  | 'CURRENT_FINANCIAL_YEAR'
   | 'FULL_AUDIT'
   | 'CUSTOM_LIMIT';
+
+export type AirtableFinancialYearScopeSummary = {
+  mode: 'CURRENT_FINANCIAL_YEAR' | 'UNSCOPED';
+  scopeApplied: boolean;
+  financialYear: string;
+  start: string;
+  end: string;
+  rawRecords: number;
+  includedRecords: number;
+  excludedRecords: number;
+  undatedRecords: number;
+  reviewDisposition: 'HELD_FOR_REVIEW_NON_BLOCKING' | 'NOT_APPLICABLE';
+};
 
 export type AirtableModuleResult = {
   module: AirtableSyncModule;
@@ -37,6 +51,7 @@ export type AirtableModuleResult = {
     interpreterInvoices: number;
   };
   identityEvidence?: Record<string, unknown>;
+  sourceScope?: AirtableFinancialYearScopeSummary;
   diagnostics?: Record<string, unknown>;
   writeReadiness?: AirtableWriteReadiness;
 };
@@ -56,6 +71,65 @@ export type AirtableSyncWriteApproval = {
     blockerCount: number;
     blockers: Array<{ reason: string; count: number }>;
   }>;
+};
+
+export type AirtableSourceCoverageWindow = {
+  start: string | null;
+  end: string | null;
+  validDateCount?: number;
+  missingDateCount?: number;
+};
+
+export type AirtableSourceReconciliationPolicy = {
+  policyVersion: number;
+  policy: 'PERIOD_SCOPED_EXACT_REFERENCE';
+  generatedAt: string;
+  generatedBy?: string;
+  sourcePriority: {
+    operationalWorkflow: 'AIRTABLE';
+    historicalAccounting: 'SAGE';
+    futureAccounting: 'XERO';
+  };
+  priorityScope?: {
+    mode: 'CURRENT_FINANCIAL_YEAR';
+    basis: 'PLATFORM_DEFAULT_APRIL_TO_MARCH';
+    window: AirtableSourceCoverageWindow & {
+      label: string;
+      startMonth: number;
+      startDay: number;
+    };
+    currentPeriodConflictHandling: 'BLOCK_WRITE_UNTIL_RESOLVED';
+    historicalConflictHandling: 'REVIEW_REQUIRED_NON_BLOCKING_AFTER_DEFERRAL';
+  };
+  airtable: {
+    baseId: string;
+    baseName: string;
+    interpretationTable: string;
+    translationTable: string;
+  };
+  sage: {
+    importRunId: string;
+    datasetId: string;
+    sourceAsOf: string;
+    manifestHash?: string;
+  } | null;
+  services: Record<'INTERPRETATION' | 'TRANSLATION', {
+    sourceTable: string;
+    coverageDateField: string;
+    sourceRecordCount: number;
+    observedWindow: AirtableSourceCoverageWindow;
+    reconciliationWindow: AirtableSourceCoverageWindow;
+    priorityReconciliationWindow: AirtableSourceCoverageWindow;
+  }>;
+  safeguards: {
+    sageIsFullHistoricalArchive: boolean;
+    airtableIsPeriodScopedOperationalMirror: boolean;
+    absenceOutsideAirtableCoverageIsNotAConflict: boolean;
+    neverDeleteSageHistoryBecauseAirtableDoesNotContainIt: boolean;
+    requireExactJobOrInvoiceReferenceInsideOverlap: boolean;
+    inferLinksFromNameOrAmountOnly: boolean;
+    historicalConflictDoesNotBlockCurrentYearAfterAuditDeferral: boolean;
+  };
 };
 
 export type AirtableSyncResult = {
@@ -98,6 +172,8 @@ export type AirtableSyncCheckpoint = {
   lastStats?: RedbookSyncStats;
   lastModules?: AirtableSyncModule[];
   lastSyncStrategy?: AirtableSyncStrategy;
+  sourceCoverage?: AirtableSourceReconciliationPolicy;
+  sourceCoverageRefreshedAt?: string;
   moduleCheckpoints?: Partial<Record<AirtableSyncModule, {
     lastRunId?: string;
     lastWriteAt?: string;
@@ -157,7 +233,7 @@ export type AirtableProfessionalIdentityLinkResult = {
 export type AirtableConflictSeverity = 'ALL' | 'LOW' | 'MEDIUM' | 'HIGH';
 
 export type AirtableClientIdentityMappingRequest = {
-  sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+  sourceTable: 'Clients' | 'Clients Book' | 'Departments' | 'REDBOOK';
   groupKey: string;
   sourceNames: string[];
   action: 'MAP_TO_CLIENT' | 'APPROVE_NEW_CLIENT';
@@ -529,6 +605,12 @@ export const AirtableSyncService = {
   getCheckpoint: async (): Promise<AirtableSyncCheckpoint | null> => {
     const snap = await getDoc(doc(db, 'system', 'airtableSyncCenter'));
     return snap.exists() ? snap.data() as AirtableSyncCheckpoint : null;
+  },
+
+  refreshSourceCoverage: async (): Promise<AirtableSourceReconciliationPolicy> => {
+    const refreshFn = httpsCallable(functions, 'refreshAirtableSourceCoverage', LONG_CALLABLE_OPTIONS);
+    const response = await refreshFn({});
+    return response.data as AirtableSourceReconciliationPolicy;
   },
 
   getAuditTrail: async (runLimit = 5, conflictLimit = 50): Promise<AirtableSyncAuditTrail> => {

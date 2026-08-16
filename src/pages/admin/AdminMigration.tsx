@@ -36,6 +36,7 @@ import {
   AirtableConflictSeverity,
   AirtableSyncConflict,
   AirtableSyncCheckpoint,
+  AirtableSourceReconciliationPolicy,
   AirtableSyncModule,
   AirtableSyncRunSummary,
   AirtableSyncStrategy,
@@ -56,6 +57,7 @@ import { useAuth } from '../../context/AuthContext';
 import { clientCrmReviewKey, deduplicateClientCrmReviewScopes } from '../../utils/clientCrmReview';
 
 type WorkspaceTab = 'overview' | 'interpreters' | 'reconciliation' | AirtableSyncModule;
+const AIRTABLE_SOURCE_BASE_NAME = 'Lingland MASTER 24 NEW';
 
 type ClientCrmRecommendation = {
   canonicalClientId: string;
@@ -157,7 +159,7 @@ type ClientCrmCanonicalTarget = {
 };
 
 type ClientCrmMappingTarget = {
-  sourceTable: 'Clients' | 'Clients Book' | 'Departments';
+  sourceTable: 'Clients' | 'Clients Book' | 'Departments' | 'REDBOOK';
   groupKey: string;
   displayName: string;
   sourceNames: string[];
@@ -203,6 +205,12 @@ const syncStrategyOptions: Array<{
     label: 'Recent + open',
     description: 'Open workflow plus recently created records for transition safety.',
     defaultLimit: 1500
+  },
+  {
+    id: 'CURRENT_FINANCIAL_YEAR',
+    label: 'Current financial year',
+    description: 'Current April-March operational scope; older or undated rows are held for audited review.',
+    defaultLimit: 5000
   },
   {
     id: 'FULL_AUDIT',
@@ -269,6 +277,19 @@ const formatDateTime = (value?: unknown) => {
   if (!normalized) return 'Never';
   const parsed = new Date(normalized);
   return Number.isNaN(parsed.getTime()) ? normalized : parsed.toLocaleString();
+};
+
+const formatCoverageDate = (value?: string | null) => {
+  if (!value) return 'Not established';
+  const parsed = new Date(`${value}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Europe/London',
+      }).format(parsed);
 };
 
 const safeInlineText = (value: unknown, fallback = 'N/A') => {
@@ -356,6 +377,8 @@ export const AdminMigration = () => {
   const [syncAttemptLabel, setSyncAttemptLabel] = useState<string>('');
   const [lastRunAt, setLastRunAt] = useState<string | undefined>();
   const [moduleCheckpoints, setModuleCheckpoints] = useState<NonNullable<AirtableSyncCheckpoint['moduleCheckpoints']>>({});
+  const [sourceCoverage, setSourceCoverage] = useState<AirtableSourceReconciliationPolicy | null>(null);
+  const [sourceCoverageLoading, setSourceCoverageLoading] = useState(false);
   const [dependencyCounts, setDependencyCounts] = useState<AirtableDependencyCounts>({});
   const [recentRuns, setRecentRuns] = useState<AirtableSyncRunSummary[]>([]);
   const [openConflicts, setOpenConflicts] = useState<AirtableSyncConflict[]>([]);
@@ -436,6 +459,9 @@ export const AdminMigration = () => {
   const hasCleanDryRun = Boolean(approvedDryRunIds[moduleRunKey]);
   const hasCleanFullDryRun = Boolean(approvedDryRunIds[fullRunKey]);
   const writeBlockedByDryRun = activeModule ? !hasCleanDryRun : !hasCleanFullDryRun;
+  const activeWriteApprovalBlockers = syncResult?.writeApproval?.ready === false
+    ? syncResult.writeApproval.blockedModules
+    : [];
   const activeModuleOptions = [
     { id: 'overview' as WorkspaceTab, label: 'Overview' },
     { id: 'interpreters' as WorkspaceTab, label: 'Interpreters' },
@@ -571,8 +597,22 @@ export const AdminMigration = () => {
       const checkpoint = await AirtableSyncService.getCheckpoint();
       setLastRunAt(checkpoint?.lastRunAt);
       setModuleCheckpoints(checkpoint?.moduleCheckpoints || {});
+      setSourceCoverage(checkpoint?.sourceCoverage || null);
     } catch (err) {
       console.warn('Failed to load Airtable Sync Center checkpoint', err);
+    }
+  };
+
+  const refreshSourceCoverage = async () => {
+    setSourceCoverageLoading(true);
+    try {
+      const policy = await AirtableSyncService.refreshSourceCoverage();
+      setSourceCoverage(policy);
+      showToast('Airtable and Sage source coverage refreshed.', 'success');
+    } catch (error: any) {
+      showToast(error?.message || 'Could not refresh source coverage.', 'error');
+    } finally {
+      setSourceCoverageLoading(false);
     }
   };
 
@@ -1160,7 +1200,12 @@ export const AdminMigration = () => {
       });
       setCrmMappingTarget(null);
       showToast(`${crmMappingTarget.displayName} is now mapped to ${selected.companyName}.`, 'success');
-      await refreshClientIdentityDryRun();
+      if (['REDBOOK', 'Translations', 'Web translations'].includes(crmMappingTarget.sourceTable) && activeModule) {
+        setApprovedDryRunIds({});
+        await runSync(true, [activeModule.id]);
+      } else {
+        await refreshClientIdentityDryRun();
+      }
     } catch (error: any) {
       showToast(error?.message || 'Could not save the client identity mapping.', 'error');
     } finally {
@@ -1252,12 +1297,30 @@ export const AdminMigration = () => {
     }
 
     return (
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatPill label="Created" value={result.stats.created} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
-        <StatPill label="Updated" value={result.stats.updated} className="border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200" />
-        <StatPill label="Skipped" value={result.stats.skipped} />
-        <StatPill label="Conflicts" value={result.stats.conflict} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
-        <StatPill label="Errors" value={result.stats.error} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <StatPill label="Created" value={result.stats.created} className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200" />
+          <StatPill label="Updated" value={result.stats.updated} className="border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200" />
+          <StatPill label="Skipped" value={result.stats.skipped} />
+          <StatPill label="Conflicts" value={result.stats.conflict} className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200" />
+          <StatPill label="Errors" value={result.stats.error} className="border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200" />
+        </div>
+        {result.sourceScope?.scopeApplied && (
+          <div className="flex flex-col gap-2 border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/25 dark:text-blue-100 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-black">FY {result.sourceScope.financialYear}: {formatCoverageDate(result.sourceScope.start)} - {formatCoverageDate(result.sourceScope.end)}</p>
+              <p className="mt-0.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
+                {result.sourceScope.includedRecords} of {result.sourceScope.rawRecords} source rows are inside the current operational scope.
+              </p>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="font-black">{result.sourceScope.excludedRecords} held for review</p>
+              <p className="mt-0.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
+                {result.sourceScope.undatedRecords} without a reliable date; none block this write.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1866,8 +1929,27 @@ export const AdminMigration = () => {
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-medium">{detail.clientName || '-'}</p>
-                    {detail.clientAction && <p className={`text-xs font-bold ${detail.clientAction === 'created' ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>Client {detail.clientAction}</p>}
-                    {detail.email && <p className="text-xs text-slate-500">{detail.email}</p>}
+                    {detail.clientAction && <p className={`text-xs font-bold ${['created', 'would-create'].includes(detail.clientAction) || String(detail.clientAction).startsWith('unresolved') ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>Client {detail.clientAction}</p>}
+                    {(detail.email || detail.contactEmail) && <p className="text-xs text-slate-500">{detail.email || detail.contactEmail}</p>}
+                    {['REDBOOK', 'Translations', 'Web translations'].includes(String(detail.sourceTable))
+                      && detail.clientIdentityGroupKey
+                      && (detail.clientAction === 'would-create' || String(detail.clientAction).startsWith('unresolved')) && (
+                      <button
+                        type="button"
+                        onClick={() => openClientIdentityMapping({
+                          sourceTable: detail.sourceTable,
+                          groupKey: detail.clientIdentityGroupKey,
+                          displayName: detail.clientName || detail.clientIdentityGroupKey,
+                          sourceNames: [detail.clientName || detail.clientIdentityGroupKey],
+                          reason: detail.sourceTable === 'REDBOOK'
+                            ? 'OPERATIONAL_JOB_CLIENT_IDENTITY'
+                            : 'OPERATIONAL_TRANSLATION_CLIENT_IDENTITY',
+                        })}
+                        className="mt-2 h-8 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-xs font-black text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                      >
+                        Map client
+                      </button>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-medium">{detail.interpreterName || '-'}</p>
@@ -1980,6 +2062,68 @@ export const AdminMigration = () => {
         </div>
       </div>
 
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" aria-label="Source reconciliation boundary">
+        <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+              <Database size={16} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Source boundary</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-900 dark:text-white">
+                {sourceCoverage
+                  ? `${sourceCoverage.airtable.baseName} is the period-scoped operational mirror; Sage remains the complete historical archive.`
+                  : 'Source coverage has not yet been calibrated against Airtable and Sage.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={refreshSourceCoverage}
+            disabled={sourceCoverageLoading}
+            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <RefreshCw size={15} className={sourceCoverageLoading ? 'animate-spin' : ''} />
+            {sourceCoverage ? 'Refresh boundary' : 'Calibrate boundary'}
+          </button>
+        </div>
+        {sourceCoverage && (
+          <div className={`grid border-t border-slate-200 text-sm dark:border-slate-800 sm:grid-cols-2 ${sourceCoverage.priorityScope ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+            {sourceCoverage.priorityScope && (
+              <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:border-r xl:border-b-0">
+                <p className="text-[11px] font-black uppercase text-slate-400">Priority financial year</p>
+                <p className="mt-1 font-bold text-blue-700 dark:text-blue-300">
+                  {sourceCoverage.priorityScope.window.label}: {formatCoverageDate(sourceCoverage.priorityScope.window.start)} - {formatCoverageDate(sourceCoverage.priorityScope.window.end)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Older conflicts remain reviewable and do not block after audited deferral.</p>
+              </div>
+            )}
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:border-r xl:border-b-0">
+              <p className="text-[11px] font-black uppercase text-slate-400">Interpreting in Airtable</p>
+              <p className="mt-1 font-bold text-slate-800 dark:text-slate-100">
+                {formatCoverageDate(sourceCoverage.services.INTERPRETATION.observedWindow.start)} - {formatCoverageDate(sourceCoverage.services.INTERPRETATION.observedWindow.end)}
+              </p>
+            </div>
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800 xl:border-b-0 xl:border-r">
+              <p className="text-[11px] font-black uppercase text-slate-400">Translations in Airtable</p>
+              <p className="mt-1 font-bold text-slate-800 dark:text-slate-100">
+                {formatCoverageDate(sourceCoverage.services.TRANSLATION.observedWindow.start)} - {formatCoverageDate(sourceCoverage.services.TRANSLATION.observedWindow.end)}
+              </p>
+            </div>
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:border-r xl:border-b-0">
+              <p className="text-[11px] font-black uppercase text-slate-400">Sage snapshot</p>
+              <p className="mt-1 font-bold text-slate-800 dark:text-slate-100">
+                Through {formatCoverageDate(sourceCoverage.sage?.sourceAsOf)}
+              </p>
+            </div>
+            <div className="px-4 py-3">
+              <p className="text-[11px] font-black uppercase text-slate-400">Safe matching rule</p>
+              <p className="mt-1 font-bold text-emerald-700 dark:text-emerald-300">Overlap + exact job/invoice reference</p>
+            </div>
+          </div>
+        )}
+      </section>
+
       {showInfo && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
           <div className="my-8 w-full max-w-4xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
@@ -2040,6 +2184,13 @@ export const AdminMigration = () => {
                   <li>Invoice lines point to mirrored timesheets when a booking match exists.</li>
                   <li>Job events are recorded for audit without triggering interpreter/client communication.</li>
                 </ul>
+              </div>
+
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-100 lg:col-span-2">
+                <h3 className="font-black">Airtable and Sage cover different time horizons</h3>
+                <p className="mt-2 text-sm">
+                  <strong>{sourceCoverage?.airtable.baseName || AIRTABLE_SOURCE_BASE_NAME}</strong> is the operational source only for the period represented by each job table. Sage is the complete accounting archive through its snapshot date. The platform reconciles both sources only inside their date overlap and only with an exact job or invoice reference. Missing Airtable rows outside that boundary are historical, not conflicts, and never cause Sage records to be deleted.
+                </p>
               </div>
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200 lg:col-span-2">
@@ -2159,7 +2310,33 @@ export const AdminMigration = () => {
           </div>
         )}
 
-        {writeBlockedByDryRun && activeTab !== 'interpreters' && activeTab !== 'reconciliation' && (
+        {activeWriteApprovalBlockers.length > 0 && activeTab !== 'interpreters' && activeTab !== 'reconciliation' && (
+          <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-black">
+                  Write Sync is locked by {syncResult?.writeApproval?.blockerCount || 0} current-scope record{syncResult?.writeApproval?.blockerCount === 1 ? '' : 's'}.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {activeWriteApprovalBlockers.flatMap(module => module.blockers.map(blocker => (
+                    <span
+                      key={`${module.module}-${blocker.reason}`}
+                      className="rounded-md border border-amber-200 bg-white/80 px-2 py-1 text-xs font-bold dark:border-amber-900/60 dark:bg-slate-950/50"
+                    >
+                      {module.label}: {blocker.reason.replaceAll('_', ' ').toLowerCase()} ({blocker.count})
+                    </span>
+                  )))}
+                </div>
+                <p className="mt-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
+                  Resolve only current financial-year identities. Older discrepancies remain held for audited review and do not block this write.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {writeBlockedByDryRun && activeWriteApprovalBlockers.length === 0 && activeTab !== 'interpreters' && activeTab !== 'reconciliation' && (
           <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">
             <div className="flex gap-2">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" />

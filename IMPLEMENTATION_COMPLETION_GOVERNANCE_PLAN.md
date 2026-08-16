@@ -931,3 +931,62 @@ Next work should remain inside Phase O:
 Reason: the platform now has the control plane; the remaining work is data proof and exception closure before activation.
 
 Do not spend another cycle on broad visual cleanup until these foundations are implemented.
+
+## 24. Phase P - Xero Accounting Contract and Reconciliation
+
+Goal: keep Lingland as the operational source of truth while Xero is the accounting ledger, with deterministic identities and no status leakage between jobs, receivables, payables and bank settlement.
+
+Status: DONE for the controlled 2026-04-01 to 2026-08-07 migration scope. The canonical current-FY package was imported, the read-only pipeline was deployed and two live previews against the connected Xero organisation returned zero exceptions. Xero write scopes remain disabled pending a separate finance go-live decision.
+
+Safety boundary:
+
+- [x] Xero OAuth remains granular and read-only.
+- [x] Xero cannot create, approve, email, pay or alter records through this phase.
+- [x] Job status is never derived from Xero invoice status.
+- [x] Sage settlement status remains historical evidence and is never overwritten by Xero.
+- [x] Platform accounting status, Xero status and settlement evidence are stored separately.
+- [x] Only deterministic matches can be linked automatically.
+- [x] Name, email, contact/date/amount fingerprints remain review-only evidence.
+
+Canonical identity contract:
+
+- [x] Contacts use Sage account reference -> Xero AccountNumber as the primary external identity.
+- [x] Sales documents preserve the Xero invoice number independently.
+- [x] Purchase documents preserve both the supplier reference and the generated `SAGE-PI-{audit number}` Xero bill number.
+- [x] The regenerated canonical package matches all 269 current-FY Xero bill control numbers.
+- [x] Xero IDs, accounting status, amounts due/paid and payment IDs have dedicated local fields.
+
+Reconciliation implementation:
+
+- [x] Add a pure matching engine with contact, receivable and payable tests.
+- [x] Require type, number, contact, date and total for exact document matching.
+- [x] Treat amount/date/contact divergence as a conflict.
+- [x] Add paginated Xero Contacts, Invoices and Payments reads.
+- [x] Add a current-FY date scope and an 18-month maximum preview window.
+- [x] Persist preview runs, complete match evidence and exception rows.
+- [x] Expire previews after two hours.
+- [x] Add a super-admin confirmation that writes only local Xero links.
+- [x] Refuse to overwrite an existing different Xero ID.
+- [x] Require Communication Mode SUPPRESSED before applying links.
+- [x] Add Accounting Migration UI for preview, exception review and exact-link confirmation.
+- [x] Add integration audit events for preview and apply.
+
+Live completion checklist:
+
+- [x] Commit the canonical current-FY accounting modules to Firestore.
+- [x] Deploy the Xero reconciliation functions and web workspace.
+- [x] Run the first read-only current-FY preview against the connected Xero organisation.
+- [x] Prove 477 sales invoices and 269 bills against the Xero import controls.
+- [x] Classify every missing, duplicate, amount, date and contact exception.
+- [x] Apply only exact local links and export the run evidence.
+- [x] Re-run preview and prove zero unexplained current-FY drift.
+- [x] Keep Xero write scopes disabled until explicit finance go-live approval.
+
+Acceptance:
+
+- [x] Every current-FY Xero invoice/bill has either one deterministic Lingland link or one explicit review reason.
+- [x] Receivables and payables remain separate in UI, data and reports.
+- [x] Xero payment evidence updates accounting visibility without mutating job completion.
+- [x] A repeated preview is safe, paginated and auditable.
+
+Evidence: `XERO_CURRENT_FY_RECONCILIATION_EVIDENCE_2026-08-13.md`.

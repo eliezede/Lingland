@@ -147,7 +147,7 @@ export type AirtableImportMode = 'ON' | 'READ_ONLY' | 'OFF';
 export type BookingSourceSystem = 'AIRTABLE' | 'STAFF_MANUAL' | 'CLIENT_PORTAL' | 'INTERPRETER_APP' | 'PLATFORM';
 export type BookingSyncStatus = 'SYNCED' | 'LOCAL_ONLY' | 'CONFLICT' | 'ARCHIVED';
 
-export type SourceSystem = BookingSourceSystem | 'SYSTEM_IMPORT' | 'MANUAL_RECONCILIATION';
+export type SourceSystem = BookingSourceSystem | 'SAGE' | 'XERO' | 'SYSTEM_IMPORT' | 'MANUAL_RECONCILIATION';
 
 export interface SourceTrackingFields {
   sourceSystem?: SourceSystem;
@@ -229,7 +229,9 @@ export interface Booking extends SourceTrackingFields {
   requestedByUserId: string;
   organizationId: string;
   serviceCategory: ServiceCategory;
-  serviceType: string; // e.g. "Legal", "Medical"
+  serviceType: string;
+  sourceServiceType?: string;
+  serviceTypeMappingVersion?: string;
   languageFrom: string;
   languageTo: string;
   date: string;
@@ -536,6 +538,8 @@ export interface Interpreter extends TenantScopedEntity, SourceTrackingFields {
 
   // Payments & Finance (UK BACS)
   bankDetails?: BankDetails;
+  sageSupplierRef?: string;
+  accountingContactId?: string;
 
   // Auxiliary
   notes?: string;
@@ -809,6 +813,115 @@ export interface InterpreterInvoice extends TenantScopedEntity, SourceTrackingFi
   primaryServiceCategory?: ServiceCategory;
   xeroBillId?: string;
   xeroStatus?: string;
+}
+
+export type AccountingContactType = 'CUSTOMER' | 'SUPPLIER';
+export type AccountingDirection = 'RECEIVABLE' | 'PAYABLE';
+export type AccountingSettlementStatus = 'UNKNOWN' | 'OPEN_UNALLOCATED' | 'PARTIALLY_ALLOCATED' | 'FULLY_ALLOCATED' | 'DELETED' | 'REVIEW_UNMATCHED';
+export type XeroSyncStatus = 'NOT_SYNCED' | 'READY_FOR_REVIEW' | 'SYNCED' | 'RECONCILED' | 'CONFLICT' | 'QUARANTINED';
+
+export interface AccountingSourceFields {
+  sourceSystem: 'SAGE' | 'XERO' | 'PLATFORM' | 'AIRTABLE';
+  sourceDatasetId?: string;
+  sourceRecordId: string;
+  sourceRecordHash?: string;
+  sourceTable?: string;
+  lastImportRunId?: string;
+}
+
+export interface AccountingContact extends TenantScopedEntity, AccountingSourceFields {
+  contactType: AccountingContactType;
+  sageAccountRef?: string;
+  name: string;
+  normalizedName: string;
+  emails: string[];
+  phones: string[];
+  addressLines: string[];
+  postcode?: string;
+  paymentTermsDays: number;
+  defaultAccountCode?: string;
+  currency: string;
+  platformClientId?: string;
+  platformInterpreterId?: string;
+  platformLinkStatus: 'UNRESOLVED' | 'LINKED_EXISTING' | 'CREATED_CANONICAL' | 'NEEDS_REVIEW';
+  linkReviewReason?: string;
+  xeroContactId?: string | null;
+  xeroAccountNumber?: string;
+  xeroContactStatus?: string;
+  xeroReconciliationRunId?: string;
+  xeroReconciledAt?: string;
+  xeroSyncStatus: XeroSyncStatus;
+}
+
+export interface AccountingDocumentLine {
+  id: string;
+  sequence: number;
+  itemCode?: string;
+  description: string;
+  quantity: number;
+  unitAmount: number;
+  netAmount: number;
+  taxAmount: number;
+  grossAmount: number;
+  accountCode?: string;
+  taxRate?: number;
+  xeroTaxType?: string;
+  serviceCategory?: ServiceCategory | 'OTHER';
+  lineStatus?: 'INCLUDED' | 'ZERO_VALUE_MEMO';
+  includedInTotals?: boolean;
+}
+
+export interface AccountingDocument extends TenantScopedEntity, AccountingSourceFields {
+  direction: AccountingDirection;
+  documentType: 'SALES_INVOICE' | 'SALES_CREDIT' | 'PURCHASE_BILL' | 'PURCHASE_CREDIT';
+  documentNumber: string;
+  externalAccountingNumber?: string;
+  sourceAuditNumber?: string;
+  sageAccountRef: string;
+  accountingContactId: string;
+  contactName: string;
+  reference?: string;
+  description?: string;
+  issueDate?: string | null;
+  dueDate?: string | null;
+  currency: string;
+  netAmount: number;
+  taxAmount: number;
+  grossAmount: number;
+  amountPaid: number;
+  outstandingAmount: number;
+  settlementStatus: AccountingSettlementStatus;
+  accountingStatus: 'HISTORICAL' | 'OPEN' | 'PARTIALLY_PAID' | 'SETTLED' | 'DELETED' | 'REVIEW_REQUIRED';
+  migrationDisposition: 'HISTORICAL_ARCHIVE' | 'XERO_DRAFT_REVIEW' | 'QUARANTINED';
+  lines: AccountingDocumentLine[];
+  xeroDocumentId?: string | null;
+  xeroStatus?: string;
+  xeroAmountPaid?: number;
+  xeroAmountDue?: number;
+  xeroTotal?: number;
+  xeroPaymentIds?: string[];
+  xeroReconciliationRunId?: string;
+  xeroReconciledAt?: string;
+  xeroSyncStatus: XeroSyncStatus;
+}
+
+export interface AccountingPayment extends TenantScopedEntity, AccountingSourceFields {
+  direction: 'INBOUND' | 'OUTBOUND';
+  paymentType: string;
+  sageAccountRef: string;
+  accountingContactId: string;
+  reference?: string;
+  details?: string;
+  transactionDate?: string | null;
+  postingDate?: string | null;
+  amount: number;
+  allocatedAmount: number;
+  outstandingAmount: number;
+  currency: string;
+  nominalOrBankCode?: string;
+  settlementStatus: AccountingSettlementStatus;
+  xeroPaymentId?: string | null;
+  xeroSyncStatus: XeroSyncStatus;
 }
 
 export interface Rate {

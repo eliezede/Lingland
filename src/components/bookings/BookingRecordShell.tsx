@@ -19,6 +19,8 @@ interface BookingRecordHeaderProps {
   backLabel: string;
   onBack: () => void;
   actions: React.ReactNode;
+  summary?: React.ReactNode;
+  progress?: React.ReactNode;
 }
 
 export const BookingRecordHeader = ({
@@ -29,36 +31,92 @@ export const BookingRecordHeader = ({
   backLabel,
   onBack,
   actions,
+  summary,
+  progress,
 }: BookingRecordHeaderProps) => (
-  <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 sm:px-5 lg:px-6">
-    <div className="mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
-          aria-label={`Back to ${backLabel}`}
-          title={`Back to ${backLabel}`}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">{title}</h1>
-            {status && <StatusBadge status={status as any} />}
-            <span className="max-w-full truncate rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
-              {reference}
-            </span>
+  <header className={summary || progress ? 'px-3 pt-3 sm:px-5 sm:pt-5 lg:px-6 lg:pt-6' : 'border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950'}>
+    <div className={summary || progress
+      ? 'mx-auto max-w-[1600px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950'
+      : 'px-3 py-2 sm:px-5 lg:px-6'}
+    >
+      <div className={`mx-auto flex max-w-[1600px] flex-col gap-2 xl:flex-row xl:items-center xl:justify-between ${summary || progress ? 'px-3 py-3 sm:px-4' : ''}`}>
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+            aria-label={`Back to ${backLabel}`}
+            title={`Back to ${backLabel}`}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-lg font-semibold text-slate-950 dark:text-white">{title}</h1>
+              {status && <StatusBadge status={status as any} />}
+              <span className="max-w-full truncate rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-800">
+                {reference}
+              </span>
+            </div>
+            <p className="truncate text-xs text-slate-500">{subtitle}</p>
           </div>
-          <p className="truncate text-xs text-slate-500">{subtitle}</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+          {actions}
         </div>
       </div>
-
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
-        {actions}
-      </div>
+      {summary && <div className="border-t border-slate-200 dark:border-slate-800">{summary}</div>}
+      {progress && <div className="border-t border-slate-200 dark:border-slate-800">{progress}</div>}
     </div>
   </header>
+);
+
+export type BookingEssentialSummaryItem = {
+  label: string;
+  value: React.ReactNode;
+  secondary?: React.ReactNode;
+  tone?: 'default' | 'warning' | 'success';
+};
+
+export const BookingEssentialsStrip = ({ items }: { items: BookingEssentialSummaryItem[] }) => (
+  <dl
+    aria-label="Booking essentials"
+    className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6"
+  >
+    {items.map((item) => {
+      const toneClass = item.tone === 'warning'
+        ? 'text-amber-700 dark:text-amber-300'
+        : item.tone === 'success'
+          ? 'text-emerald-700 dark:text-emerald-300'
+          : 'text-slate-950 dark:text-white';
+
+      return (
+        <div
+          key={item.label}
+          className="min-w-0 border-b border-r border-slate-200 px-4 py-3 last:border-r-0 dark:border-slate-800 xl:border-b-0"
+        >
+          <dt className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400">
+            {item.label}
+          </dt>
+          <dd
+            className={`mt-1 truncate text-sm font-semibold ${toneClass}`}
+            title={typeof item.value === 'string' ? item.value : undefined}
+          >
+            {item.value || '-'}
+          </dd>
+          {item.secondary && (
+            <dd
+              className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400"
+              title={typeof item.secondary === 'string' ? item.secondary : undefined}
+            >
+              {item.secondary}
+            </dd>
+          )}
+        </div>
+      );
+    })}
+  </dl>
 );
 
 export const BookingSection = ({

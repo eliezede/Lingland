@@ -41,6 +41,7 @@ describe('Clients Book CRM projection', () => {
     expect(result.projections).toHaveLength(1);
     expect(result.projections[0]).toMatchObject({
       canonicalClientId: 'client-example',
+      identityEmails: ['alex@example.test', 'jamie@example.test'],
       sourceRecordIds: ['rec-book-1', 'rec-book-2'],
     });
     expect(result.projections[0].hierarchy.agents).toHaveLength(2);
@@ -54,6 +55,7 @@ describe('Clients Book CRM projection', () => {
 
     expect(result.projections[0].hierarchy.agents[0].roles).toEqual(['FINANCE', 'REQUESTER']);
     expect(result.projections[0].hierarchy.memberships[0].roles).toEqual(['FINANCE', 'REQUESTER']);
+    expect(result.projections[0].identityEmails).toEqual(['alex@example.test']);
   });
 
   it('classifies operational mailboxes without creating a portal person', () => {

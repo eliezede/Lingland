@@ -4,7 +4,7 @@ exports.buildClientBookProjection = exports.CLIENT_BOOK_PROJECTION_VERSION = voi
 const crypto_1 = require("crypto");
 const clientHierarchyCore_1 = require("../clients/clientHierarchyCore");
 const clientIdentityAuditCore_1 = require("../clients/clientIdentityAuditCore");
-exports.CLIENT_BOOK_PROJECTION_VERSION = 1;
+exports.CLIENT_BOOK_PROJECTION_VERSION = 3;
 const text = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const unique = (values) => Array.from(new Set(values.filter(Boolean)))
     .sort((left, right) => left.localeCompare(right));
@@ -70,6 +70,7 @@ const buildClientBookProjection = (sources, resolutions) => {
         const documents = [canonicalDocument, ...orderedSources.map(sourceDocument)];
         const hierarchy = (0, clientHierarchyCore_1.buildClientHierarchySeedPreview)(documents, canonicalClientId);
         const aliases = unique(orderedSources.flatMap(source => [source.companyName, source.stableKey]));
+        const identityEmails = unique(hierarchy.agents.map(agent => agent.normalizedEmail));
         const sourceRecordIds = orderedSources.map(source => source.sourceRecordId);
         const sourceRecords = orderedSources.map(source => ({
             sourceTable: source.sourceTable || 'Clients Book',
@@ -98,6 +99,7 @@ const buildClientBookProjection = (sources, resolutions) => {
             canonicalClientId,
             canonicalCompanyName,
             aliases,
+            identityEmails,
             sourceRecordIds,
             sourceRecords,
             snapshotHash,

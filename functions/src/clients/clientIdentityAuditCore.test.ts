@@ -6,6 +6,7 @@ import {
   normalizeClientPhone,
   normalizeClientAddress,
   normalizeOrganizationName,
+  organizationTokenSignature,
 } from './clientIdentityAuditCore';
 
 describe('client identity audit', () => {
@@ -18,6 +19,9 @@ describe('client identity audit', () => {
     ]);
     expect(normalizeClientPhone('+44 (0) 23 8012 3456')).toBe('02380123456');
     expect(normalizeClientAddress('Address Pending Update')).toBe('');
+    expect(organizationTokenSignature('Youth Justice Service - Hampshire County Council')).toBe(
+      organizationTokenSignature('Hampshire County Council - Youth Justice Service'),
+    );
   });
 
   it('never merges organisations by contact email alone', () => {

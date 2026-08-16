@@ -78,4 +78,5 @@ __exportStar(require("./audit/onCriticalChange"), exports);
 __exportStar(require("./audit/createAuditHealthCheck"), exports);
 __exportStar(require("./ai/aiFunctions"), exports);
 __exportStar(require("./integrations/xeroFunctions"), exports);
+__exportStar(require("./accounting/sageImportFunctions"), exports);
 //# sourceMappingURL=index.js.map

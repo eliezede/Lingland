@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildClientIdentityAudit = exports.organizationNameSimilarity = exports.extractOrganizationDomains = exports.extractClientEmails = exports.normalizeClientAddress = exports.normalizeClientPhone = exports.extractUkPostcode = exports.isGenericOrganizationName = exports.normalizeOrganizationName = exports.normalizeClientEmail = void 0;
+exports.buildClientIdentityAudit = exports.organizationNameSimilarity = exports.extractOrganizationDomains = exports.extractClientEmails = exports.normalizeClientAddress = exports.normalizeClientPhone = exports.extractUkPostcode = exports.isGenericOrganizationName = exports.organizationTokenSignature = exports.normalizeOrganizationName = exports.normalizeClientEmail = void 0;
 const node_crypto_1 = require("node:crypto");
 const GENERIC_ORGANIZATION_NAMES = new Set([
     '',
@@ -79,6 +79,12 @@ const normalizeOrganizationName = (value) => text(value)
     .replace(/\s+/g, ' ')
     .trim();
 exports.normalizeOrganizationName = normalizeOrganizationName;
+const organizationTokenSignature = (value) => (0, exports.normalizeOrganizationName)(value)
+    .split(' ')
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+    .join('|');
+exports.organizationTokenSignature = organizationTokenSignature;
 const isGenericOrganizationName = (value) => (GENERIC_ORGANIZATION_NAMES.has((0, exports.normalizeOrganizationName)(value)));
 exports.isGenericOrganizationName = isGenericOrganizationName;
 const extractUkPostcode = (value) => {

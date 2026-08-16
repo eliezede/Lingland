@@ -78,9 +78,16 @@ export const BookingService = {
 
   getJobEvents: async (jobId: string): Promise<any[]> => {
     try {
-      const q = query(collection(db, 'jobEvents'), where('jobId', '==', jobId), orderBy('createdAt', 'desc'));
+      const q = query(collection(db, 'jobEvents'), where('jobId', '==', jobId));
       const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const events = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      const toMillis = (value: any): number => {
+        if (typeof value?.toMillis === 'function') return value.toMillis();
+        if (typeof value?.seconds === 'number') return value.seconds * 1000;
+        const parsed = new Date(value || 0).getTime();
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+      return events.sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
     } catch (error) {
       console.error('Failed to get job events', error);
       throw error;

@@ -43,3 +43,4 @@ export * from './audit/onCriticalChange';
 export * from './audit/createAuditHealthCheck';
 export * from './ai/aiFunctions';
 export * from './integrations/xeroFunctions';
+export * from './accounting/sageImportFunctions';

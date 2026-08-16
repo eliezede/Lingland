@@ -70,6 +70,7 @@ const AdminApplications = lazyNamed(() => import('./pages/admin/AdminApplication
 const AdminMessages = lazyNamed(() => import('./pages/admin/AdminMessages'), 'AdminMessages');
 const StaffOnboarding = lazyNamed(() => import('./pages/admin/StaffOnboarding'), 'StaffOnboarding');
 const AdminMigration = lazyNamed(() => import('./pages/admin/AdminMigration'), 'AdminMigration');
+const SageAccountingMigration = lazyNamed(() => import('./pages/admin/administration/SageAccountingMigration'), 'SageAccountingMigration');
 const AIControlCenter = lazyNamed(() => import('./pages/admin/ai/AIControlCenter'), 'AIControlCenter');
 const AICommandCenter = lazyNamed(() => import('./pages/admin/ai/AICommandCenter'), 'AICommandCenter');
 
@@ -247,6 +248,7 @@ const App = () => {
                                <Route path="billing/interpreter-invoices/:id" element={<AdminInterpreterInvoiceDetailsPage />} />
                                <Route path="onboarding" element={<StaffOnboarding />} />
                                <Route path="administration/migration" element={<AdminMigration />} />
+                               <Route path="administration/accounting-migration" element={<SageAccountingMigration />} />
                                <Route path="administration/ai" element={<AIControlCenter />} />
                                <Route path="ai-command" element={<AICommandCenter />} />
                                <Route path="ai-command/attention" element={<AICommandCenter />} />

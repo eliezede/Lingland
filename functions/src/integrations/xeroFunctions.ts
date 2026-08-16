@@ -19,15 +19,23 @@ import {
   XeroConnectionOption,
   XeroTokenBundle,
 } from './xeroCore';
+import {
+  reconcileXeroAccounting,
+  XeroReconciliationItem,
+} from './xeroReconciliationCore';
 
 const db = admin.firestore();
 const INTEGRATION_REF = db.collection('accountingIntegrations').doc('xero');
 const OAUTH_STATE_COLLECTION = db.collection('xeroOAuthStates');
 const XERO_SECRETS = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET', 'XERO_TOKEN_ENCRYPTION_KEY'];
 const XERO_RUNTIME = { timeoutSeconds: 60, memory: '256MB' as const, secrets: XERO_SECRETS };
+const XERO_RECONCILIATION_RUNTIME = { timeoutSeconds: 540, memory: '1GB' as const, secrets: XERO_SECRETS };
 const TOKEN_URL = 'https://identity.xero.com/connect/token';
 const REVOCATION_URL = 'https://identity.xero.com/connect/revocation';
 const CONNECTIONS_URL = 'https://api.xero.com/connections';
+const ACCOUNTING_API_URL = 'https://api.xero.com/api.xro/2.0';
+const RECONCILIATION_RUNS = db.collection('xeroReconciliationRuns');
+const RECONCILIATION_PREVIEW_TTL_MS = 2 * 60 * 60 * 1000;
 
 interface ActiveAdmin {
   uid: string;
@@ -176,6 +184,147 @@ const fetchOrganisation = async (accessToken: string, tenantId: string) => {
     organisationType: text(organisation.OrganisationType, 80),
     registrationNumber: text(organisation.RegistrationNumber, 100),
     shortCode: text(organisation.ShortCode, 80),
+  };
+};
+
+const assertCommunicationsSuppressed = async () => {
+  const settings = await db.collection('system').doc('settings').get();
+  const mode = text(settings.data()?.platformMode?.communicationMode || 'SUPPRESSED', 40).toUpperCase();
+  if (mode !== 'SUPPRESSED') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Xero reconciliation links require Communication Mode SUPPRESSED.',
+    );
+  }
+};
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const validateReconciliationScope = (input: unknown) => {
+  const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const fromDate = text(source.fromDate, 10);
+  const toDate = text(source.toDate, 10);
+  const importRunId = text(source.importRunId, 80);
+  if (!ISO_DATE_PATTERN.test(fromDate) || !ISO_DATE_PATTERN.test(toDate)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid reconciliation date range is required.');
+  }
+  const fromTime = Date.parse(`${fromDate}T00:00:00.000Z`);
+  const toTime = Date.parse(`${toDate}T23:59:59.999Z`);
+  if (fromTime > toTime) throw new functions.https.HttpsError('invalid-argument', 'The reconciliation start date must be before the end date.');
+  if (toTime - fromTime > 550 * 24 * 60 * 60 * 1000) {
+    throw new functions.https.HttpsError('invalid-argument', 'Reconciliation previews are limited to 18 months.');
+  }
+  return { fromDate, toDate, importRunId };
+};
+
+const resolveFinanceImportRun = async (actor: ActiveAdmin, requestedRunId: string) => {
+  const candidates = requestedRunId
+    ? [await db.collection('accountingImportRuns').doc(requestedRunId).get()]
+    : (await db.collection('accountingImportRuns').orderBy('createdAt', 'desc').limit(30).get()).docs;
+  const match = candidates.find(snapshot => {
+    const data = snapshot.data() || {};
+    const counts = data.manifest?.expectedModuleCounts || {};
+    return snapshot.exists
+      && text(data.organizationId, 160) === actor.organizationId
+      && text(data.status, 40) === 'COMMITTED'
+      && (Number(counts.salesDocuments) > 0 || Number(counts.purchaseDocuments) > 0);
+  });
+  if (!match) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      requestedRunId
+        ? 'The selected canonical finance import is not committed or does not belong to this organisation.'
+        : 'Commit a canonical Sage finance import before reconciling with Xero.',
+    );
+  }
+  return match.id;
+};
+
+const xeroDateFilter = (fromDate: string, toDate: string) => {
+  const from = fromDate.split('-').map(Number);
+  const to = toDate.split('-').map(Number);
+  return `Date>=DateTime(${from[0]},${from[1]},${from[2]})&&Date<=DateTime(${to[0]},${to[1]},${to[2]})`;
+};
+
+const fetchPagedXeroResource = async (
+  resource: 'Contacts' | 'Invoices' | 'Payments',
+  responseKey: 'Contacts' | 'Invoices' | 'Payments',
+  accessToken: string,
+  tenantId: string,
+  extraParams: Record<string, string> = {},
+) => {
+  const records: Array<Record<string, unknown>> = [];
+  const pageSize = 500;
+  for (let page = 1; page <= 200; page += 1) {
+    const response = await axios.get(`${ACCOUNTING_API_URL}/${resource}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'xero-tenant-id': tenantId,
+        Accept: 'application/json',
+      },
+      params: {
+        page,
+        pageSize,
+        ...(resource === 'Contacts' || resource === 'Invoices' ? { summaryOnly: 'true' } : {}),
+        ...extraParams,
+      },
+      timeout: 30_000,
+    });
+    const payload = response.data && typeof response.data === 'object'
+      ? response.data as Record<string, unknown>
+      : {};
+    const pageRecords = Array.isArray(payload[responseKey])
+      ? payload[responseKey].filter((record): record is Record<string, unknown> => Boolean(record && typeof record === 'object' && !Array.isArray(record)))
+      : [];
+    records.push(...pageRecords);
+    if (pageRecords.length < pageSize) return records;
+  }
+  throw new functions.https.HttpsError('resource-exhausted', `Xero ${resource} exceeded the guarded pagination limit.`);
+};
+
+const loadLocalReconciliationData = async (actor: ActiveAdmin, fromDate: string, toDate: string, importRunId: string) => {
+  const documentSnapshot = await db.collection('accountingDocuments')
+    .where('issueDate', '>=', fromDate)
+    .where('issueDate', '<=', toDate)
+    .get();
+  const documents: Array<Record<string, unknown>> = documentSnapshot.docs
+    .map(document => ({ id: document.id, ...document.data() }) as Record<string, unknown>)
+    .filter(document => text(document.organizationId, 160) === actor.organizationId)
+    .filter(document => text(document.lastImportRunId, 80) === importRunId)
+    .filter(document => ['SALES_INVOICE', 'PURCHASE_BILL'].includes(text(document.documentType, 40).toUpperCase()));
+  const contactIds = Array.from(new Set(documents.map(document => text(document.accountingContactId, 180)).filter(Boolean)));
+  const contacts: Array<Record<string, unknown>> = [];
+  for (let offset = 0; offset < contactIds.length; offset += 100) {
+    const refs = contactIds.slice(offset, offset + 100).map(id => db.collection('accountingContacts').doc(id));
+    if (!refs.length) continue;
+    const snapshots = await db.getAll(...refs);
+    contacts.push(...snapshots.filter(snapshot => snapshot.exists).map(snapshot => ({ id: snapshot.id, ...snapshot.data() })));
+  }
+  return { documents, contacts };
+};
+
+const matchDocumentId = (item: XeroReconciliationItem) => `${item.entityType.toLowerCase()}_${item.localId}`.slice(0, 1500);
+
+const publicReconciliationRun = async (snapshot: admin.firestore.DocumentSnapshot) => {
+  if (!snapshot.exists) return null;
+  const matches = await snapshot.ref.collection('matches').get();
+  const issues = matches.docs
+    .map(document => document.data() as XeroReconciliationItem)
+    .filter(item => item.status !== 'EXACT')
+    .slice(0, 100);
+  const data = snapshot.data() || {};
+  return {
+    runId: snapshot.id,
+    status: text(data.status, 60),
+    scope: data.scope || null,
+    previewHash: text(data.previewHash, 64),
+    summary: data.summary || null,
+    createdAt: text(data.createdAt, 80),
+    completedAt: text(data.completedAt, 80) || null,
+    expiresAt: text(data.expiresAt, 80) || null,
+    issueCount: Number(data.issueCount) || issues.length,
+    issues,
+    issuesTruncated: Number(data.issueCount) > issues.length,
+    applySummary: data.applySummary || null,
   };
 };
 
@@ -581,4 +730,268 @@ export const disconnectXero = functions.runWith(XERO_RUNTIME).https.onCall(async
     tenant: before.tenant || null,
   }, { status: 'NOT_CONNECTED' });
   return { success: true, disconnectedAt };
+});
+
+export const previewXeroReconciliation = functions.runWith(XERO_RECONCILIATION_RUNTIME).https.onCall(async (input, context) => {
+  const actor = await assertActiveAdmin(context.auth?.uid);
+  const requestedScope = validateReconciliationScope(input);
+  const importRunId = await resolveFinanceImportRun(actor, requestedScope.importRunId);
+  const scope = { fromDate: requestedScope.fromDate, toDate: requestedScope.toDate, importRunId };
+  const runRef = RECONCILIATION_RUNS.doc();
+  const createdAt = nowIso();
+  await runRef.create({
+    provider: 'XERO',
+    mode: 'READ_ONLY',
+    status: 'RUNNING',
+    scope,
+    organizationId: actor.organizationId,
+    createdAt,
+    createdBy: actor.uid,
+    updatedAt: createdAt,
+  });
+
+  try {
+    const { bundle, data } = await ensureFreshToken();
+    const tenant = data.tenant && typeof data.tenant === 'object'
+      ? data.tenant as XeroConnectionOption
+      : null;
+    if (!tenant?.tenantId || text(data.status, 60).toUpperCase() !== 'CONNECTED') {
+      throw new functions.https.HttpsError('failed-precondition', 'Connect and verify the Xero organisation before reconciliation.');
+    }
+    const filter = xeroDateFilter(scope.fromDate, scope.toDate);
+    const [local, xeroContacts, xeroInvoices, xeroPayments] = await Promise.all([
+      loadLocalReconciliationData(actor, scope.fromDate, scope.toDate, scope.importRunId),
+      fetchPagedXeroResource('Contacts', 'Contacts', bundle.accessToken, tenant.tenantId),
+      fetchPagedXeroResource('Invoices', 'Invoices', bundle.accessToken, tenant.tenantId, { where: filter }),
+      fetchPagedXeroResource('Payments', 'Payments', bundle.accessToken, tenant.tenantId, { where: filter }),
+    ]);
+    const preview = reconcileXeroAccounting({
+      localContacts: local.contacts,
+      localDocuments: local.documents,
+      xeroContacts,
+      xeroInvoices,
+      xeroPayments,
+      generatedAt: nowIso(),
+    });
+    const writer = db.bulkWriter();
+    preview.items.forEach(item => {
+      writer.set(runRef.collection('matches').doc(matchDocumentId(item)), clean({
+        ...item,
+        runId: runRef.id,
+        scope,
+        createdAt: preview.generatedAt,
+        applyStatus: 'NOT_APPLIED',
+      }));
+    });
+    await writer.close();
+
+    const completedAt = nowIso();
+    const expiresAt = new Date(Date.now() + RECONCILIATION_PREVIEW_TTL_MS).toISOString();
+    await runRef.set(clean({
+      status: 'PREVIEW_READY',
+      tenantId: tenant.tenantId,
+      tenantName: tenant.tenantName,
+      previewHash: preview.previewHash,
+      summary: preview.summary,
+      issueCount: preview.summary.reviewCount,
+      sourceCounts: {
+        localContacts: local.contacts.length,
+        localDocuments: local.documents.length,
+        xeroContacts: xeroContacts.length,
+        xeroInvoices: xeroInvoices.length,
+        xeroPayments: xeroPayments.length,
+      },
+      completedAt,
+      expiresAt,
+      updatedAt: completedAt,
+      updatedBy: actor.uid,
+    }), { merge: true });
+    await INTEGRATION_REF.set({
+      lastReconciliationRunId: runRef.id,
+      lastReconciliationPreviewAt: completedAt,
+      lastReconciliationStatus: 'PREVIEW_READY',
+      updatedAt: completedAt,
+    }, { merge: true });
+    await writeXeroAudit(actor, 'XERO_RECONCILIATION_PREVIEWED', ['lastReconciliationRunId'], null, {
+      runId: runRef.id,
+      scope,
+      previewHash: preview.previewHash,
+      summary: preview.summary,
+    });
+    return publicReconciliationRun(await runRef.get());
+  } catch (error) {
+    const message = error instanceof functions.https.HttpsError
+      ? error.message
+      : providerError(error, error instanceof Error ? error.message : 'Xero reconciliation preview failed.');
+    await runRef.set({
+      status: 'FAILED',
+      errorMessage: text(message, 300),
+      failedAt: nowIso(),
+      updatedAt: nowIso(),
+      updatedBy: actor.uid,
+    }, { merge: true });
+    if (error instanceof functions.https.HttpsError) throw error;
+    throw new functions.https.HttpsError('unavailable', message);
+  }
+});
+
+export const getXeroReconciliationRun = functions.runWith(XERO_RUNTIME).https.onCall(async (input, context) => {
+  const actor = await assertActiveAdmin(context.auth?.uid);
+  const requestedRunId = text(input?.runId, 180);
+  let snapshot: admin.firestore.DocumentSnapshot | null = null;
+  if (requestedRunId) {
+    const requested = await RECONCILIATION_RUNS.doc(requestedRunId).get();
+    if (requested.exists && text(requested.data()?.organizationId, 160) === actor.organizationId) snapshot = requested;
+  } else {
+    const latest = await RECONCILIATION_RUNS
+      .orderBy('createdAt', 'desc')
+      .limit(20)
+      .get();
+    snapshot = latest.docs.find(
+      (doc) => text(doc.data().organizationId, 160) === actor.organizationId,
+    ) || null;
+  }
+  if (!snapshot) return null;
+  return publicReconciliationRun(snapshot);
+});
+
+export const applyXeroReconciliationLinks = functions.runWith(XERO_RECONCILIATION_RUNTIME).https.onCall(async (input, context) => {
+  const actor = await assertActiveAdmin(context.auth?.uid, true);
+  await assertCommunicationsSuppressed();
+  const runId = text(input?.runId, 180);
+  const previewHash = text(input?.previewHash, 64).toLowerCase();
+  if (!runId || !previewHash) {
+    throw new functions.https.HttpsError('invalid-argument', 'Run id and preview hash are required.');
+  }
+  const runRef = RECONCILIATION_RUNS.doc(runId);
+  const runSnapshot = await runRef.get();
+  if (!runSnapshot.exists || text(runSnapshot.data()?.organizationId, 160) !== actor.organizationId) {
+    throw new functions.https.HttpsError('not-found', 'Xero reconciliation preview not found.');
+  }
+  const run = runSnapshot.data() || {};
+  if (['APPLIED', 'APPLIED_WITH_CONFLICTS'].includes(text(run.status, 60))) {
+    return publicReconciliationRun(runSnapshot);
+  }
+  if (text(run.status, 60) !== 'PREVIEW_READY' || text(run.previewHash, 64).toLowerCase() !== previewHash) {
+    throw new functions.https.HttpsError('failed-precondition', 'A matching completed Xero preview is required.');
+  }
+  const appliedScope = run.scope && typeof run.scope === 'object'
+    ? run.scope as Record<string, unknown>
+    : {};
+  if (!text(appliedScope.importRunId, 80)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Run a fresh preview scoped to a committed canonical finance import.');
+  }
+  if (Date.parse(text(run.expiresAt, 80)) <= Date.now()) {
+    throw new functions.https.HttpsError('failed-precondition', 'This Xero preview expired. Run a fresh preview before linking records.');
+  }
+
+  const matchSnapshots = await runRef.collection('matches').get();
+  const exactMatches = matchSnapshots.docs
+    .map(document => ({ ref: document.ref, item: document.data() as XeroReconciliationItem }))
+    .filter(entry => entry.item.status === 'EXACT' && entry.item.xero?.id);
+  const localSnapshots = new Map<string, admin.firestore.DocumentSnapshot>();
+  for (let offset = 0; offset < exactMatches.length; offset += 100) {
+    const entries = exactMatches.slice(offset, offset + 100);
+    const snapshots = await db.getAll(...entries.map(entry => db.collection(entry.item.localCollection).doc(entry.item.localId)));
+    snapshots.forEach(snapshot => localSnapshots.set(`${snapshot.ref.parent.id}:${snapshot.id}`, snapshot));
+  }
+
+  const applySummary = {
+    exactMatches: exactMatches.length,
+    applied: 0,
+    alreadyLinked: 0,
+    localLinkConflicts: 0,
+    localRecordsMissing: 0,
+  };
+  const appliedAt = nowIso();
+  const writer = db.bulkWriter();
+  exactMatches.forEach(({ ref: matchRef, item }) => {
+    const localSnapshot = localSnapshots.get(`${item.localCollection}:${item.localId}`);
+    if (!localSnapshot?.exists || !item.xero) {
+      applySummary.localRecordsMissing += 1;
+      writer.set(matchRef, { applyStatus: 'LOCAL_RECORD_MISSING', appliedAt, appliedBy: actor.uid }, { merge: true });
+      return;
+    }
+    const current = localSnapshot.data() || {};
+    const idField = item.entityType === 'CONTACT' ? 'xeroContactId' : 'xeroDocumentId';
+    const existingXeroId = text(current[idField], 180);
+    if (existingXeroId && existingXeroId !== item.xero.id) {
+      applySummary.localLinkConflicts += 1;
+      writer.set(matchRef, {
+        applyStatus: 'LOCAL_LINK_CONFLICT',
+        existingXeroId,
+        appliedAt,
+        appliedBy: actor.uid,
+      }, { merge: true });
+      return;
+    }
+
+    const evidence = {
+      runId,
+      previewHash,
+      strategy: item.strategy,
+      reasons: item.reasons,
+      scope: run.scope || null,
+      reconciledAt: appliedAt,
+      reconciledBy: actor.uid,
+    };
+    const shared = {
+      xeroSyncStatus: 'RECONCILED',
+      xeroReconciliationRunId: runId,
+      xeroReconciledAt: appliedAt,
+      xeroReconciliationEvidence: evidence,
+      updatedAt: appliedAt,
+      updatedBy: actor.uid,
+    };
+    const payload = item.entityType === 'CONTACT'
+      ? {
+        ...shared,
+        xeroContactId: item.xero.id,
+        xeroAccountNumber: item.xero.reference,
+        xeroContactStatus: item.xero.status,
+        xeroUpdatedDateUtc: item.xero.updatedDateUtc || '',
+      }
+      : {
+        ...shared,
+        xeroDocumentId: item.xero.id,
+        xeroInvoiceNumber: item.xero.reference,
+        xeroStatus: item.xero.status,
+        xeroTotal: item.xero.total || 0,
+        xeroAmountPaid: item.xero.amountPaid || 0,
+        xeroAmountDue: item.xero.amountDue || 0,
+        xeroPaymentIds: item.xero.paymentIds || [],
+        xeroPaymentTotal: item.xero.paymentTotal || 0,
+        xeroUpdatedDateUtc: item.xero.updatedDateUtc || '',
+      };
+    writer.set(localSnapshot.ref, clean(payload), { merge: true });
+    writer.set(matchRef, { applyStatus: existingXeroId ? 'ALREADY_LINKED' : 'APPLIED', appliedAt, appliedBy: actor.uid }, { merge: true });
+    if (existingXeroId) applySummary.alreadyLinked += 1;
+    else applySummary.applied += 1;
+  });
+  await writer.close();
+
+  const status = applySummary.localLinkConflicts || applySummary.localRecordsMissing
+    ? 'APPLIED_WITH_CONFLICTS'
+    : 'APPLIED';
+  await runRef.set({
+    status,
+    applySummary,
+    appliedAt,
+    appliedBy: actor.uid,
+    updatedAt: appliedAt,
+    updatedBy: actor.uid,
+  }, { merge: true });
+  await INTEGRATION_REF.set({
+    lastReconciliationRunId: runId,
+    lastReconciliationAppliedAt: appliedAt,
+    lastReconciliationStatus: status,
+    updatedAt: appliedAt,
+  }, { merge: true });
+  await writeXeroAudit(actor, 'XERO_RECONCILIATION_LINKS_APPLIED', ['lastReconciliationRunId'], null, {
+    runId,
+    status,
+    scope: run.scope || null,
+    applySummary,
+  });
+  return publicReconciliationRun(await runRef.get());
 });

@@ -227,6 +227,12 @@ export const normalizeOrganizationName = (value: unknown) => text(value)
   .replace(/\s+/g, ' ')
   .trim();
 
+export const organizationTokenSignature = (value: unknown) => normalizeOrganizationName(value)
+  .split(' ')
+  .filter(Boolean)
+  .sort((left, right) => left.localeCompare(right))
+  .join('|');
+
 export const isGenericOrganizationName = (value: unknown) => (
   GENERIC_ORGANIZATION_NAMES.has(normalizeOrganizationName(value))
 );
