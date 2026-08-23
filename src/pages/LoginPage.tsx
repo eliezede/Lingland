@@ -1,25 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
 import { SystemService } from '../services/systemService';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import {
   Lock, Activity, CheckCircle, AlertTriangle,
   ArrowRight, Mail, ShieldCheck, Eye, EyeOff
 } from 'lucide-react';
 import { BrandLogo } from '../components/ui/BrandLogo';
+import { ThemeToggle } from '../components/ui/ThemeToggle';
 
 export const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   // Diagnostics
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     // Check connection on mount
@@ -32,10 +36,12 @@ export const LoginPage = () => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setNotice('');
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      navigate('/'); // AuthContext will handle redirect based on role
+      const returnPath = (location.state as { from?: string } | null)?.from;
+      navigate(returnPath || '/', { replace: true });
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/invalid-api-key' || err.code === 'auth/internal-error') {
@@ -48,8 +54,30 @@ export const LoginPage = () => {
     }
   };
 
+  const handlePasswordReset = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    setError('');
+    setNotice('');
+    if (!cleanEmail) {
+      setError('Enter your email address above, then select Forgot password.');
+      return;
+    }
+
+    setResettingPassword(true);
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      setNotice('Password reset email sent. Check your inbox and spam folder.');
+    } catch (err: any) {
+      console.error(err);
+      setError('We could not send the reset email. Check the address and try again.');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen flex bg-white">
+    <div className="relative min-h-screen flex bg-white dark:bg-slate-950">
+      <ThemeToggle className="absolute right-4 top-4 z-20 border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900" />
       {/* Left Side: Branding & Visuals */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 relative overflow-hidden items-center justify-center p-12">
         {/* Abstract Background */}
@@ -78,13 +106,13 @@ export const LoginPage = () => {
       </div>
 
       {/* Right Side: Login Form */}
-      <div className="w-full lg:w-1/2 flex flex-col justify-center py-12 px-6 lg:px-20 xl:px-32 bg-white">
+      <div className="w-full lg:w-1/2 flex flex-col justify-center py-12 px-6 lg:px-20 xl:px-32 bg-white dark:bg-slate-950">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <BrandLogo variant="wordmark" size="lg" className="mx-auto mb-8 max-w-[280px] lg:hidden" />
-          <h2 className="mt-2 text-4xl font-black text-slate-900 tracking-tight">
+          <BrandLogo variant="wordmark" tone="inherit" size="lg" className="mx-auto mb-8 max-w-[280px] text-slate-950 dark:text-white lg:hidden" />
+          <h2 className="mt-2 text-4xl font-black text-slate-900 tracking-tight dark:text-white">
             Welcome back
           </h2>
-          <p className="mt-4 text-sm text-slate-600 font-medium">
+          <p className="mt-4 text-sm text-slate-600 font-medium dark:text-slate-300">
             Don't have an account?{' '}
             <Link to="/apply" className="font-bold text-blue-600 hover:text-blue-500 transition-colors underline-offset-4 hover:underline">
               Apply as Interpreter
@@ -97,17 +125,17 @@ export const LoginPage = () => {
         </div>
 
         <div className="mt-10 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white">
+          <div className="bg-white dark:bg-slate-950">
             <form className="space-y-6" onSubmit={handleLogin}>
               {error && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm flex items-start animate-shake">
+                <div className="bg-red-50 text-red-600 p-4 rounded-lg text-sm flex items-start animate-shake dark:bg-red-950/30 dark:text-red-300">
                   <AlertTriangle size={18} className="mt-0.5 mr-3 flex-shrink-0" />
                   <span className="font-medium">{error}</span>
                 </div>
               )}
 
               <div>
-                <label htmlFor="email" className="block text-xs font-black text-slate-900 uppercase tracking-widest mb-2">
+                <label htmlFor="email" className="block text-xs font-black text-slate-900 uppercase tracking-widest mb-2 dark:text-slate-200">
                   Email address
                 </label>
                 <div className="relative group">
@@ -122,7 +150,7 @@ export const LoginPage = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="appearance-none block w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300"
+                    className="appearance-none block w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:bg-slate-900"
                     placeholder="you@company.com"
                   />
                 </div>
@@ -130,10 +158,12 @@ export const LoginPage = () => {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label htmlFor="password" className="block text-xs font-black text-slate-900 uppercase tracking-widest">
+                  <label htmlFor="password" className="block text-xs font-black text-slate-900 uppercase tracking-widest dark:text-slate-200">
                     Password
                   </label>
-                  <a href="#" className="text-xs font-bold text-blue-600 hover:text-blue-500 transition-colors">Forgot password?</a>
+                  <button type="button" onClick={handlePasswordReset} disabled={resettingPassword} className="text-xs font-bold text-blue-600 hover:text-blue-500 transition-colors disabled:opacity-50">
+                    {resettingPassword ? 'Sending...' : 'Forgot password?'}
+                  </button>
                 </div>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-600 transition-colors">
@@ -147,8 +177,8 @@ export const LoginPage = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="appearance-none block w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300"
-                    placeholder="••••••••"
+                    className="appearance-none block w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500 sm:text-sm font-bold transition-all shadow-sm hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:bg-slate-900"
+                    placeholder="Enter your password"
                   />
                   <button
                     type="button"
@@ -172,32 +202,8 @@ export const LoginPage = () => {
               </div>
             </form>
 
-            <div className="mt-8">
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200" />
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-slate-500 font-medium">
-                    Or continue with
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-6 grid grid-cols-2 gap-3">
-                <button className="w-full inline-flex justify-center py-2.5 px-4 border border-slate-200 rounded-xl shadow-sm bg-white text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors">
-                  <span className="sr-only">Sign in with Google</span>
-                  Google
-                </button>
-                <button className="w-full inline-flex justify-center py-2.5 px-4 border border-slate-200 rounded-xl shadow-sm bg-white text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors">
-                  <span className="sr-only">Sign in with Microsoft</span>
-                  Microsoft
-                </button>
-              </div>
-            </div>
-
             {/* Developer Tools / Diagnostics */}
-            <div className="mt-12 pt-6 border-t border-slate-100">
+            <div className="mt-10 pt-6 border-t border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between mb-4">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide">System Status</h4>
                 <div className="flex items-center">
@@ -211,6 +217,13 @@ export const LoginPage = () => {
                 <div className="bg-red-50 p-3 rounded-lg text-xs text-red-800 mb-4 border border-red-100">
                   <p className="font-bold mb-1">Platform services are temporarily unavailable.</p>
                   <p>No account or operational data will be simulated. Please try again shortly.</p>
+                </div>
+              )}
+
+              {notice && (
+                <div className="flex items-start rounded-lg bg-emerald-50 p-4 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  <CheckCircle size={18} className="mr-3 mt-0.5 shrink-0" />
+                  <span className="font-medium">{notice}</span>
                 </div>
               )}
             </div>

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { InterpreterService } from '../../services/interpreterService';
 import { StorageService } from '../../services/storageService';
@@ -7,8 +6,8 @@ import { UserService } from '../../services/userService';
 import { useSettings } from '../../context/SettingsContext';
 import { Interpreter } from '../../types';
 import {
-  User, Shield, Award, LogOut, Edit2, Save, X,
-  Check, Upload, FileText, Info, Calendar, ChevronLeft, ChevronRight, Settings
+  User, Shield, Award, Edit2, Save, X,
+  Check, Upload, FileText, Info, Calendar, ChevronLeft, ChevronRight, Settings, PoundSterling
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { Button } from '../../components/ui/Button';
@@ -16,12 +15,13 @@ import { Badge } from '../../components/ui/Badge';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { UserAvatar } from '../../components/ui/UserAvatar';
 import { ImageCropper } from '../../components/ui/ImageCropper';
+import { buildInterpreterSelfServicePatch } from '../../utils/interpreterFlow';
+import { getLondonDateKey } from '../../utils/londonDateTime';
 
-type ProfileTab = 'PERSONAL' | 'SKILLS' | 'COMPLIANCE' | 'AVAILABILITY';
+type ProfileTab = 'PERSONAL' | 'SKILLS' | 'COMPLIANCE' | 'PAYMENT' | 'AVAILABILITY';
 
 export const InterpreterProfile = () => {
-  const { user, refreshUser, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user, refreshUser } = useAuth();
   const { settings } = useSettings();
   const { showToast } = useToast();
 
@@ -51,18 +51,22 @@ export const InterpreterProfile = () => {
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/', { replace: true });
-  };
-
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!user?.profileId) return;
 
+    if (activeTab === 'PAYMENT') {
+      const accountNumber = String(formData.bankDetails?.accountNumber || '').replace(/\D/g, '');
+      const sortCode = String(formData.bankDetails?.sortCode || '').replace(/\D/g, '');
+      if (!formData.bankDetails?.accountName?.trim() || accountNumber.length !== 8 || sortCode.length !== 6) {
+        showToast('Enter the account name, 8-digit account number and 6-digit sort code', 'error');
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
-      await InterpreterService.updateProfile(user.profileId, formData);
+      await InterpreterService.updateProfile(user.profileId, buildInterpreterSelfServicePatch(formData));
       showToast('Changes saved successfully', 'success');
       await loadProfile();
       setIsEditing(false);
@@ -140,14 +144,20 @@ export const InterpreterProfile = () => {
     }
   };
 
-  const toggleDateAvailability = (dateStr: string) => {
+  const toggleDateAvailability = async (dateStr: string) => {
     const current = formData.unavailableDates || [];
     const updated = current.includes(dateStr)
       ? current.filter(d => d !== dateStr)
       : [...current, dateStr];
 
     setFormData(prev => ({ ...prev, unavailableDates: updated }));
-    InterpreterService.updateProfile(user!.profileId!, { unavailableDates: updated });
+    try {
+      await InterpreterService.updateProfile(user!.profileId!, { unavailableDates: updated });
+      setProfile(prev => prev ? { ...prev, unavailableDates: updated } : prev);
+    } catch {
+      setFormData(prev => ({ ...prev, unavailableDates: current }));
+      showToast('Failed to update availability', 'error');
+    }
   };
 
   if (!profile) return (
@@ -163,7 +173,8 @@ export const InterpreterProfile = () => {
     <button
       type="button"
       onClick={() => setActiveTab(id)}
-      className={`flex items-center gap-3 px-6 py-3 rounded-xl transition-all font-black uppercase tracking-widest text-[10px] ${activeTab === id
+      aria-current={activeTab === id ? 'page' : undefined}
+      className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2.5 text-[10px] font-black uppercase tracking-wide transition-colors sm:px-3 lg:justify-start lg:gap-3 lg:px-6 lg:py-3 lg:tracking-widest ${activeTab === id
         ? 'bg-blue-50 text-blue-600 border border-blue-100 shadow-sm'
         : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50 border border-transparent'
         }`}
@@ -178,14 +189,14 @@ export const InterpreterProfile = () => {
 
   // Calendar Helpers
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const startDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+  const startDayOfMonth = (year: number, month: number) => (new Date(year, month, 1).getDay() + 6) % 7;
 
   const renderCalendar = () => {
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth();
     const totalDays = daysInMonth(year, month);
     const startDay = startDayOfMonth(year, month);
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLondonDateKey();
 
     const days = [];
     for (let i = 0; i < startDay; i++) {
@@ -200,9 +211,13 @@ export const InterpreterProfile = () => {
       const isUnavailable = formData.unavailableDates?.includes(dateStr);
 
       days.push(
-        <div
+        <button
+          type="button"
           key={dateStr}
           onClick={() => !isPast && toggleDateAvailability(dateStr)}
+          disabled={isPast}
+          aria-pressed={Boolean(isUnavailable)}
+          aria-label={`${dateStr}${isUnavailable ? ', unavailable' : ', available'}`}
           className={`h-12 flex flex-col items-center justify-center relative cursor-pointer transition-all active:scale-95 group/day
                 ${isPast ? 'bg-slate-50/50 text-slate-300 cursor-not-allowed opacity-50' : 'bg-white hover:bg-blue-50 border-transparent'}
                 ${isUnavailable ? 'bg-red-50 text-red-600 font-bold border-red-100 flex-1' : ''}
@@ -221,7 +236,7 @@ export const InterpreterProfile = () => {
               <div className="h-[2px] w-4 bg-red-400 rounded-full"></div>
             </div>
           )}
-        </div>
+        </button>
       );
     }
 
@@ -233,9 +248,7 @@ export const InterpreterProfile = () => {
       <PageHeader
         title="Settings & Profile"
         subtitle="Manage your identity, professional skills, and operational availability."
-      >
-        <Button onClick={handleLogout} variant="outline" icon={LogOut} size="sm" className="text-red-600 border-red-200 hover:bg-red-50">Sign Out</Button>
-      </PageHeader>
+      />
 
       <div className="flex-1 p-4 md:p-8 max-w-7xl mx-auto w-full flex flex-col lg:flex-row gap-8">
 
@@ -283,6 +296,9 @@ export const InterpreterProfile = () => {
               <div className="flex items-center justify-between mt-4">
                 <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Auto Allocation</span>
                 <button
+                  type="button"
+                  aria-label="Allow direct job assignments"
+                  aria-pressed={Boolean(profile.acceptsDirectAssignment)}
                   onClick={async () => {
                     const next = !profile.acceptsDirectAssignment;
                     await InterpreterService.updateProfile(user!.profileId!, { acceptsDirectAssignment: next });
@@ -301,6 +317,7 @@ export const InterpreterProfile = () => {
             <TabButton id="PERSONAL" label="Personal Details" icon={User} />
             <TabButton id="SKILLS" label="Skills & Mastery" icon={Award} />
             <TabButton id="COMPLIANCE" label="Compliance Log" icon={Shield} />
+            <TabButton id="PAYMENT" label="Payment Details" icon={PoundSterling} />
             <TabButton id="AVAILABILITY" label="Schedule Editor" icon={Calendar} />
           </div>
         </aside>
@@ -309,10 +326,11 @@ export const InterpreterProfile = () => {
         <div className="flex-1 space-y-6 min-w-0">
 
           {/* Mobile Tabs Wrapper */}
-          <div className="lg:hidden flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+          <div className="grid grid-cols-3 gap-1.5 pb-2 lg:hidden" aria-label="Profile sections">
             <TabButton id="PERSONAL" label="Details" icon={User} />
             <TabButton id="SKILLS" label="Skills" icon={Award} />
             <TabButton id="COMPLIANCE" label="Compliance" icon={Shield} />
+            <TabButton id="PAYMENT" label="Payment" icon={PoundSterling} />
             <TabButton id="AVAILABILITY" label="Schedule" icon={Calendar} />
           </div>
 
@@ -454,6 +472,7 @@ export const InterpreterProfile = () => {
                         } ${!isEditing && 'opacity-60 pointer-events-none'}`}>
                         <input
                           type="checkbox" className="hidden"
+                          disabled={!isEditing}
                           checked={formData.languages?.includes(lang)}
                           onChange={() => toggleLanguage(lang)}
                         />
@@ -561,6 +580,97 @@ export const InterpreterProfile = () => {
                 </div>
               )}
 
+              {/* ---------------- PAYMENT ---------------- */}
+              {activeTab === 'PAYMENT' && (
+                <form onSubmit={handleSave} className="mx-auto max-w-2xl space-y-6 animate-in fade-in duration-500">
+                  <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">UK payment account</h4>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                      Lingland uses these details for approved interpreter payments. Changes are restricted to your account and reviewed by Finance.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className={labelClasses}>Account holder name</label>
+                    <input
+                      type="text"
+                      disabled={!isEditing}
+                      autoComplete="name"
+                      className={inputClasses}
+                      value={formData.bankDetails?.accountName || ''}
+                      onChange={event => setFormData({
+                        ...formData,
+                        bankDetails: { ...formData.bankDetails!, accountName: event.target.value }
+                      })}
+                    />
+                  </div>
+
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <div>
+                      <label className={labelClasses}>Sort code</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        disabled={!isEditing}
+                        placeholder="00-00-00"
+                        maxLength={8}
+                        className={inputClasses}
+                        value={formData.bankDetails?.sortCode || ''}
+                        onChange={event => {
+                          const digits = event.target.value.replace(/\D/g, '').slice(0, 6);
+                          const formatted = digits.replace(/(\d{2})(?=\d)/g, '$1-');
+                          setFormData({
+                            ...formData,
+                            bankDetails: { ...formData.bankDetails!, sortCode: formatted }
+                          });
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClasses}>Account number</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        disabled={!isEditing}
+                        placeholder="12345678"
+                        maxLength={8}
+                        className={inputClasses}
+                        value={formData.bankDetails?.accountNumber || ''}
+                        onChange={event => setFormData({
+                          ...formData,
+                          bankDetails: {
+                            ...formData.bankDetails!,
+                            accountNumber: event.target.value.replace(/\D/g, '').slice(0, 8)
+                          }
+                        })}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={labelClasses}>Bank name <span className="normal-case text-slate-400">(optional)</span></label>
+                    <input
+                      type="text"
+                      disabled={!isEditing}
+                      className={inputClasses}
+                      value={formData.bankDetails?.bankName || ''}
+                      onChange={event => setFormData({
+                        ...formData,
+                        bankDetails: { ...formData.bankDetails!, bankName: event.target.value }
+                      })}
+                    />
+                  </div>
+
+                  {isEditing && (
+                    <div className="flex justify-end border-t border-slate-100 pt-6 dark:border-slate-800">
+                      <Button type="submit" disabled={isSaving} icon={Save} size="sm" className="bg-slate-900 px-8 text-white hover:bg-black dark:bg-blue-600 dark:hover:bg-blue-700">
+                        Save payment details
+                      </Button>
+                    </div>
+                  )}
+                </form>
+              )}
+
               {/* ---------------- AVAILABILITY ---------------- */}
               {activeTab === 'AVAILABILITY' && (
                 <div className="animate-in fade-in duration-500 max-w-2xl mx-auto">
@@ -583,7 +693,7 @@ export const InterpreterProfile = () => {
                   </div>
 
                   <div className="grid grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-2xl overflow-hidden shadow-sm mb-6">
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                       <div key={day} className="bg-white py-2 text-center text-[9px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         {day}
                       </div>

@@ -155,7 +155,9 @@ export const BillingService = {
           ? query(collection(db, "interpreterInvoices"), where('status', '==', statusFilter))
           : collection(db, "interpreterInvoices");
       const [photoMap, snap] = await Promise.all([
-        InterpreterService.getPhotoMap().catch((): Record<string, string> => ({})),
+        interpreterIdFilter
+          ? Promise.resolve({} as Record<string, string>)
+          : InterpreterService.getPhotoMap().catch((): Record<string, string> => ({})),
         getDocs(source)
       ]);
       
@@ -349,7 +351,13 @@ export const BillingService = {
       where('adminApproved', '==', true)
     );
     const snap = await getDocs(q);
-    return snap.docs.map(d => convertDoc<Timesheet>(d)).filter(t => !t.interpreterInvoiceId);
+    return snap.docs
+      .map(d => convertDoc<Timesheet>(d))
+      .filter(t => (
+        !t.interpreterInvoiceId
+        && t.readyForInterpreterInvoice === true
+        && getTimesheetInterpreterAmount(t) > 0
+      ));
   },
 
   submitTimesheet: async (data: Partial<Timesheet>): Promise<Timesheet> => {

@@ -6,16 +6,21 @@ import { isUpcomingInterpreterBooking } from '../utils/interpreterJobLifecycle';
 export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) => {
   const [jobs, setJobs] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (interpreterId) {
-      loadJobs();
+      void loadJobs();
+    } else {
+      setJobs([]);
+      setLoading(false);
     }
   }, [interpreterId]);
 
   const loadJobs = async () => {
     if (!interpreterId) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await BookingService.getInterpreterSchedule(interpreterId);
       const upcoming = data
@@ -24,10 +29,11 @@ export const useInterpreterUpcomingJobs = (interpreterId: string | undefined) =>
       setJobs(upcoming);
     } catch (err) {
       console.error(err);
+      setError('Confirmed jobs could not be loaded.');
     } finally {
       setLoading(false);
     }
   };
 
-  return { jobs, loading, refresh: loadJobs };
+  return { jobs, loading, error, refresh: loadJobs };
 };

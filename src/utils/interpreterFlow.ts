@@ -36,3 +36,25 @@ export const requiresInterpreterOnboarding = (status?: string | null) =>
 
 export const getTimesheetInterpreterAmount = (timesheet: Partial<Timesheet>) =>
   Number(timesheet.interpreterAmountCalculated ?? timesheet.totalToPay ?? 0);
+
+const INTERPRETER_SELF_SERVICE_FIELDS = [
+  'name', 'shortName', 'photoUrl', 'phone', 'homePhone', 'gender', 'address',
+  'addressLine1', 'postcode', 'hasCar', 'skypeId', 'languages',
+  'languageProficiencies', 'qualifications', 'regions', 'nrpsi', 'dpsi',
+  'experience', 'dbs', 'dbsExpiry', 'dbsDocumentUrl', 'documentUrls',
+  'onboarding', 'isAvailable', 'unavailableDates', 'acceptsDirectAssignment',
+  'bankDetails',
+] as const satisfies ReadonlyArray<keyof Interpreter>;
+
+export const buildInterpreterSelfServicePatch = (
+  data: Partial<Interpreter>,
+  options: { moveToOnboarding?: boolean } = {}
+): Partial<Interpreter> => {
+  const patch: Partial<Interpreter> = {};
+  INTERPRETER_SELF_SERVICE_FIELDS.forEach((field) => {
+    const value = data[field];
+    if (value !== undefined) (patch as Record<string, unknown>)[field] = value;
+  });
+  if (options.moveToOnboarding) patch.status = 'ONBOARDING';
+  return patch;
+};

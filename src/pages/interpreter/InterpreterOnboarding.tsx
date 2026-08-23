@@ -22,6 +22,7 @@ import {
   Upload, Clock, CheckCircle2, AlertCircle, X, Camera
 } from 'lucide-react';
 import { UserService } from '../../services/userService';
+import { buildInterpreterSelfServicePatch } from '../../utils/interpreterFlow';
 
 type Step = 1 | 2 | 3;
 
@@ -193,11 +194,13 @@ export const InterpreterOnboarding = () => {
       // Logic to sync standard 'languages' array for backward compat
       const simpleLangs = (formData.languageProficiencies || []).map(p => p.language).filter(Boolean);
       
-      await InterpreterService.updateProfile(user.profileId, {
-        ...formData,
-        languages: simpleLangs,
-        status: 'ONBOARDING' // Stay in onboarding until admin reviews
-      });
+      await InterpreterService.updateProfile(
+        user.profileId,
+        buildInterpreterSelfServicePatch(
+          { ...formData, languages: simpleLangs },
+          { moveToOnboarding: true }
+        )
+      );
       showToast('Onboarding progress saved! An administrator will review your profile.', 'success');
       navigate('/interpreter/dashboard');
     } catch (error) {

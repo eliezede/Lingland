@@ -8,6 +8,9 @@ import {
     MessageSquare, CheckCircle2, XCircle, Info, ExternalLink, ShieldCheck, User
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { formatLanguagePair } from '../../utils/languageDisplay';
+import { getInterpreterBookingAmount, isTranslationBooking } from '../../utils/interpreterJobLifecycle';
+import { formatLondonDate } from '../../utils/londonDateTime';
 
 interface JobDetailsModalProps {
     isOpen: boolean;
@@ -33,6 +36,8 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
     if (!job) return null;
 
     const isOffer = Boolean(job._isDirect || job._isBroadcast || job._assignmentId || job.status === BookingStatus.OPENED || job.status === BookingStatus.ASSIGNMENT_PENDING || job.status === 'PENDING_ASSIGNMENT');
+    const estimatedPay = getInterpreterBookingAmount(job);
+    const isTranslation = isTranslationBooking(job);
 
     const handleAction = async (action: () => Promise<void> | undefined) => {
         if (!action) return;
@@ -72,7 +77,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                         onClick={() => onMessageAdmin(job.id)}
                         icon={MessageSquare}
                         size="sm"
-                        className="text-blue-600 hover:bg-blue-50 hidden sm:flex"
+                        className="flex text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
                     >
                         Chat
                     </Button>
@@ -114,17 +119,17 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
         <Modal
             isOpen={isOpen}
             onClose={onClose}
-            title={job._isDirect || [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status) ? "Direct Assignment" : "Job Opportunity"}
+            title={isOffer ? (job._isDirect ? 'Direct job offer' : 'Job offer') : 'Job details'}
             footer={footer}
             type="drawer"
         >
             <div className="space-y-6">
                 {/* Header Section */}
-                <div className="flex justify-between items-start bg-slate-50 -mx-4 -mt-4 p-4 border-b border-slate-100 rounded-t-2xl">
+                <div className="-mx-4 -mt-4 flex items-start justify-between border-b border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
                     <div>
                         <div className="flex flex-wrap items-center gap-2 mb-2">
                             <span className="text-2xl font-black text-slate-900 leading-none mr-2">
-                                {job.languageFrom} → {job.languageTo}
+                                {formatLanguagePair(job.languageFrom, job.languageTo)}
                             </span>
                             <StatusBadge status={job.status} />
                             {(job._isDirect || [BookingStatus.OPENED, BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status)) && (
@@ -139,7 +144,9 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                     </div>
                     <div className="text-right">
                         <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Estimated Pay</p>
-                        <p className="text-2xl font-black text-emerald-600 leading-none">£45.00</p>
+                        <p className="text-2xl font-black text-emerald-600 leading-none">
+                            {estimatedPay > 0 ? `GBP ${estimatedPay.toFixed(2)}` : 'Pending'}
+                        </p>
                     </div>
                 </div>
 
@@ -151,7 +158,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                             <div className="flex items-center text-xs font-medium text-slate-700 bg-white p-2.5 rounded border border-slate-200">
                                 <Calendar size={14} className="text-blue-500 mr-2" />
                                 {job.date
-                                    ? new Date(job.date.includes('T') ? job.date : job.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                                    ? formatLondonDate(job.date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
                                     : 'Date TBC'}
                             </div>
                             <div className="flex items-center text-xs font-medium text-slate-700 bg-white p-2.5 rounded border border-slate-200 mt-2">
@@ -164,7 +171,7 @@ export const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Service Type</label>
                             <div className="flex items-center text-xs font-medium text-slate-700 bg-white p-2.5 rounded border border-slate-200">
                                 <Globe2 size={14} className="text-indigo-500 mr-2" />
-                                {job.serviceType}
+                                {isTranslation ? 'Translation' : job.serviceType}
                             </div>
                         </div>
 

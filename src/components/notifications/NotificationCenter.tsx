@@ -56,7 +56,9 @@ export const NotificationCenter = () => {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 relative transition-all active:scale-90"
+        className="relative rounded-lg bg-slate-100 p-2.5 text-slate-600 transition-all hover:text-blue-600 active:scale-90 dark:bg-slate-800 dark:text-slate-400 dark:hover:text-blue-400"
+        aria-label="Open notifications"
+        aria-expanded={isOpen}
       >
         <Bell size={20} />
         {unreadCount > 0 && (
@@ -67,7 +69,7 @@ export const NotificationCenter = () => {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 z-50 overflow-hidden animate-in fade-in zoom-in duration-200 origin-top-right">
+        <div className="fixed inset-x-2 top-14 z-50 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in duration-200 dark:border-slate-800 dark:bg-slate-900 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-3 sm:w-96 sm:origin-top-right">
           <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/30">
             <h3 className="font-black text-xs uppercase tracking-widest text-slate-500">Notifications</h3>
             {unreadCount > 0 && (
@@ -107,10 +109,6 @@ export const NotificationCenter = () => {
                 </div>
               ))
             )}
-          </div>
-
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800 text-center">
-            <button className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">View Activity History</button>
           </div>
         </div>
       )}

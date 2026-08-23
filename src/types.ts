@@ -273,6 +273,10 @@ export interface Booking extends SourceTrackingFields {
   billingState?: string;
   cancellationState?: string;
   expectedEndTime?: string;
+  checkInAt?: string;
+  checkOutAt?: string;
+  checkInBy?: string;
+  checkOutBy?: string;
   createdAt?: any;
   updatedAt?: any;
   caseType?: string;

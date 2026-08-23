@@ -8,6 +8,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ChevronLeft, Camera, Upload, Check, FileText, Info, AlertCircle, Clock, MapPin, Receipt, ArrowRight, UserCheck } from 'lucide-react';
 import { SignaturePad } from '../../components/ui/SignaturePad';
+import { getInterpreterBookingEnd, isTranslationBooking } from '../../utils/interpreterJobLifecycle';
+import { addDaysToDateKey, parseLondonDateTime } from '../../utils/londonDateTime';
 
 const money = (amount: number) =>
   `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -36,6 +38,7 @@ export const InterpreterTimesheetForm = () => {
     transport: 0,
     clientNameSigned: '',
     clientSignatureUrl: '',
+    accuracyConfirmed: false,
     // Translation fields
     wordCount: 0,
     unitPrice: 0,
@@ -79,7 +82,7 @@ export const InterpreterTimesheetForm = () => {
           navigate('/interpreter/timesheets');
           return;
         }
-        if (b.status !== BookingStatus.BOOKED) {
+        if (![BookingStatus.BOOKED, BookingStatus.SESSION_COMPLETED].includes(b.status)) {
           showToast('Timesheets can only be submitted for confirmed jobs', 'error');
           navigate('/interpreter/timesheets');
           return;
@@ -90,10 +93,9 @@ export const InterpreterTimesheetForm = () => {
           navigate('/interpreter/timesheets');
           return;
         }
-        const scheduledEnd = new Date(`${b.date}T${b.endTime || b.expectedEndTime || b.startTime || '23:59'}`);
-        const completed = b.serviceCategory === ServiceCategory.TRANSLATION
-          ? new Date(`${b.date}T23:59:00`) <= new Date()
-          : scheduledEnd <= new Date();
+        const scheduledEnd = getInterpreterBookingEnd(b);
+        const completed = b.status === BookingStatus.SESSION_COMPLETED
+          || Boolean(scheduledEnd && scheduledEnd <= new Date());
         if (!completed) {
           showToast('This job is not ready for timesheet submission yet', 'info');
           navigate('/interpreter/jobs');
@@ -200,10 +202,15 @@ export const InterpreterTimesheetForm = () => {
       }
 
       // 2. Construct ISO dates
-      const baseDate = job.date;
-      const startDate = new Date(`${baseDate}T${formData.start || '00:00'}:00`);
-      const endDate = new Date(`${baseDate}T${formData.end || formData.start || '00:00'}:00`);
-      if (endDate <= startDate) endDate.setDate(endDate.getDate() + 1);
+      const translation = isTranslationBooking(job);
+      const baseDate = translation ? job.translationDeadline || job.date : job.date;
+      const startTime = translation ? '00:00' : formData.start || '00:00';
+      const endTime = translation ? '23:59' : formData.end || formData.start || '00:00';
+      const startDate = parseLondonDateTime(baseDate, startTime);
+      let endDate = parseLondonDateTime(baseDate, endTime);
+      if (!startDate || !endDate) throw new Error('The job schedule is incomplete');
+      if (endDate <= startDate) endDate = parseLondonDateTime(addDaysToDateKey(baseDate, 1), endTime);
+      if (!endDate) throw new Error('The job end time is invalid');
       const startISO = startDate.toISOString();
       const endISO = endDate.toISOString();
 
@@ -543,8 +550,12 @@ export const InterpreterTimesheetForm = () => {
                 <div className="grid grid-cols-2 gap-4 text-sm divide-x divide-slate-800">
                    <div className="space-y-1">
                       <p className="text-slate-500 text-[10px] font-black uppercase">Schedule</p>
-                      <p className="font-medium">{formData.start} - {formData.end}</p>
-                      <p className="text-slate-400 text-xs">{formData.breakMins}m break</p>
+                      <p className="font-medium">
+                        {isTranslation ? `${formData.wordCount} ${formData.units}` : `${formData.start} - ${formData.end}`}
+                      </p>
+                      <p className="text-slate-400 text-xs">
+                        {isTranslation ? `Deadline ${job.translationDeadline || job.date}` : `${formData.breakMins}m break`}
+                      </p>
                    </div>
                    <div className="pl-4 space-y-1">
                       <p className="text-slate-500 text-[10px] font-black uppercase">Total Earnings</p>
@@ -559,7 +570,7 @@ export const InterpreterTimesheetForm = () => {
              {!isTranslation && <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-6">
                 <div className="flex items-center gap-3 text-slate-900 mb-2">
                   <UserCheck className="text-purple-500" size={20} />
-                  <h3 className="font-bold">Client Verification</h3>
+                  <h3 className="font-bold">Client Verification <span className="font-medium text-slate-400">(optional)</span></h3>
                 </div>
 
                 <div>
@@ -577,17 +588,29 @@ export const InterpreterTimesheetForm = () => {
                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Digital Signature</label>
                    <SignaturePad 
                      onSave={handleSignatureSave} 
-                     placeholder="Client must sign here"
+                     placeholder="Client can sign here"
                    />
                 </div>
 
                 <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-2xl text-amber-800 border border-amber-100">
                    <AlertCircle size={20} className="shrink-0 mt-0.5" />
                    <p className="text-xs font-medium leading-relaxed">
-                     By signing, the client confirms the duration and expenses listed above are accurate.
+                     Add a client name or signature when available. You can still submit if the client cannot sign.
                    </p>
                 </div>
              </div>}
+
+             <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-slate-700">
+               <input
+                 type="checkbox"
+                 checked={formData.accuracyConfirmed}
+                 onChange={event => setFormData({ ...formData, accuracyConfirmed: event.target.checked })}
+                 className="mt-0.5 h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+               />
+               <span className="text-sm font-medium leading-relaxed">
+                 I confirm that the work, times and expenses entered above are accurate.
+               </span>
+             </label>
 
              <div className="flex gap-4">
               <button
@@ -598,7 +621,7 @@ export const InterpreterTimesheetForm = () => {
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting || (!isTranslation && (!formData.clientNameSigned || !formData.clientSignatureUrl))}
+                disabled={isSubmitting || !formData.accuracyConfirmed}
                 className="flex-[2] py-5 bg-blue-600 text-white font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? (
@@ -608,7 +631,7 @@ export const InterpreterTimesheetForm = () => {
                   </>
                 ) : (
                   <>
-                    Complete & Send
+                    Submit for review
                     <Check size={18} />
                   </>
                 )}

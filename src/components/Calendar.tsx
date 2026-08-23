@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Card } from './ui/Card';
+import { getLondonDateKey } from '../utils/londonDateTime';
 
 interface CalendarProps {
     jobs: any[];
@@ -8,10 +9,14 @@ interface CalendarProps {
 }
 
 export const Calendar: React.FC<CalendarProps> = ({ jobs, onDateClick }) => {
-    const [currentDate, setCurrentDate] = useState(new Date());
+    const [currentDate, setCurrentDate] = useState(() => {
+        const [year, month] = getLondonDateKey().split('-').map(Number);
+        return new Date(year, month - 1, 1);
+    });
 
     const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-    const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+    const firstDayOfMonth = (year: number, month: number) => (new Date(year, month, 1).getDay() + 6) % 7;
+    const toDateKey = (day: number) => `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -27,15 +32,9 @@ export const Calendar: React.FC<CalendarProps> = ({ jobs, onDateClick }) => {
         "July", "August", "September", "October", "November", "December"
     ];
 
-    const hasJobOnDay = (day: number) => {
-        const checkDate = new Date(year, month, day).toISOString().split('T')[0];
-        return jobs.some(job => job.date === checkDate);
-    };
+    const jobCountOnDay = (day: number) => jobs.filter(job => String(job.date || '').slice(0, 10) === toDateKey(day)).length;
 
-    const isToday = (day: number) => {
-        const today = new Date();
-        return today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
-    };
+    const isToday = (day: number) => getLondonDateKey() === toDateKey(day);
 
     const days = [];
     // Previous month days placeholder
@@ -45,17 +44,27 @@ export const Calendar: React.FC<CalendarProps> = ({ jobs, onDateClick }) => {
 
     // Current month days
     for (let d = 1; d <= totalDays; d++) {
-        const hasJob = hasJobOnDay(d);
+        const jobCount = jobCountOnDay(d);
+        const hasJob = jobCount > 0;
         const today = isToday(d);
+        const dateLabel = new Intl.DateTimeFormat('en-GB', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+        }).format(new Date(year, month, d, 12));
 
         days.push(
             <button
+                type="button"
                 key={d}
                 onClick={() => onDateClick?.(new Date(year, month, d))}
+                aria-label={`${dateLabel}${jobCount ? `, ${jobCount} scheduled ${jobCount === 1 ? 'job' : 'jobs'}` : ''}`}
+                aria-current={today ? 'date' : undefined}
                 className={`
-          h-10 w-10 md:h-12 md:w-12 flex flex-col items-center justify-center rounded-xl relative transition-all text-xs font-bold
-          ${today ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'hover:bg-slate-100 text-slate-700'}
-          ${hasJob && !today ? 'border-2 border-emerald-100 bg-emerald-50/30' : ''}
+          h-10 w-10 md:h-12 md:w-12 flex flex-col items-center justify-center rounded-lg relative transition-colors text-xs font-bold
+          ${today ? 'bg-blue-600 text-white shadow-md shadow-blue-200 dark:shadow-none' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'}
+          ${hasJob && !today ? 'border-2 border-emerald-100 bg-emerald-50/30 dark:border-emerald-900 dark:bg-emerald-950/30' : ''}
         `}
             >
                 {d}
@@ -67,21 +76,25 @@ export const Calendar: React.FC<CalendarProps> = ({ jobs, onDateClick }) => {
     }
 
     return (
-        <Card className="p-4 select-none">
+        <Card className="select-none p-4">
             <div className="flex items-center justify-between mb-6">
-                <h3 className="font-black text-slate-900">
+                <h3 className="font-black text-slate-900 dark:text-white">
                     {monthNames[month]} {year}
                 </h3>
                 <div className="flex gap-1">
                     <button
+                        type="button"
                         onClick={prevMonth}
-                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                        aria-label="Previous month"
+                        className="rounded-md p-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                         <ChevronLeft size={18} />
                     </button>
                     <button
+                        type="button"
                         onClick={nextMonth}
-                        className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors"
+                        aria-label="Next month"
+                        className="rounded-md p-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                         <ChevronRight size={18} />
                     </button>
@@ -89,8 +102,8 @@ export const Calendar: React.FC<CalendarProps> = ({ jobs, onDateClick }) => {
             </div>
 
             <div className="grid grid-cols-7 gap-1 mb-2">
-                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
-                    <div key={i} className="h-8 flex items-center justify-center text-[10px] font-black text-slate-400 uppercase">
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                    <div key={day} className="flex h-8 items-center justify-center text-[10px] font-black uppercase text-slate-400">
                         {day}
                     </div>
                 ))}

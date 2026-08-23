@@ -117,6 +117,8 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [threadError, setThreadError] = useState(false);
+  const [threadReloadKey, setThreadReloadKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<'inbox' | 'staff'>('inbox');
   const [staff, setStaff] = useState<User[]>([]);
@@ -127,11 +129,16 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    setThreadError(false);
     return ChatService.subscribeToThreads(user.id, (data) => {
       setThreads(data);
       setLoading(false);
+    }, () => {
+      setThreads([]);
+      setThreadError(true);
+      setLoading(false);
     });
-  }, [user]);
+  }, [user, threadReloadKey]);
 
   useEffect(() => {
     if (!activeThreadId || !user) {
@@ -139,7 +146,7 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
       return;
     }
     ChatService.resetUnread(activeThreadId, user.id).catch(() => {});
-    return ChatService.subscribeToMessages(activeThreadId, setMessages);
+    return ChatService.subscribeToMessages(activeThreadId, setMessages, () => setMessages([]));
   }, [activeThreadId, user]);
 
   useEffect(() => {
@@ -223,7 +230,7 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
   return (
     <div className="-m-3 flex min-h-[calc(100dvh-4rem)] flex-col bg-slate-100 dark:bg-slate-950 sm:-m-5 lg:-m-6">
       <PageHeader
-        title={mode === 'admin' ? 'Messages' : 'Communication Hub'}
+        title="Messages"
         subtitle={mode === 'admin' ? 'Operational inbox for jobs, partners and internal teams.' : 'Messages with operations and support.'}
       >
         {mode !== 'admin' && (
@@ -268,6 +275,15 @@ export const ChatWorkspace = ({ mode }: ChatWorkspaceProps) => {
             {loading ? (
               <div className="flex h-48 items-center justify-center">
                 <Spinner size="md" />
+              </div>
+            ) : threadError ? (
+              <div role="alert" className="flex h-72 flex-col items-center justify-center p-8 text-center">
+                <MessageSquare size={28} className="mb-3 text-slate-300" />
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">Messages are temporarily unavailable</p>
+                <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Your jobs and account are unaffected. Try loading conversations again.</p>
+                <button type="button" onClick={() => setThreadReloadKey(value => value + 1)} className="mt-4 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                  Try again
+                </button>
               </div>
             ) : activeTab === 'staff' && isAdmin ? (
               <div className="space-y-4 p-3">

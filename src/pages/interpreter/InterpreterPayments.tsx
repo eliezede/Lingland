@@ -1,224 +1,244 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useInterpreterInvoices } from '../../hooks/useInterpreterInvoices';
 import { StorageService } from '../../services/api';
-import { PoundSterling, Upload, FileText, Check, CalendarDays, ExternalLink, Calculator } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Check, ExternalLink, FileText, RefreshCw, Upload } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { getTimesheetInterpreterAmount } from '../../utils/interpreterFlow';
+import { formatLondonDate } from '../../utils/londonDateTime';
+
+const money = (amount: number) =>
+  `GBP ${Number(amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatPeriod = (period?: string) => {
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) return 'Multiple periods';
+  return formatLondonDate(`${period}-01`, { month: 'long', year: 'numeric' });
+};
 
 export const InterpreterPayments = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
-  const { readyToInvoice, invoiceHistory, loading, createInvoice } = useInterpreterInvoices(user?.profileId);
+  const { readyToInvoice, invoiceHistory, loading, error, createInvoice, refresh } = useInterpreterInvoices(user?.profileId);
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
-  const [invRef, setInvRef] = useState('');
-
-  // Upload State
+  const [invoiceReference, setInvoiceReference] = useState('');
   const [uploadedUrl, setUploadedUrl] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const readyTotal = readyToInvoice.reduce((sum, timesheet) => sum + getTimesheetInterpreterAmount(timesheet), 0);
+  const selectedTotal = readyToInvoice
+    .filter(timesheet => selectedJobs.includes(timesheet.id))
+    .reduce((sum, timesheet) => sum + getTimesheetInterpreterAmount(timesheet), 0);
+  const paidTotal = invoiceHistory
+    .filter(invoice => invoice.status === 'PAID' || invoice.paymentStatus === 'PAID' || invoice.paymentStatus === 'RECONCILED')
+    .reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0);
+  const inProgress = invoiceHistory.filter(invoice => !['PAID', 'REJECTED', 'CANCELLED'].includes(String(invoice.status))).length;
+  const currentCycle = formatLondonDate(new Date(), { month: 'long', year: 'numeric' });
+
+  const periods = useMemo(() => Array.from(new Set(
+    readyToInvoice.map(timesheet => timesheet.interpreterSettlementPeriod || timesheet.servicePeriod).filter(Boolean)
+  )), [readyToInvoice]);
 
   const toggleJob = (id: string) => {
-    if (selectedJobs.includes(id)) setSelectedJobs(selectedJobs.filter(j => j !== id));
-    else setSelectedJobs([...selectedJobs, id]);
+    setSelectedJobs(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user?.profileId) return;
+  const toggleAll = () => {
+    setSelectedJobs(current => current.length === readyToInvoice.length ? [] : readyToInvoice.map(item => item.id));
+  };
 
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !user?.profileId) return;
     setUploading(true);
     try {
       const path = `invoices/interpreters/${user.id}/${Date.now()}_${file.name}`;
-      const url = await StorageService.uploadFile(file, path);
-      setUploadedUrl(url);
-      showToast('Invoice uploaded successfully', 'success');
-    } catch (error) {
-      showToast('Upload failed', 'error');
+      setUploadedUrl(await StorageService.uploadFile(file, path));
+      showToast('Invoice document attached', 'success');
+    } catch {
+      showToast('The invoice document could not be uploaded', 'error');
     } finally {
       setUploading(false);
     }
   };
 
   const handleSubmit = async () => {
+    if (!selectedJobs.length || !invoiceReference.trim()) return;
+    setSubmitting(true);
     try {
-      await createInvoice(selectedJobs, invRef, uploadedUrl || undefined);
-      showToast("Invoice created successfully!", "success");
+      await createInvoice(selectedJobs, invoiceReference.trim(), uploadedUrl || undefined);
+      showToast('Invoice submitted for review', 'success');
       setSelectedJobs([]);
-      setInvRef('');
+      setInvoiceReference('');
       setUploadedUrl('');
-    } catch (error) {
-      showToast("Failed to create invoice", "error");
+    } catch (error: any) {
+      showToast(error?.message || 'The invoice could not be submitted', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const totalSelected = readyToInvoice
-    .filter(t => selectedJobs.includes(t.id))
-    .reduce((sum, t) => sum + getTimesheetInterpreterAmount(t), 0);
-
   return (
-    <div className="flex-1 flex flex-col h-full min-h-[calc(100vh-4rem)] bg-slate-50 animate-in fade-in duration-700">
+    <div className="min-h-[calc(100vh-4rem)] bg-slate-50 dark:bg-slate-950">
       <PageHeader
-        title="Earnings"
-        subtitle="Manage pending payables, combine sessions into invoices, and track settlements."
+        title="Payments"
+        subtitle="Create invoices from approved work and follow each payment."
       >
-        <Button onClick={() => window.print()} variant="secondary" icon={FileText} size="sm">Export Data</Button>
+        <Button onClick={() => window.print()} variant="secondary" icon={FileText} size="sm">Print summary</Button>
       </PageHeader>
 
-      <div className="flex-1 flex flex-col lg:flex-row p-4 md:p-8 max-w-7xl mx-auto w-full gap-8">
-
-        {/* Left Col: Invoice Builder */}
-        <div className="flex-1 space-y-8 min-w-0 flex flex-col">
-          <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col flex-1">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
-              <div className="flex items-center gap-3">
-                <PoundSterling size={16} className="text-emerald-600" />
-                <h3 className="font-black text-slate-800 text-[10px] uppercase tracking-[0.2em]">Generate Invoice</h3>
-              </div>
-              <div className="text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
-                {readyToInvoice.length} Uninvoiced Sessions
+      <div className="mx-auto w-full max-w-7xl space-y-5 p-4 md:p-6">
+        {error && (
+          <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-sm font-bold text-amber-900 dark:text-amber-200">{error}</p>
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">No invoice or payment record was changed.</p>
               </div>
             </div>
-
-            <div className="flex-1 flex flex-col">
-              {loading ? (
-                <div className="py-20 flex-1 flex flex-col items-center justify-center text-[10px] uppercase tracking-widest font-black text-slate-400">Loading Accounts...</div>
-              ) : readyToInvoice.length === 0 ? (
-                <div className="py-20 flex-1 flex flex-col items-center justify-center text-center px-6">
-                  <Calculator size={32} className="text-slate-300 mb-4" />
-                  <h3 className="text-slate-900 font-black text-sm">No Pending Sessions</h3>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-2">All approved timesheets have been invoiced.</p>
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-                  {/* Selection List */}
-                  <div className="flex-1 p-6 space-y-2 overflow-y-auto">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-4">Select sessions to bundle</p>
-                    {readyToInvoice.map(job => (
-                      <label key={job.id} className={`group flex items-center p-4 border rounded-2xl cursor-pointer transition-all ${selectedJobs.includes(job.id) ? 'border-emerald-500 bg-emerald-50 shadow-sm' : 'border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/30'}`}>
-                        <div className="mr-4 flex-shrink-0">
-                          <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors ${selectedJobs.includes(job.id) ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-slate-50 border-slate-200 group-hover:border-emerald-400'}`}>
-                            {selectedJobs.includes(job.id) && <Check size={12} strokeWidth={4} />}
-                          </div>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black text-slate-900 mb-1">{new Date(job.actualStart).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate">REF: {job.bookingId || 'CONFIDENTIAL'}</p>
-                        </div>
-                        <div className="text-right ml-4">
-                          <p className="text-sm font-black text-slate-900">£{getTimesheetInterpreterAmount(job).toFixed(2)}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-
-                  {/* Builder Controls */}
-                  <div className="w-full lg:w-72 shrink-0 bg-slate-50/50 p-6 flex flex-col">
-                    <div className="mb-6 flex-1">
-                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Invoice Reference</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. INV-2024-001"
-                        className="w-full p-3 border border-slate-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none transition-all"
-                        value={invRef}
-                        onChange={e => setInvRef(e.target.value)}
-                      />
-
-                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 mt-6">Attach Document (Optional)</label>
-                      <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${uploadedUrl ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:bg-white hover:border-blue-400 cursor-pointer relative group'}`}>
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          onChange={handleFileUpload}
-                          disabled={uploading}
-                        />
-                        {uploading ? (
-                          <div className="flex flex-col items-center">
-                            <div className="w-5 h-5 border-2 border-emerald-500 border-t-emerald-200 rounded-full animate-spin mb-2" />
-                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Encrypting...</span>
-                          </div>
-                        ) : uploadedUrl ? (
-                          <div className="flex flex-col items-center text-emerald-700">
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center mb-2">
-                              <Check size={16} className="text-emerald-600" />
-                            </div>
-                            <span className="text-[10px] font-black uppercase tracking-widest">Document Secured</span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center text-slate-400 group-hover:text-blue-500 transition-colors">
-                            <Upload size={20} className="mb-2" />
-                            <span className="text-[9px] font-black uppercase tracking-widest">Upload PDF/JPG</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="pt-6 border-t border-slate-200">
-                      <div className="flex justify-between items-center mb-4">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Gross Total</span>
-                        <span className="text-xl font-black text-slate-900">£{totalSelected.toFixed(2)}</span>
-                      </div>
-                      <Button
-                        onClick={handleSubmit}
-                        disabled={selectedJobs.length === 0 || !invRef}
-                        size="lg"
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-xl shadow-emerald-600/20 disabled:opacity-50 disabled:shadow-none transition-all uppercase tracking-widest text-[10px]"
-                      >
-                        Submit Invoice
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <Button onClick={() => void refresh()} variant="secondary" icon={RefreshCw} size="sm">Try again</Button>
           </div>
-        </div>
-
-        {/* Right Col: Historical Statements */}
-        <aside className="w-full lg:w-[320px] shrink-0 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col h-full lg:max-h-[800px]">
-            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-              <h3 className="font-black text-slate-800 text-[10px] uppercase tracking-[0.2em]">Previous Statements</h3>
+        )}
+        <section className="grid overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-4" aria-label="Payment summary">
+          {[
+            { label: 'Current cycle', value: currentCycle, detail: 'Monthly interpreter cycle' },
+            { label: 'Ready to invoice', value: error ? 'Unavailable' : money(readyTotal), detail: error ? 'Retry to refresh' : `${readyToInvoice.length} approved timesheet${readyToInvoice.length === 1 ? '' : 's'}` },
+            { label: 'Invoices in progress', value: error ? 'Unavailable' : String(inProgress), detail: error ? 'Retry to refresh' : 'Submitted or approved' },
+            { label: 'Paid total', value: error ? 'Unavailable' : money(paidTotal), detail: error ? 'Retry to refresh' : 'Recorded payment history' },
+          ].map((item, index) => (
+            <div key={item.label} className={`min-w-0 p-4 ${index > 0 ? 'border-t border-slate-100 dark:border-slate-800 sm:border-l sm:border-t-0' : ''}`}>
+              <p className="text-[10px] font-bold uppercase text-slate-500">{item.label}</p>
+              <p className="mt-1 truncate text-lg font-bold text-slate-950 dark:text-white">{item.value}</p>
+              <p className="mt-1 text-xs text-slate-500">{item.detail}</p>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-              {loading ? (
-                <div className="py-8 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Loading...</div>
-              ) : invoiceHistory.length === 0 ? (
-                <div className="py-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">No historical records.</div>
-              ) : invoiceHistory.map(inv => (
-                <div key={inv.id} className="p-4 rounded-2xl border border-slate-100 hover:border-blue-200 bg-white transition-all shadow-sm group">
-                  <div className="flex justify-between items-start mb-2">
-                    <h4 className="text-xs font-black text-slate-900 group-hover:text-blue-700 transition-colors uppercase tracking-wider">{inv.externalInvoiceReference}</h4>
-                    <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-sm ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                      {inv.status}
-                    </span>
+          ))}
+        </section>
+
+        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-950 dark:text-white">Approved work</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {periods.length ? periods.map(formatPeriod).join(', ') : 'No approved work is ready yet'}
+              </p>
+            </div>
+            {readyToInvoice.length > 0 && (
+              <button type="button" onClick={toggleAll} className="text-left text-xs font-semibold text-blue-600 hover:text-blue-700">
+                {selectedJobs.length === readyToInvoice.length ? 'Clear selection' : 'Select all'}
+              </button>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="p-12 text-center text-sm text-slate-500">Loading payment data...</div>
+          ) : error ? (
+            <div className="p-12 text-center text-sm font-semibold text-slate-500">Approved work will appear after the connection is restored.</div>
+          ) : readyToInvoice.length === 0 ? (
+            <div className="p-12 text-center">
+              <Check className="mx-auto text-emerald-500" size={30} />
+              <p className="mt-3 text-sm font-bold text-slate-950 dark:text-white">Nothing to invoice</p>
+              <p className="mt-1 text-xs text-slate-500">Approved timesheets will appear here automatically.</p>
+            </div>
+          ) : (
+            <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {readyToInvoice.map(timesheet => {
+                  const selected = selectedJobs.includes(timesheet.id);
+                  return (
+                    <label key={timesheet.id} className={`flex cursor-pointer items-center gap-3 p-4 transition-colors ${selected ? 'bg-emerald-50 dark:bg-emerald-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleJob(timesheet.id)}
+                        className="h-5 w-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">Job {timesheet.bookingId}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {formatLondonDate(timesheet.actualStart)} / {formatPeriod(timesheet.interpreterSettlementPeriod || timesheet.servicePeriod)}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-bold text-slate-950 dark:text-white">{money(getTimesheetInterpreterAmount(timesheet))}</p>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950 lg:border-l lg:border-t-0">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300" htmlFor="interpreter-invoice-reference">Invoice reference</label>
+                <input
+                  id="interpreter-invoice-reference"
+                  type="text"
+                  placeholder="e.g. INV-2026-08"
+                  value={invoiceReference}
+                  onChange={event => setInvoiceReference(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-950 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+
+                <label className="relative mt-4 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 bg-white p-4 text-xs font-semibold text-slate-600 hover:border-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  <input type="file" accept=".pdf,image/*" className="absolute inset-0 opacity-0" onChange={handleFileUpload} disabled={uploading} />
+                  {uploadedUrl ? <Check size={16} className="text-emerald-600" /> : <Upload size={16} />}
+                  {uploading ? 'Uploading...' : uploadedUrl ? 'Invoice attached' : 'Attach invoice (optional)'}
+                </label>
+
+                <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4 dark:border-slate-800">
+                  <span className="text-xs font-semibold text-slate-500">Selected total</span>
+                  <span className="text-lg font-bold text-slate-950 dark:text-white">{money(selectedTotal)}</span>
+                </div>
+                <Button
+                  onClick={handleSubmit}
+                  disabled={!selectedJobs.length || !invoiceReference.trim() || submitting}
+                  className="mt-4 w-full justify-center bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  {submitting ? 'Submitting...' : 'Submit invoice'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="border-b border-slate-200 p-4 dark:border-slate-800">
+            <h2 className="text-sm font-bold text-slate-950 dark:text-white">Invoice history</h2>
+            <p className="mt-1 text-xs text-slate-500">Submitted, approved and paid invoices.</p>
+          </div>
+          {loading ? (
+            <div className="p-10 text-center text-sm text-slate-500">Loading invoice history...</div>
+          ) : error ? (
+            <div className="p-10 text-center text-sm font-semibold text-slate-500">Invoice history is temporarily unavailable.</div>
+          ) : invoiceHistory.length === 0 ? (
+            <div className="p-10 text-center text-sm text-slate-500">No invoices submitted yet.</div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {invoiceHistory.map(invoice => (
+                <div key={invoice.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-bold text-slate-950 dark:text-white">{invoice.externalInvoiceReference || invoice.id}</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${invoice.status === 'PAID' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}`}>
+                        {invoice.paymentStatus === 'SCHEDULED' ? 'Payment scheduled' : invoice.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+                      <CalendarDays size={13} /> {formatLondonDate(invoice.issueDate)} / {invoice.lineCount || invoice.items?.length || 0} jobs
+                    </p>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest">
-                    <CalendarDays size={12} /> {new Date(inv.issueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </div>
-                  <div className="flex justify-between items-end border-t border-slate-50 pt-3">
-                    <span className="text-xs font-black text-slate-900">£{inv.totalAmount.toFixed(2)}</span>
-                    {inv.uploadedPdfUrl ? (
-                      <a
-                        href={inv.uploadedPdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-600 hover:underline"
-                      >
-                        Invoice PDF <ExternalLink size={10} />
+                  <div className="flex items-center justify-between gap-4 sm:justify-end">
+                    <p className="text-sm font-bold text-slate-950 dark:text-white">{money(invoice.totalAmount)}</p>
+                    {invoice.uploadedPdfUrl && (
+                      <a href={invoice.uploadedPdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700">
+                        Document <ExternalLink size={13} />
                       </a>
-                    ) : (
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{inv.lineCount || 0} sessions</span>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        </aside>
-
+          )}
+        </section>
       </div>
     </div>
   );

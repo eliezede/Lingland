@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { BookingService, ChatService } from '../../services/api';
 import { AssignmentStatus, Booking, BookingAssignment, BookingStatus } from '../../types';
-import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare, CheckCircle2, XCircle } from 'lucide-react';
+import { MapPin, Clock, Calendar, Video, ChevronLeft, FileText, MessageSquare, CheckCircle2, XCircle, LogIn, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useChat } from '../../context/ChatContext';
 import { formatLanguagePair } from '../../utils/languageDisplay';
+import { formatLondonDate, parseLondonDateTime } from '../../utils/londonDateTime';
 import {
   getInterpreterBookingAmount,
   isPendingInterpreterTimesheet,
@@ -25,6 +26,7 @@ export const InterpreterJobDetails = () => {
   const [isDirectOffer, setIsDirectOffer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [attendanceProcessing, setAttendanceProcessing] = useState(false);
   const routeState = location.state as { returnTo?: string; returnTab?: string; returnLabel?: string } | null;
 
   const goBackToContext = () => {
@@ -108,6 +110,25 @@ export const InterpreterJobDetails = () => {
     }
   };
 
+  const handleAttendance = async (action: 'CHECK_IN' | 'CHECK_OUT') => {
+    if (!job) return;
+    setAttendanceProcessing(true);
+    try {
+      const result = await BookingService.recordInterpreterAttendance(job.id, action);
+      setJob(current => current ? {
+        ...current,
+        status: result.status,
+        ...(result.checkInAt ? { checkInAt: result.checkInAt } : {}),
+        ...(result.checkOutAt ? { checkOutAt: result.checkOutAt } : {}),
+      } : current);
+      showToast(action === 'CHECK_IN' ? 'Check-in recorded' : 'Session completed. You can now submit your timesheet.', 'success');
+    } catch (error: any) {
+      showToast(error?.message || 'Attendance could not be recorded', 'error');
+    } finally {
+      setAttendanceProcessing(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-center text-gray-500">Loading job details...</div>;
   if (!job) return <div className="p-8 text-center text-red-500">Job not found.</div>;
 
@@ -117,6 +138,18 @@ export const InterpreterJobDetails = () => {
   const canRespondToOffer = isDirectOffer || !!assignmentId || [BookingStatus.ASSIGNMENT_PENDING, 'PENDING_ASSIGNMENT' as any].includes(job.status);
   const canSubmitTimesheet = isPendingInterpreterTimesheet(job, new Set());
   const scheduledDate = isTranslation ? job.translationDeadline || job.date : job.date;
+  const scheduledStart = parseLondonDateTime(job.date, `${job.startTime || '00:00'}:00`);
+  const scheduledEnd = scheduledStart
+    ? new Date(scheduledStart.getTime() + Math.max(job.durationMinutes || 60, 1) * 60000)
+    : null;
+  const now = Date.now();
+  const attendanceWindowOpen = !isTranslation
+    && job.status === BookingStatus.BOOKED
+    && Boolean(scheduledStart && scheduledEnd)
+    && now >= scheduledStart!.getTime() - (2 * 60 * 60 * 1000)
+    && now <= scheduledEnd!.getTime() + (24 * 60 * 60 * 1000);
+  const canCheckIn = attendanceWindowOpen && !job.checkInAt;
+  const canCheckOut = attendanceWindowOpen && Boolean(job.checkInAt) && !job.checkOutAt;
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
@@ -205,7 +238,7 @@ export const InterpreterJobDetails = () => {
             <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:grid-cols-3">
               <div>
                 <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Deadline</p>
-                <p className="text-sm font-semibold text-slate-900">{new Date(`${scheduledDate}T12:00:00`).toLocaleDateString('en-GB')}</p>
+                <p className="text-sm font-semibold text-slate-900">{formatLondonDate(scheduledDate)}</p>
               </div>
               <div>
                 <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Format</p>
@@ -241,7 +274,7 @@ export const InterpreterJobDetails = () => {
                     {isTranslation ? 'Deadline Date' : 'Scheduled Date'}
                   </p>
                   <p className="font-semibold text-sm text-slate-900">
-                    {new Date(`${scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
+                    {formatLondonDate(scheduledDate, { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}
                   </p>
                 </div>
               </div>
@@ -295,7 +328,7 @@ export const InterpreterJobDetails = () => {
       </div>
 
       {/* Action Bar */}
-      <div className="fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.05)] z-30 pb-safe md:pl-64 lg:pl-[inherit] transition-all">
+      <div className="sticky bottom-0 z-20 -mx-3 border-t border-slate-200 bg-white/95 shadow-[0_-10px_20px_-14px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:-mx-5 lg:-mx-6">
         <div className="w-full max-w-[1000px] mx-auto p-4 flex justify-end">
           {canRespondToOffer ? (
             <div className="flex gap-3 w-full sm:w-auto">
@@ -314,6 +347,22 @@ export const InterpreterJobDetails = () => {
                 <CheckCircle2 size={16} className="mr-2" /> Accept Job
               </button>
             </div>
+          ) : canCheckIn ? (
+            <button
+              onClick={() => handleAttendance('CHECK_IN')}
+              disabled={attendanceProcessing}
+              className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 text-white font-semibold rounded-lg shadow-sm hover:bg-emerald-700 transition-colors flex items-center justify-center disabled:opacity-50 text-sm"
+            >
+              <LogIn className="mr-2" size={16} /> Check in to session
+            </button>
+          ) : canCheckOut ? (
+            <button
+              onClick={() => handleAttendance('CHECK_OUT')}
+              disabled={attendanceProcessing}
+              className="w-full sm:w-auto px-6 py-2.5 bg-slate-900 text-white font-semibold rounded-lg shadow-sm hover:bg-slate-800 transition-colors flex items-center justify-center disabled:opacity-50 text-sm dark:bg-white dark:text-slate-950"
+            >
+              <LogOut className="mr-2" size={16} /> Check out and complete session
+            </button>
           ) : canSubmitTimesheet ? (
             <button
               onClick={() => navigate(`/interpreter/timesheets/new/${job.id}`, {

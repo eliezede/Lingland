@@ -1,0 +1,26 @@
+{
+  "name": "Lingland Interpreter App",
+  "short_name": "Lingland",
+  "description": "Jobs, timesheets, messages and payments for Lingland interpreters.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/lingland-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/lingland-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

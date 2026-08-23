@@ -22,6 +22,7 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { Interpreter } from '../../types';
 import { isInterpreterLocked, requiresInterpreterOnboarding } from '../../utils/interpreterFlow';
 import { formatLanguagePair } from '../../utils/languageDisplay';
+import { formatLondonDate } from '../../utils/londonDateTime';
 import {
   getInterpreterBookingAmount,
   isInterpreterOfferBooking,
@@ -47,7 +48,37 @@ const HighDensityActivityTable = ({ title, data, loading, onRowClick }: { title:
       <h3 className="shrink-0 text-[10px] font-black uppercase tracking-wide text-slate-800 dark:text-slate-200">{title}</h3>
     </div>
     <div className="custom-scrollbar flex-1 overflow-x-auto">
-      <table className="w-full min-w-[680px] border-collapse text-left">
+      {loading && (
+        <div className="space-y-3 p-4 md:hidden">
+          {[0, 1, 2].map(item => <Skeleton key={item} className="h-20 w-full" />)}
+        </div>
+      )}
+      {!loading && data.length === 0 && (
+        <div className="px-4 py-12 text-center text-sm text-slate-500 md:hidden">No upcoming jobs.</div>
+      )}
+      {!loading && data.length > 0 && (
+        <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+          {data.map((item, index) => (
+            <button
+              type="button"
+              key={item.raw?.id || index}
+              onClick={() => onRowClick(item.raw)}
+              className="flex w-full items-start justify-between gap-3 p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-900 dark:text-white">{item.client || 'Confidential'}</p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{item.service}</p>
+                <p className="mt-2 text-xs font-semibold text-slate-500">{item.date} at {item.time}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-xs font-bold text-slate-900 dark:text-white">{item.pay}</p>
+                <ChevronRight className="ml-auto mt-2 text-slate-400" size={18} />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <table className="hidden w-full min-w-[680px] border-collapse text-left md:table">
         <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-950">
           <tr>
             <th className="px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400">Client / Location</th>
@@ -172,7 +203,7 @@ export const InterpreterDashboard = () => {
         client: job.clientName,
         isOnline: job.locationType === 'ONLINE',
         service: formatLanguagePair(job.languageFrom, job.languageTo),
-        date: new Date(job.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+        date: formatLondonDate(job.date, { day: '2-digit', month: 'short' }),
         time: job.startTime,
         pay: getInterpreterBookingAmount(job) > 0
           ? `GBP ${getInterpreterBookingAmount(job).toFixed(2)}`
@@ -185,10 +216,10 @@ export const InterpreterDashboard = () => {
       const enrichedOffers: any[] = await Promise.all(
         offerList.map(async (assignment: any) => {
           const bookingId = assignment.bookingId;
-          const offerBase = { _isBroadcast: true, _assignmentId: assignment.id }; // Keep track of the assignment ID for accept/reject
+          const offerBase = { _isBroadcast: true, _assignmentId: assignment.id, _bookingId: bookingId };
 
           if (!bookingId) {
-            return { ...(assignment.bookingSnapshot || assignment), id: assignment.id, ...offerBase };
+            return { ...(assignment.bookingSnapshot || assignment), id: bookingId || assignment.id, ...offerBase };
           }
           try {
             const booking = await BookingService.getById(bookingId);
@@ -196,7 +227,7 @@ export const InterpreterDashboard = () => {
               return { ...booking, ...offerBase };
             }
           } catch {/* ignore */ }
-          return { ...(assignment.bookingSnapshot || assignment), id: assignment.id, ...offerBase };
+          return { ...(assignment.bookingSnapshot || assignment), id: bookingId || assignment.id, ...offerBase };
         })
       );
 
@@ -280,11 +311,11 @@ export const InterpreterDashboard = () => {
   return (
     <div className="flex h-full min-h-[calc(100vh-4rem)] flex-1 flex-col bg-slate-50 animate-in fade-in duration-700 dark:bg-slate-950">
       <PageHeader
-        title="Interpreter Workspace"
-        subtitle={`Session active for ${user?.displayName?.split(' ')[0] || 'Agent'}`}
+        title="Dashboard"
+        subtitle={`Welcome back, ${user?.displayName?.split(' ')[0] || 'Interpreter'}.`}
       >
         {!requiresInterpreterOnboarding(interpreterStatus) && (
-          <Button onClick={() => navigate('/interpreter/jobs')} variant="secondary" icon={Briefcase} size="sm">Browse Jobs</Button>
+          <Button onClick={() => navigate('/interpreter/jobs')} variant="secondary" icon={Briefcase} size="sm">My Jobs</Button>
         )}
       </PageHeader>
 
@@ -350,17 +381,17 @@ export const InterpreterDashboard = () => {
                 className="rounded-lg border border-slate-200 shadow-sm dark:border-slate-800"
               />
               <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Current session</p>
-                <h2 className="truncate text-base font-black text-slate-900 dark:text-white">{user?.displayName || 'Agent'}</h2>
+                <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Interpreter account</p>
+                <h2 className="truncate text-base font-black text-slate-900 dark:text-white">{user?.displayName || 'Interpreter'}</h2>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:min-w-[560px]">
               {loading ? (
                 Array(3).fill(0).map((_, i) => <MetricSkeleton key={i} />)
               ) : [
-                { label: 'Active Offers', value: offers.length, badge: 'New', badgeColor: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-300' },
-                { label: 'Booked Sessions', value: upcomingJobs.length, badge: 'Active', badgeColor: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300' },
-                { label: 'Approved Earnings', value: stats.approvedEarnings, badge: 'Total', badgeColor: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-300' },
+                { label: 'Offers', value: offers.length, badge: 'New', badgeColor: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30 dark:text-blue-300' },
+                { label: 'Confirmed jobs', value: upcomingJobs.length, badge: 'Next', badgeColor: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300' },
+                { label: 'Approved pay', value: stats.approvedEarnings, badge: 'Total', badgeColor: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-300' },
               ].map((m, i) => (
                 <div key={i} className="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
                   <div className="min-w-0">
@@ -401,13 +432,13 @@ export const InterpreterDashboard = () => {
                 )}
                 {offers.length > 0 && (
                   <button
-                    onClick={() => navigate('/interpreter/offers')}
+                    onClick={() => navigate('/interpreter/jobs', { state: { tab: 'OFFERS' } })}
                     className="group flex items-center gap-2 rounded-md border border-blue-200 bg-white px-3 py-2 text-left shadow-sm transition-all hover:border-blue-400 dark:bg-slate-900"
                   >
                     <div className="w-7 h-7 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 font-bold text-sm">{offers.length}</div>
                     <div>
-                      <p className="text-xs font-bold text-slate-800">Job Offers Live</p>
-                      <p className="text-[10px] text-slate-500">Review pending marketplace assignments</p>
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100">New job offers</p>
+                      <p className="text-[10px] text-slate-500">Review and respond</p>
                     </div>
                   </button>
                 )}

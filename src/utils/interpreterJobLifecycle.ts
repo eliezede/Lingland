@@ -1,4 +1,5 @@
 import { Booking, BookingStatus, ServiceCategory, Timesheet } from '../types';
+import { parseLondonDateTime } from './londonDateTime';
 
 const OFFER_STATUSES = new Set<string>([
   BookingStatus.OPENED,
@@ -33,11 +34,6 @@ export const isTranslationBooking = (booking: Partial<Booking>) => (
   || String(booking.serviceType || '').toUpperCase() === ServiceCategory.TRANSLATION
 );
 
-const parseLocalDateTime = (date: string, time: string) => {
-  const value = new Date(`${date}T${time}`);
-  return Number.isNaN(value.getTime()) ? null : value;
-};
-
 export const getInterpreterBookingEnd = (booking: Partial<Booking>): Date | null => {
   const date = String(
     isTranslationBooking(booking)
@@ -47,13 +43,13 @@ export const getInterpreterBookingEnd = (booking: Partial<Booking>): Date | null
   if (!date) return null;
 
   if (isTranslationBooking(booking)) {
-    return parseLocalDateTime(date, '23:59:59');
+    return parseLondonDateTime(date, '23:59:59');
   }
 
   const explicitEnd = String(booking.endTime || booking.expectedEndTime || '').trim();
-  if (explicitEnd) return parseLocalDateTime(date, explicitEnd.length === 5 ? `${explicitEnd}:00` : explicitEnd);
+  if (explicitEnd) return parseLondonDateTime(date, explicitEnd.length === 5 ? `${explicitEnd}:00` : explicitEnd);
 
-  const start = parseLocalDateTime(date, `${booking.startTime || '23:59'}:00`);
+  const start = parseLondonDateTime(date, `${booking.startTime || '23:59'}:00`);
   if (!start) return null;
   return new Date(start.getTime() + Math.max(Number(booking.durationMinutes || 0), 0) * 60000);
 };
@@ -79,7 +75,10 @@ export const isPendingInterpreterTimesheet = (
 ) => (
   Boolean(booking.id)
   && TIMESHEET_ELIGIBLE_STATUSES.has(String(booking.status || ''))
-  && isInterpreterBookingElapsed(booking, now)
+  && (
+    booking.status === BookingStatus.SESSION_COMPLETED
+    || isInterpreterBookingElapsed(booking, now)
+  )
   && !timesheetBookingIds.has(String(booking.id))
 );
 

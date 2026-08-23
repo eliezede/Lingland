@@ -13,14 +13,23 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
   const [submittedHistory, setSubmittedHistory] = useState<Timesheet[]>([]);
   const [jobHistory, setJobHistory] = useState<InterpreterHistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (interpreterId) loadData();
+    if (interpreterId) {
+      void loadData();
+    } else {
+      setPendingSubmission([]);
+      setSubmittedHistory([]);
+      setJobHistory([]);
+      setLoading(false);
+    }
   }, [interpreterId]);
 
   const loadData = async () => {
     if (!interpreterId) return;
     setLoading(true);
+    setError(null);
     try {
       const [schedule, timesheets] = await Promise.all([
         BookingService.getInterpreterSchedule(interpreterId),
@@ -37,6 +46,7 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
       setJobHistory(buildInterpreterHistory(schedule, timesheets));
     } catch (e) {
       console.error(e);
+      setError('Timesheets could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -48,5 +58,5 @@ export const useInterpreterTimesheets = (interpreterId: string | undefined) => {
     await loadData();
   };
 
-  return { pendingSubmission, submittedHistory, jobHistory, loading, submitTimesheet, refresh: loadData };
+  return { pendingSubmission, submittedHistory, jobHistory, loading, error, submitTimesheet, refresh: loadData };
 };

@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, MessageSquare, Bell, Briefcase, PoundSterling,
   LogOut, Menu, X, ChevronRight, PanelLeftOpen, PanelLeftClose, ChevronLeft, ChevronRight as ChevronRightIcon,
-  HelpCircle, ClipboardList, Wallet, User as UserIcon, Settings, User, ChevronDown
+  HelpCircle, ClipboardList, Wallet, User as UserIcon, Settings, User, ChevronDown, Download
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
@@ -14,6 +14,8 @@ import { NotificationCenter } from '../components/notifications/NotificationCent
 import { UserAvatar } from '../components/ui/UserAvatar';
 import { InterpreterService } from '../services/interpreterService';
 import { requiresInterpreterOnboarding } from '../utils/interpreterFlow';
+import { usePwaInstall } from '../hooks/usePwaInstall';
+import { formatLondonDate, getLondonDateKey } from '../utils/londonDateTime';
 
 interface NavItemProps {
   to: string;
@@ -57,14 +59,16 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const { canInstall, install } = usePwaInstall();
 
   const [activeCategory, setActiveCategory] = useState<string>('CORE');
 
   const categories = [
-    { id: 'CORE', label: 'Dashboard', icon: LayoutDashboard, rootPath: '/interpreter/dashboard' },
-    { id: 'JOBS', label: 'Market', icon: Briefcase, rootPath: '/interpreter/jobs' },
-    { id: 'FIN', label: 'Earnings', icon: Wallet, rootPath: '/interpreter/billing' },
-    { id: 'ACCOUNT', label: 'Profile', icon: Settings, rootPath: '/interpreter/profile' },
+    { id: 'CORE', label: 'Home', icon: LayoutDashboard, rootPath: '/interpreter/dashboard' },
+    { id: 'JOBS', label: 'Jobs', icon: Briefcase, rootPath: '/interpreter/jobs' },
+    { id: 'TIMESHEETS', label: 'Timesheets', icon: ClipboardList, rootPath: '/interpreter/timesheets' },
+    { id: 'FIN', label: 'Payments', icon: Wallet, rootPath: '/interpreter/billing' },
+    { id: 'ACCOUNT', label: 'Account', icon: UserIcon, rootPath: '/interpreter/profile' },
   ];
 
   const getOrdinalSuffix = (day: number) => {
@@ -78,10 +82,10 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const getUKDate = () => {
-    const now = new Date();
-    const weekday = now.toLocaleDateString('en-GB', { weekday: 'long' });
-    const day = now.getDate();
-    const month = now.toLocaleDateString('en-GB', { month: 'long' });
+    const dateKey = getLondonDateKey();
+    const weekday = formatLondonDate(dateKey, { weekday: 'long' });
+    const day = Number(dateKey.slice(8, 10));
+    const month = formatLondonDate(dateKey, { month: 'long' });
     return `${weekday}, ${day}${getOrdinalSuffix(day)} ${month}`;
   };
 
@@ -97,15 +101,25 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const isWorkstation = location.pathname === '/interpreter/dashboard';
+  const showSecondaryNavigation = activeCategory === 'ACCOUNT';
+  const mobileBottomNavPaths = new Set([
+    '/interpreter/dashboard',
+    '/interpreter/jobs',
+    '/interpreter/timesheets',
+    '/interpreter/billing',
+    '/interpreter/profile',
+  ]);
+  const showMobileBottomNav = mobileBottomNavPaths.has(location.pathname);
 
   useEffect(() => {
     const pathMap: Record<string, string> = {
       '/interpreter/dashboard': 'CORE',
       '/interpreter/jobs': 'JOBS',
       '/interpreter/offers': 'JOBS',
+      '/interpreter/timesheets': 'TIMESHEETS',
       '/interpreter/billing': 'FIN',
       '/interpreter/profile': 'ACCOUNT',
+      '/interpreter/messages': 'ACCOUNT',
     };
     const currentPath = location.pathname;
     const categoryId = Object.entries(pathMap).find(([path]) => currentPath.startsWith(path))?.[1];
@@ -113,13 +127,13 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [location.pathname]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || location.pathname.endsWith('/messages')) return;
     const unsubscribeChat = ChatService.subscribeToThreads(user.id, (threads) => {
       const count = threads.reduce((acc, t) => acc + (t.unreadCount[user.id] || 0), 0);
       setUnreadMessages(count);
-    });
+    }, () => setUnreadMessages(0));
     return () => unsubscribeChat();
-  }, [user]);
+  }, [user, location.pathname]);
 
   useEffect(() => {
     if (!user?.profileId) return;
@@ -153,7 +167,7 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="interpreter-app flex h-dvh overflow-hidden bg-slate-100 font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <ChatSystem />
       {isSidebarOpen && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
@@ -174,9 +188,14 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
             {categories.map((cat) => (
               <button
                 key={cat.id}
+                type="button"
+                aria-label={cat.label}
+                aria-current={activeCategory === cat.id ? 'page' : undefined}
+                title={!isPrimaryExpanded ? cat.label : undefined}
                 onClick={() => {
                   setActiveCategory(cat.id);
                   if (cat.rootPath) navigate(cat.rootPath);
+                  setIsSidebarOpen(false);
                 }}
                 className={`group relative flex w-full items-center rounded-lg transition-colors duration-150 ${isPrimaryExpanded ? 'space-x-3 px-4 py-2.5' : 'h-11 justify-center'} ${activeCategory === cat.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
               >
@@ -186,28 +205,17 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
             ))}
           </div>
 
-          <button onClick={() => setIsPrimaryExpanded(!isPrimaryExpanded)} className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-800 hover:text-white">
+          <button type="button" aria-label={isPrimaryExpanded ? 'Collapse primary navigation' : 'Expand primary navigation'} onClick={() => setIsPrimaryExpanded(!isPrimaryExpanded)} className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-800 hover:text-white">
             {isPrimaryExpanded ? <ChevronLeft size={20} /> : <ChevronRightIcon size={20} />}
           </button>
         </div>
 
-        {!isWorkstation && (
-          <div className={`${isSecondarySlim ? 'w-16 lg:w-20' : 'w-64'} flex flex-col border-r border-slate-200 bg-white transition-all duration-300 dark:border-slate-800 dark:bg-slate-900`}>
+        {showSecondaryNavigation && (
+          <div className={`${isSecondarySlim ? 'w-16 lg:w-20' : 'w-64'} hidden flex-col border-r border-slate-200 bg-white transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 lg:flex`}>
             <div className={`h-16 flex items-center ${isSecondarySlim ? 'justify-center' : 'px-6 justify-between'} border-b border-slate-100 dark:border-slate-800`}>
               {!isSecondarySlim ? <h2 className="text-xs font-black text-slate-500 tracking-widest uppercase truncate">{categories.find(c => c.id === activeCategory)?.label}</h2> : <div className="w-8 h-1 bg-slate-200 dark:bg-slate-800 rounded-full" />}
             </div>
             <nav className={`flex-1 overflow-y-auto ${isSecondarySlim ? 'p-2' : 'p-4'} space-y-4`}>
-              {activeCategory === 'JOBS' && (
-                <div className="space-y-1">
-                  <NavItem to="/interpreter/jobs" icon={Briefcase} label="Market" active={isActive('/interpreter/jobs')} isCollapsed={isSecondarySlim} />
-                  <NavItem to="/interpreter/offers" icon={Bell} label="Offers" active={isActive('/interpreter/offers')} isCollapsed={isSecondarySlim} />
-                </div>
-              )}
-              {activeCategory === 'FIN' && (
-                <div className="space-y-1">
-                  <NavItem to="/interpreter/billing" icon={Wallet} label="Earnings" active={isActive('/interpreter/billing')} isCollapsed={isSecondarySlim} />
-                </div>
-              )}
               {activeCategory === 'ACCOUNT' && (
                 <div className="space-y-1">
                   <NavItem to="/interpreter/messages" icon={MessageSquare} label="Messages" badge={unreadMessages} active={isActive('/interpreter/messages')} isCollapsed={isSecondarySlim} />
@@ -216,7 +224,7 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
               )}
             </nav>
             <div className="p-4 border-t border-slate-100 dark:border-slate-800">
-              <button onClick={toggleSecondaryCollapse} className={`w-full flex items-center ${isSecondarySlim ? 'justify-center' : 'space-x-2'} text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors`}>
+              <button type="button" aria-label={isSecondarySlim ? 'Expand account navigation' : 'Collapse account navigation'} onClick={toggleSecondaryCollapse} className={`w-full flex items-center ${isSecondarySlim ? 'justify-center' : 'space-x-2'} text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors`}>
                 {isSecondarySlim ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
                 {!isSecondarySlim && <span>Collapse Sidebar</span>}
               </button>
@@ -228,28 +236,48 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
       <div className="flex-1 flex flex-col overflow-hidden relative">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:h-16 sm:px-6">
           <div className="flex items-center">
-            <button className="-ml-2 mr-3 rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden" onClick={() => setIsSidebarOpen(true)}><Menu size={24} /></button>
+            <button
+              type="button"
+              aria-label="Open navigation"
+              className="-ml-2 mr-3 rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
+              onClick={() => {
+                setIsPrimaryExpanded(true);
+                setIsSidebarOpen(true);
+              }}
+            >
+              <Menu size={24} />
+            </button>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-6">
             <div className="hidden md:flex items-center space-x-3 text-slate-500">
                <span className="text-[10px] font-black tracking-widest text-slate-400 dark:text-slate-500">{today}</span>
-               <div className="group relative">
-                  <div className="w-2.5 h-2.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse cursor-help" />
-                  <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 p-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                    <p className="text-[10px] font-bold text-slate-900 dark:text-white uppercase mb-1 tracking-wider">System Engine Status</p>
-                    <p className="text-[9px] text-slate-500 leading-tight">Operational. Latency: 8ms.</p>
-                  </div>
-               </div>
+               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" title="Online" />
             </div>
 
             <div className="flex items-center space-x-2 border-l border-slate-100 pl-2 dark:border-slate-800 sm:pl-6">
               <ThemeToggle className="!p-2 text-slate-500" />
+              <button
+                type="button"
+                onClick={() => navigate('/interpreter/messages')}
+                className="relative rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                aria-label="Open messages"
+              >
+                <MessageSquare size={20} />
+                {unreadMessages > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-bold leading-4 text-white">
+                    {unreadMessages > 9 ? '9+' : unreadMessages}
+                  </span>
+                )}
+              </button>
               <NotificationCenter />
             </div>
 
             <div className="relative" ref={userMenuRef}>
               <button 
+                type="button"
+                aria-label="Open account menu"
+                aria-expanded={isUserMenuOpen}
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                 className="flex items-center space-x-3 rounded-lg border border-transparent p-1.5 pr-2 transition-colors hover:border-slate-200 hover:bg-slate-100 dark:hover:border-slate-700 dark:hover:bg-slate-800 sm:pr-3"
               >
@@ -280,6 +308,19 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
                       <span className="text-[10px] text-slate-400 truncate">{user?.email}</span>
                     </div>
                   </div>
+                  {canInstall && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await install();
+                        setIsUserMenuOpen(false);
+                      }}
+                      className="flex w-full items-center space-x-3 px-4 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <Download size={16} />
+                      <span className="font-semibold">Install Lingland App</span>
+                    </button>
+                  )}
                   <button onClick={handleLogout} className="w-full flex items-center space-x-3 px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
                     <LogOut size={16} />
                     <span className="font-semibold">Sign Out</span>
@@ -290,11 +331,31 @@ export const InterpreterLayout: React.FC<{ children: React.ReactNode }> = ({ chi
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto bg-slate-100 p-3 dark:bg-slate-950 sm:p-5 lg:p-6">
+        <main className={`flex-1 overflow-auto bg-slate-100 p-3 dark:bg-slate-950 sm:p-5 lg:p-6 ${showMobileBottomNav ? 'pb-24 sm:pb-5' : ''}`}>
           <div className="max-w-[1600px] mx-auto">
             {children}
           </div>
         </main>
+
+        {showMobileBottomNav && (
+          <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white/95 px-1 pb-[max(env(safe-area-inset-bottom),0.25rem)] pt-1 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden" aria-label="Interpreter navigation">
+            {categories.map((category) => {
+              const active = activeCategory === category.id;
+              return (
+                <button
+                  type="button"
+                  key={category.id}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => navigate(category.rootPath)}
+                  className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-md text-[10px] font-semibold ${active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'}`}
+                >
+                  <category.icon size={20} strokeWidth={active ? 2.5 : 2} />
+                  <span>{category.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </div>
     </div>
   );

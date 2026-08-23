@@ -97,3 +97,30 @@ body {
 .pt-safe {
   padding-top: env(safe-area-inset-top);
 }
+
+/* Dark-mode safety net for legacy interpreter surfaces while they share the new app shell. */
+.dark .interpreter-app .bg-white {
+  background-color: #0f172a;
+}
+
+.dark .interpreter-app .bg-slate-50 {
+  background-color: #020617;
+}
+
+.dark .interpreter-app .text-slate-900,
+.dark .interpreter-app .text-slate-800,
+.dark .interpreter-app .text-slate-700 {
+  color: #f8fafc;
+}
+
+.dark .interpreter-app .border-slate-100,
+.dark .interpreter-app .border-slate-200,
+.dark .interpreter-app .border-slate-300 {
+  border-color: #334155;
+}
+
+.dark .interpreter-app input,
+.dark .interpreter-app select,
+.dark .interpreter-app textarea {
+  color-scheme: dark;
+}

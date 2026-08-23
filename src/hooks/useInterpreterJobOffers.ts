@@ -9,13 +9,17 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
 
   useEffect(() => {
     if (interpreterId) {
-      loadOffers();
+      void loadOffers();
+    } else {
+      setOffers([]);
+      setLoading(false);
     }
   }, [interpreterId]);
 
   const loadOffers = async () => {
     if (!interpreterId) return;
     setLoading(true);
+    setError(null);
     try {
       const [offerList, schedule] = await Promise.all([
         BookingService.getInterpreterOffers(interpreterId),
@@ -32,10 +36,10 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
       const enrichedOffers: any[] = await Promise.all(
         offerList.map(async (assignment: any) => {
           const bookingId = assignment.bookingId;
-          const offerBase = { _isBroadcast: true, _assignmentId: assignment.id };
+          const offerBase = { _isBroadcast: true, _assignmentId: assignment.id, _bookingId: bookingId };
 
           if (!bookingId) {
-            return { ...(assignment.bookingSnapshot || assignment), id: assignment.id, ...offerBase };
+            return { ...(assignment.bookingSnapshot || assignment), id: bookingId || assignment.id, ...offerBase };
           }
           try {
             const booking = await BookingService.getById(bookingId);
@@ -43,14 +47,14 @@ export const useInterpreterJobOffers = (interpreterId: string | undefined) => {
               return { ...booking, ...offerBase };
             }
           } catch {/* ignore */ }
-          return { ...(assignment.bookingSnapshot || assignment), id: assignment.id, ...offerBase };
+          return { ...(assignment.bookingSnapshot || assignment), id: bookingId || assignment.id, ...offerBase };
         })
       );
 
       const directIds = new Set(directPending.map((b: any) => b.id));
       setOffers([...directPending, ...enrichedOffers.filter(offer => !directIds.has(offer.id))]);
     } catch (err) {
-      setError("Failed to load job offers");
+      setError('Job offers could not be loaded.');
     } finally {
       setLoading(false);
     }

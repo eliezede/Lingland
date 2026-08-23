@@ -45,6 +45,14 @@ describe('interpreter job lifecycle', () => {
     expect(isPendingInterpreterTimesheet(booking(), new Set(['job-1']), now)).toBe(false);
   });
 
+  it('allows a checked-out session to submit immediately even if its scheduled end is later', () => {
+    const now = new Date('2026-07-12T10:30:00');
+    expect(isPendingInterpreterTimesheet(booking({
+      status: BookingStatus.SESSION_COMPLETED,
+      durationMinutes: 120,
+    }), new Set(), now)).toBe(true);
+  });
+
   it('preserves imported terminal jobs in history even without a timesheet', () => {
     const records = buildInterpreterHistory([
       booking({ status: BookingStatus.PAID, sourceSystem: 'AIRTABLE' }),

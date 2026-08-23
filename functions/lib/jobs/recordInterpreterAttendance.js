@@ -36,7 +36,27 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordInterpreterAttendance = void 0;
 const functions = __importStar(require("firebase-functions/v1"));
 const admin = __importStar(require("firebase-admin"));
+const londonSchedule_1 = require("./londonSchedule");
 const db = admin.firestore();
+const attendanceIso = (value) => {
+    if (value && typeof value.toDate === 'function') {
+        return value.toDate().toISOString();
+    }
+    const parsed = new Date(String(value || ''));
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+};
+const getScheduledWindow = (booking) => {
+    const date = String(booking.date || '').slice(0, 10);
+    const time = String(booking.startTime || '00:00').slice(0, 5);
+    const start = (0, londonSchedule_1.parseLondonSchedule)(date, `${time}:00`);
+    if (!date || start == null)
+        return null;
+    const duration = Math.max(Number(booking.durationMinutes || 60), 1);
+    return {
+        opensAt: start - (2 * 60 * 60 * 1000),
+        closesAt: start + (duration * 60 * 1000) + (24 * 60 * 60 * 1000),
+    };
+};
 const getInterpreterIdentity = async (uid) => {
     if (!uid)
         throw new functions.https.HttpsError('unauthenticated', 'Interpreter authentication is required');
@@ -63,12 +83,20 @@ exports.recordInterpreterAttendance = functions.https.onCall(async (data, contex
         if (String(current.interpreterId || '') !== interpreterId) {
             throw new functions.https.HttpsError('permission-denied', 'This job is assigned to another interpreter');
         }
+        if (String(current.serviceCategory || '').toUpperCase() === 'TRANSLATION') {
+            throw new functions.https.HttpsError('failed-precondition', 'Attendance is only available for interpreting sessions');
+        }
+        const scheduledWindow = getScheduledWindow(current);
+        const nowMillis = Date.now();
+        if (!scheduledWindow || nowMillis < scheduledWindow.opensAt || nowMillis > scheduledWindow.closesAt) {
+            throw new functions.https.HttpsError('failed-precondition', 'Attendance can be recorded from two hours before the session until 24 hours after it ends');
+        }
         if (action === 'CHECK_IN') {
-            if (!['BOOKED', 'SESSION_COMPLETED'].includes(String(current.status || ''))) {
+            if (String(current.status || '') !== 'BOOKED') {
                 throw new functions.https.HttpsError('failed-precondition', 'Only a confirmed job can be checked in');
             }
             if (current.checkInAt)
-                return { status: current.status, checkInAt: current.checkInAt, idempotent: true };
+                return { status: current.status, checkInAt: attendanceIso(current.checkInAt), idempotent: true };
             transaction.update(bookingRef, {
                 checkInAt: now,
                 checkInBy: context.auth.uid,
@@ -83,7 +111,7 @@ exports.recordInterpreterAttendance = functions.https.onCall(async (data, contex
                 throw new functions.https.HttpsError('failed-precondition', 'Check in before checking out');
             }
             if (current.checkOutAt)
-                return { status: current.status, checkOutAt: current.checkOutAt, idempotent: true };
+                return { status: current.status, checkOutAt: attendanceIso(current.checkOutAt), idempotent: true };
             transaction.update(bookingRef, {
                 checkOutAt: now,
                 checkOutBy: context.auth.uid,

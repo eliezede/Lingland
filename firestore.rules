@@ -83,13 +83,18 @@ service cloud.firestore {
         && request.resource.data.sourceSystem == resource.data.sourceSystem
         && (
           request.resource.data.status == resource.data.status
-          || (resource.data.status == 'IMPORTED' && request.resource.data.status == 'ONBOARDING')
+          || (
+            (resource.data.status == 'IMPORTED' || resource.data.status == 'APPLICANT')
+            && request.resource.data.status == 'ONBOARDING'
+          )
         )
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'shortName', 'photoUrl', 'phone', 'homePhone', 'address', 'hasCar',
-          'skypeId', 'onboarding', 'documentUrls', 'qualifications', 'regions',
+          'name', 'shortName', 'photoUrl', 'phone', 'homePhone', 'gender', 'address',
+          'addressLine1', 'postcode', 'hasCar', 'skypeId', 'languages',
+          'languageProficiencies', 'onboarding', 'documentUrls', 'qualifications', 'regions',
           'isAvailable', 'unavailableDates', 'acceptsDirectAssignment', 'bankDetails',
-          'dbs', 'nrpsi', 'badge', 'status', 'expoPushToken', 'pushTokenUpdatedAt', 'updatedAt'
+          'dbs', 'dbsExpiry', 'dbsDocumentUrl', 'nrpsi', 'dpsi', 'experience', 'badge',
+          'status', 'expoPushToken', 'pushTokenUpdatedAt', 'updatedAt'
         ])
       );
     }

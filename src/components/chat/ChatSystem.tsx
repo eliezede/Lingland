@@ -25,9 +25,12 @@ export const ChatSystem = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!user) return;
-    return ChatService.subscribeToThreads(user.id, setThreads);
-  }, [user]);
+    if (!user || isAdmin || location.pathname.endsWith('/messages') || !isOpen) {
+      setThreads([]);
+      return;
+    }
+    return ChatService.subscribeToThreads(user.id, setThreads, () => setThreads([]));
+  }, [user, isAdmin, isOpen, location.pathname]);
 
   useEffect(() => {
     if (activeTab === 'staff' && isAdmin) {
@@ -101,7 +104,7 @@ export const ChatSystem = () => {
   const totalUnread = threads.reduce((acc, t) => acc + (t.unreadCount[user.id] || 0), 0);
 
   return (
-    <div className="fixed bottom-24 lg:bottom-6 right-4 sm:right-6 z-40 flex flex-col items-end">
+    <div className="fixed bottom-24 right-4 z-40 hidden flex-col items-end sm:right-6 sm:flex lg:bottom-6">
       {isOpen && (
         <div className="mb-4 w-[calc(100vw-2rem)] sm:w-96 h-[500px] sm:h-[600px] max-h-[calc(100dvh-120px)] bg-white dark:bg-slate-900 rounded-[2rem] sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
           {/* Header Principal */}
@@ -361,6 +364,9 @@ export const ChatSystem = () => {
 
       {/* Toggle flutuante */}
       <button
+        type="button"
+        aria-label={isOpen ? 'Close help messages' : 'Open help messages'}
+        aria-expanded={isOpen}
         onClick={() => setIsOpen(!isOpen)}
         className="w-14 h-14 bg-blue-600 text-white rounded-2xl shadow-2xl shadow-blue-600/40 flex items-center justify-center transition-all hover:scale-110 active:scale-90 relative group"
       >

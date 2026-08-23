@@ -83,7 +83,6 @@ const InterpreterPayments = lazyNamed(() => import('./pages/interpreter/Interpre
 const InterpreterProfile = lazyNamed(() => import('./pages/interpreter/InterpreterProfile'), 'InterpreterProfile');
 const InterpreterMessages = lazyNamed(() => import('./pages/interpreter/InterpreterMessages'), 'InterpreterMessages');
 const InterpreterOnboarding = lazyNamed(() => import('./pages/interpreter/InterpreterOnboarding'), 'InterpreterOnboarding');
-const InterpreterOffers = lazyNamed(() => import('./pages/interpreter/InterpreterOffers'), 'InterpreterOffers');
 
 const ClientDashboard = lazyNamed(() => import('./pages/client/ClientDashboard'), 'ClientDashboard');
 const ClientBookingsList = lazyNamed(() => import('./pages/client/bookings/ClientBookingsList'), 'ClientBookingsList');
@@ -169,7 +168,7 @@ const App = () => {
                               <Route path="profile" element={<InterpreterProfile />} />
                               <Route path="onboarding" element={<InterpreterOnboarding />} />
                               <Route path="messages" element={<InterpreterMessages />} />
-                              <Route path="offers" element={<InterpreterOffers />} />
+                              <Route path="offers" element={<Navigate to="/interpreter/jobs" replace state={{ tab: 'OFFERS' }} />} />
                               <Route path="*" element={<NotFound />} />
                             </Routes>
                           </InterpreterLayout>

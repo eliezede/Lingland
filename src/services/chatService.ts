@@ -12,6 +12,7 @@ import {
   getDoc,
   getDocs,
   limit,
+  FirestoreError,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebaseConfig';
@@ -196,33 +197,49 @@ export const ChatService = {
 
   },
 
-  subscribeToMessages: (threadId: string, callback: (messages: ChatMessage[]) => void) => {
+  subscribeToMessages: (
+    threadId: string,
+    callback: (messages: ChatMessage[]) => void,
+    onError?: (error: FirestoreError) => void
+  ) => {
     const q = query(
       collection(db, 'messages'),
       where('threadId', '==', threadId),
       limit(100)
     );
 
-    return onSnapshot(q, (snapshot) => {
-      const messages = snapshot.docs
-        .map(d => normalizeMessage(d.id, d.data()))
-        .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt));
-      callback(messages);
-    });
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const messages = snapshot.docs
+          .map(d => normalizeMessage(d.id, d.data()))
+          .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt));
+        callback(messages);
+      },
+      error => onError?.(error)
+    );
   },
 
-  subscribeToThreads: (userId: string, callback: (threads: ChatThread[]) => void) => {
+  subscribeToThreads: (
+    userId: string,
+    callback: (threads: ChatThread[]) => void,
+    onError?: (error: FirestoreError) => void
+  ) => {
     const q = query(
       collection(db, 'chatThreads'),
       where('participants', 'array-contains', userId)
     );
 
-    return onSnapshot(q, (snapshot) => {
-      const threads = snapshot.docs
-        .map(d => normalizeThread(d.id, d.data()))
-        .sort((a, b) => toMillis(b.lastMessageAt || b.metadata?.updatedAt) - toMillis(a.lastMessageAt || a.metadata?.updatedAt));
-      callback(threads);
-    });
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const threads = snapshot.docs
+          .map(d => normalizeThread(d.id, d.data()))
+          .sort((a, b) => toMillis(b.lastMessageAt || b.metadata?.updatedAt) - toMillis(a.lastMessageAt || a.metadata?.updatedAt));
+        callback(threads);
+      },
+      error => onError?.(error)
+    );
   },
 
   resetUnread: async (threadId: string, userId: string) => {

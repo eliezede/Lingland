@@ -317,6 +317,15 @@ export const BookingService = {
     }
   },
 
+  recordInterpreterAttendance: async (
+    bookingId: string,
+    action: 'CHECK_IN' | 'CHECK_OUT'
+  ): Promise<{ status: BookingStatus; checkInAt?: string; checkOutAt?: string }> => {
+    const recordAttendance = httpsCallable(functions, 'recordInterpreterAttendance');
+    const response = await recordAttendance({ bookingId, action });
+    return response.data as { status: BookingStatus; checkInAt?: string; checkOutAt?: string };
+  },
+
   linkClientToBooking: async (bookingId: string, clientId: string): Promise<void> => {
     try {
       const client = await ClientService.getById(clientId);
